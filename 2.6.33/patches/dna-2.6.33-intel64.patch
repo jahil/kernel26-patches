@@ -1,0 +1,700 @@
+--- linux-2.6.33/Makefile	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/Makefile	2010-02-24 16:14:59.680879764 -0700
+@@ -225,9 +225,9 @@
+ 	  else if [ -x /bin/bash ]; then echo /bin/bash; \
+ 	  else echo sh; fi ; fi)
+ 
+-HOSTCC       = gcc
++HOSTCC       = icc
+ HOSTCXX      = g++
+-HOSTCFLAGS   = -Wall -Wmissing-prototypes -Wstrict-prototypes -O2 -fomit-frame-pointer
++HOSTCFLAGS   = -w -O3 -fomit-frame-pointer
+ HOSTCXXFLAGS = -O2
+ 
+ # Decide whether to build built-in, modular, or both.
+@@ -312,7 +312,7 @@
+ 
+ AS		= $(CROSS_COMPILE)as
+ LD		= $(CROSS_COMPILE)ld
+-CC		= $(CROSS_COMPILE)gcc
++CC		= $(CROSS_COMPILE)icc
+ CPP		= $(CC) -E
+ AR		= $(CROSS_COMPILE)ar
+ NM		= $(CROSS_COMPILE)nm
+@@ -529,7 +529,7 @@
+ ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
+ KBUILD_CFLAGS	+= -Os
+ else
+-KBUILD_CFLAGS	+= -O2
++KBUILD_CFLAGS	+= -O3 -vec-report1 -w
+ endif
+ 
+ include $(srctree)/arch/$(SRCARCH)/Makefile
+--- linux-2.6.33/arch/x86/Kconfig.cpu	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/arch/x86/Kconfig.cpu	2010-02-24 16:14:59.680879764 -0700
+@@ -271,6 +271,13 @@
+ 	  accordingly optimized code. Use a recent GCC with specific Atom
+ 	  support in order to fully benefit from selecting this option.
+ 
++config MNEHALEM
++	bool "Intel Nehalem"
++	---help---
++
++	  Select this for the Intel Nehalem platform. Intel Nehalem proecessors
++	  include Core i3, i5, i7, Xeon 35xx, and Xeon 55xx processors.
++
+ config GENERIC_CPU
+ 	bool "Generic-x86-64"
+ 	depends on X86_64
+@@ -313,7 +320,7 @@
+ config X86_L1_CACHE_SHIFT
+ 	int
+ 	default "7" if MPENTIUM4 || MPSC
+-	default "6" if MK7 || MK8 || MPENTIUMM || MCORE2 || MATOM || MVIAC7 || X86_GENERIC || GENERIC_CPU
++	default "6" if MK7 || MK8 || MPENTIUMM || MCORE2 || MATOM || MVIAC7 || X86_GENERIC || MNEHALEM || GENERIC_CPU
+ 	default "4" if X86_ELAN || M486 || M386 || MGEODEGX1
+ 	default "5" if MWINCHIP3D || MWINCHIPC6 || MCRUSOE || MEFFICEON || MCYRIXIII || MK6 || MPENTIUMIII || MPENTIUMII || M686 || M586MMX || M586TSC || M586 || MVIAC3_2 || MGEODE_LX
+ 
+@@ -360,11 +367,11 @@
+ 
+ config X86_INTEL_USERCOPY
+ 	def_bool y
+-	depends on MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M586MMX || X86_GENERIC || MK8 || MK7 || MEFFICEON || MCORE2
++	depends on MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M586MMX || X86_GENERIC || MK8 || MK7 || MEFFICEON || MCORE2 || MNEHALEM
+ 
+ config X86_USE_PPRO_CHECKSUM
+ 	def_bool y
+-	depends on MWINCHIP3D || MWINCHIPC6 || MCYRIXIII || MK7 || MK6 || MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M686 || MK8 || MVIAC3_2 || MEFFICEON || MGEODE_LX || MCORE2 || MATOM
++	depends on MWINCHIP3D || MWINCHIPC6 || MCYRIXIII || MK7 || MK6 || MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M686 || MK8 || MVIAC3_2 || MEFFICEON || MGEODE_LX || MCORE2 || MATOM || MNEHALEM
+ 
+ config X86_USE_3DNOW
+ 	def_bool y
+@@ -392,17 +399,17 @@
+ 
+ config X86_TSC
+ 	def_bool y
+-	depends on ((MWINCHIP3D || MCRUSOE || MEFFICEON || MCYRIXIII || MK7 || MK6 || MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M686 || M586MMX || M586TSC || MK8 || MVIAC3_2 || MVIAC7 || MGEODEGX1 || MGEODE_LX || MCORE2 || MATOM) && !X86_NUMAQ) || X86_64
++	depends on ((MWINCHIP3D || MCRUSOE || MEFFICEON || MCYRIXIII || MK7 || MK6 || MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M686 || M586MMX || M586TSC || MK8 || MVIAC3_2 || MVIAC7 || MGEODEGX1 || MGEODE_LX || MCORE2 || MATOM || MNEHALEM) && !X86_NUMAQ) || X86_64
+ 
+ config X86_CMPXCHG64
+ 	def_bool y
+-	depends on X86_PAE || X86_64 || MCORE2 || MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M686 || MATOM
++	depends on X86_PAE || X86_64 || MCORE2 || MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M686 || MATOM || MNEHALEM
+ 
+ # this should be set for all -march=.. options where the compiler
+ # generates cmov.
+ config X86_CMOV
+ 	def_bool y
+-	depends on (MK8 || MK7 || MCORE2 || MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M686 || MVIAC3_2 || MVIAC7 || MCRUSOE || MEFFICEON || X86_64 || MATOM || MGEODE_LX)
++	depends on (MK8 || MK7 || MCORE2 || MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M686 || MVIAC3_2 || MVIAC7 || MCRUSOE || MEFFICEON || X86_64 || MATOM || MGEODE_LX || MNEHALEM)
+ 
+ config X86_MINIMUM_CPU_FAMILY
+ 	int
+--- linux-2.6.33/arch/x86/Makefile	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/arch/x86/Makefile	2010-02-24 16:14:59.691108073 -0700
+@@ -48,16 +48,20 @@
+ 
+         KBUILD_AFLAGS += -m64
+         KBUILD_CFLAGS += -m64
++	KBUILD_CFLAGS += -ffreestanding
+ 
+         # FIXME - should be integrated in Makefile.cpu (Makefile_32.cpu)
+         cflags-$(CONFIG_MK8) += $(call cc-option,-march=k8)
+         cflags-$(CONFIG_MPSC) += $(call cc-option,-march=nocona)
+ 
+-        cflags-$(CONFIG_MCORE2) += \
+-                $(call cc-option,-march=core2,$(call cc-option,-mtune=generic))
+-	cflags-$(CONFIG_MATOM) += $(call cc-option,-march=atom) \
+-		$(call cc-option,-mtune=atom,$(call cc-option,-mtune=generic))
+-        cflags-$(CONFIG_GENERIC_CPU) += $(call cc-option,-mtune=generic)
++        cflags-$(CONFIG_MCORE2) += $(call cc-option,-xSSSE3) $(call cc-option,-ip) \
++		$(call cc-option,-fp-model fast=2) $(call cc-option,-unroll-aggressive) $(call cc-option,-vec-guard-write)
++	cflags-$(CONFIG_MATOM) += $(call cc-option,-xSSE3_ATOM) $(call cc-option,-ip) \
++		$(call cc-option,-fp-model fast=2) $(call cc-option,-unroll-aggressive) $(call cc-option,-vec-guard-write)
++        cflags-$(CONFIG_MNEHALEM) += $(call cc-option,-xSSE4.2) $(call cc-option,-ip) \
++		$(call cc-option,-fp-model fast=2) $(call cc-option,-unroll-aggressive) $(call cc-option,-vec-guard-write)
++        cflags-$(CONFIG_GENERIC_CPU) += $(call cc-option,-xSSE3) $(call cc-option,-ip) \
++		$(call cc-option,-fp-model fast=2) $(call cc-option,-unroll-aggressive) $(call cc-option,-vec-guard-write)
+         KBUILD_CFLAGS += $(cflags-y)
+ 
+         KBUILD_CFLAGS += -mno-red-zone
+@@ -106,8 +110,6 @@
+ KBUILD_CFLAGS += -Wno-sign-compare
+ #
+ KBUILD_CFLAGS += -fno-asynchronous-unwind-tables
+-# prevent gcc from generating any FP code by mistake
+-KBUILD_CFLAGS += $(call cc-option,-mno-sse -mno-mmx -mno-sse2 -mno-3dnow,)
+ 
+ KBUILD_CFLAGS += $(mflags-y)
+ KBUILD_AFLAGS += $(mflags-y)
+--- linux-2.6.33/arch/x86/include/asm/module.h	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/arch/x86/include/asm/module.h	2010-02-24 16:14:59.700925642 -0700
+@@ -19,6 +19,8 @@
+ #define MODULE_PROC_FAMILY "CORE2 "
+ #elif defined CONFIG_MATOM
+ #define MODULE_PROC_FAMILY "ATOM "
++#elif defined CONFIG_MNEHALEM
++#define MODULE_PROC_FAMILY "NEHALEM "
+ #elif defined CONFIG_M686
+ #define MODULE_PROC_FAMILY "686 "
+ #elif defined CONFIG_MPENTIUMII
+--- linux-2.6.33/arch/x86/boot/Makefile	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/arch/x86/boot/Makefile	2010-02-24 16:14:59.713733716 -0700
+@@ -59,16 +59,12 @@
+ # that way we can complain to the user if the CPU is insufficient.
+ KBUILD_CFLAGS	:= $(LINUXINCLUDE) -g -Os -D_SETUP -D__KERNEL__ \
+ 		   -DDISABLE_BRANCH_PROFILING \
+-		   -Wall -Wstrict-prototypes \
+-		   -march=i386 -mregparm=3 \
++		   -m32 -no-multibyte-chars -march=i386 -mregparm=3 \
+ 		   -include $(srctree)/$(src)/code16gcc.h \
+ 		   -fno-strict-aliasing -fomit-frame-pointer \
+ 		   $(call cc-option, -ffreestanding) \
+-		   $(call cc-option, -fno-toplevel-reorder,\
+-			$(call cc-option, -fno-unit-at-a-time)) \
+ 		   $(call cc-option, -fno-stack-protector) \
+ 		   $(call cc-option, -mpreferred-stack-boundary=2)
+-KBUILD_CFLAGS	+= $(call cc-option, -m32)
+ KBUILD_AFLAGS	:= $(KBUILD_CFLAGS) -D__ASSEMBLY__
+ GCOV_PROFILE := n
+ 
+@@ -198,3 +194,5 @@
+ install:
+ 	sh $(srctree)/$(src)/install.sh $(KERNELRELEASE) $(obj)/bzImage \
+ 		System.map "$(INSTALL_PATH)"
++CFLAGS_printf.o=-O1 -fno-stack-protector
++CFLAGS_video.o=-O1 -fno-stack-protector
+--- linux-2.6.33/arch/x86/boot/compressed/Makefile	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/arch/x86/boot/compressed/Makefile	2010-02-24 16:14:59.723339073 -0700
+@@ -1,3 +1,4 @@
++CC=icc
+ #
+ # linux/arch/x86/boot/compressed/Makefile
+ #
+@@ -6,7 +7,7 @@
+ 
+ targets := vmlinux.lds vmlinux vmlinux.bin vmlinux.bin.gz vmlinux.bin.bz2 vmlinux.bin.lzma vmlinux.bin.lzo head_$(BITS).o misc.o piggy.o
+ 
+-KBUILD_CFLAGS := -m$(BITS) -D__KERNEL__ $(LINUX_INCLUDE) -O2
++KBUILD_CFLAGS := -m$(BITS) -D__KERNEL__ $(LINUX_INCLUDE) -O3 -no-vec
+ KBUILD_CFLAGS += -fno-strict-aliasing -fPIC
+ KBUILD_CFLAGS += -DDISABLE_BRANCH_PROFILING
+ cflags-$(CONFIG_X86_32) := -march=i386
+--- linux-2.6.33/arch/x86/boot/compressed/misc.c	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/arch/x86/boot/compressed/misc.c	2010-02-24 16:14:59.735733893 -0700
+@@ -117,6 +117,7 @@
+  * gzip declarations
+  */
+ #define STATIC		static
++#define HANDLE_ICC
+ 
+ #undef memset
+ #undef memcpy
+--- linux-2.6.33/arch/x86/include/asm/current.h	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/arch/x86/include/asm/current.h	2010-02-24 16:14:59.746612518 -0700
+@@ -11,7 +11,7 @@
+ 
+ static __always_inline struct task_struct *get_current(void)
+ {
+-	return percpu_read_stable(current_task);
++	return percpu_read(current_task);
+ }
+ 
+ #define current get_current()
+--- linux-2.6.33/arch/x86/include/asm/delay.h	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/arch/x86/include/asm/delay.h	2010-02-24 16:14:59.756322585 -0700
+@@ -7,10 +7,6 @@
+  * Delay routines calling functions in arch/x86/lib/delay.c
+  */
+ 
+-/* Undefined functions to get compile-time errors */
+-extern void __bad_udelay(void);
+-extern void __bad_ndelay(void);
+-
+ extern void __udelay(unsigned long usecs);
+ extern void __ndelay(unsigned long nsecs);
+ extern void __const_udelay(unsigned long xloops);
+@@ -18,12 +14,12 @@
+ 
+ /* 0x10c7 is 2**32 / 1000000 (rounded up) */
+ #define udelay(n) (__builtin_constant_p(n) ? \
+-	((n) > 20000 ? __bad_udelay() : __const_udelay((n) * 0x10c7ul)) : \
++	( __const_udelay((n) * 0x10c7ul)) : \
+ 	__udelay(n))
+ 
+ /* 0x5 is 2**32 / 1000000000 (rounded up) */
+ #define ndelay(n) (__builtin_constant_p(n) ? \
+-	((n) > 20000 ? __bad_ndelay() : __const_udelay((n) * 5ul)) : \
++	( __const_udelay((n) * 5ul)) : \
+ 	__ndelay(n))
+ 
+ void use_tsc_delay(void);
+--- linux-2.6.33/arch/x86/include/asm/percpu.h	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/arch/x86/include/asm/percpu.h	2010-02-24 16:14:59.766099107 -0700
+@@ -49,7 +49,7 @@
+ #define __percpu_arg(x)		"%%"__stringify(__percpu_seg)":%P" #x
+ #define __my_cpu_offset		percpu_read(this_cpu_off)
+ #else
+-#define __percpu_arg(x)		"%P" #x
++#define __percpu_arg(x)		"%" #x
+ #endif
+ 
+ /*
+@@ -104,35 +104,35 @@
+ 	}						\
+ } while (0)
+ 
+-#define percpu_from_op(op, var, constraint)		\
++#define percpu_from_op(op, var)				\
+ ({							\
+ 	typeof(var) pfo_ret__;				\
+ 	switch (sizeof(var)) {				\
+ 	case 1:						\
+ 		asm(op "b "__percpu_arg(1)",%0"		\
+ 		    : "=q" (pfo_ret__)			\
+-		    : constraint);			\
++		    : "m" (var));                       \
+ 		break;					\
+ 	case 2:						\
+ 		asm(op "w "__percpu_arg(1)",%0"		\
+ 		    : "=r" (pfo_ret__)			\
+-		    : constraint);			\
++		    : "m" (var));                       \
+ 		break;					\
+ 	case 4:						\
+ 		asm(op "l "__percpu_arg(1)",%0"		\
+ 		    : "=r" (pfo_ret__)			\
+-		    : constraint);			\
++		    : "m" (var));                       \
+ 		break;					\
+ 	case 8:						\
+ 		asm(op "q "__percpu_arg(1)",%0"		\
+ 		    : "=r" (pfo_ret__)			\
+-		    : constraint);			\
++		    : "m" (var));                       \
+ 		break;					\
+ 	default: __bad_percpu_size();			\
+ 	}						\
+ 	pfo_ret__;					\
+ })
+-
++#define percpu_read(var)  percpu_from_op("mov", per_cpu__##var)
+ /*
+  * percpu_read() makes gcc load the percpu variable every time it is
+  * accessed while percpu_read_stable() allows the value to be cached.
+@@ -142,10 +142,6 @@
+  * per-thread variables implemented as per-cpu variables and thus
+  * stable for the duration of the respective task.
+  */
+-#define percpu_read(var)	percpu_from_op("mov", per_cpu__##var,	\
+-					       "m" (per_cpu__##var))
+-#define percpu_read_stable(var)	percpu_from_op("mov", per_cpu__##var,	\
+-					       "p" (&per_cpu__##var))
+ #define percpu_write(var, val)	percpu_to_op("mov", per_cpu__##var, val)
+ #define percpu_add(var, val)	percpu_to_op("add", per_cpu__##var, val)
+ #define percpu_sub(var, val)	percpu_to_op("sub", per_cpu__##var, val)
+@@ -153,9 +149,9 @@
+ #define percpu_or(var, val)	percpu_to_op("or", per_cpu__##var, val)
+ #define percpu_xor(var, val)	percpu_to_op("xor", per_cpu__##var, val)
+ 
+-#define __this_cpu_read_1(pcp)		percpu_from_op("mov", (pcp), "m"(pcp))
+-#define __this_cpu_read_2(pcp)		percpu_from_op("mov", (pcp), "m"(pcp))
+-#define __this_cpu_read_4(pcp)		percpu_from_op("mov", (pcp), "m"(pcp))
++#define __this_cpu_read_1(pcp)		percpu_from_op("mov", (pcp))
++#define __this_cpu_read_2(pcp)		percpu_from_op("mov", (pcp))
++#define __this_cpu_read_4(pcp)		percpu_from_op("mov", (pcp))
+ 
+ #define __this_cpu_write_1(pcp, val)	percpu_to_op("mov", (pcp), val)
+ #define __this_cpu_write_2(pcp, val)	percpu_to_op("mov", (pcp), val)
+@@ -173,9 +169,9 @@
+ #define __this_cpu_xor_2(pcp, val)	percpu_to_op("xor", (pcp), val)
+ #define __this_cpu_xor_4(pcp, val)	percpu_to_op("xor", (pcp), val)
+ 
+-#define this_cpu_read_1(pcp)		percpu_from_op("mov", (pcp), "m"(pcp))
+-#define this_cpu_read_2(pcp)		percpu_from_op("mov", (pcp), "m"(pcp))
+-#define this_cpu_read_4(pcp)		percpu_from_op("mov", (pcp), "m"(pcp))
++#define this_cpu_read_1(pcp)		percpu_from_op("mov", (pcp))
++#define this_cpu_read_2(pcp)		percpu_from_op("mov", (pcp))
++#define this_cpu_read_4(pcp)		percpu_from_op("mov", (pcp))
+ #define this_cpu_write_1(pcp, val)	percpu_to_op("mov", (pcp), val)
+ #define this_cpu_write_2(pcp, val)	percpu_to_op("mov", (pcp), val)
+ #define this_cpu_write_4(pcp, val)	percpu_to_op("mov", (pcp), val)
+@@ -210,14 +206,14 @@
+  * 32 bit must fall back to generic operations.
+  */
+ #ifdef CONFIG_X86_64
+-#define __this_cpu_read_8(pcp)		percpu_from_op("mov", (pcp), "m"(pcp))
++#define __this_cpu_read_8(pcp)		percpu_from_op("mov", (pcp))
+ #define __this_cpu_write_8(pcp, val)	percpu_to_op("mov", (pcp), val)
+ #define __this_cpu_add_8(pcp, val)	percpu_to_op("add", (pcp), val)
+ #define __this_cpu_and_8(pcp, val)	percpu_to_op("and", (pcp), val)
+ #define __this_cpu_or_8(pcp, val)	percpu_to_op("or", (pcp), val)
+ #define __this_cpu_xor_8(pcp, val)	percpu_to_op("xor", (pcp), val)
+ 
+-#define this_cpu_read_8(pcp)		percpu_from_op("mov", (pcp), "m"(pcp))
++#define this_cpu_read_8(pcp)		percpu_from_op("mov", (pcp))
+ #define this_cpu_write_8(pcp, val)	percpu_to_op("mov", (pcp), val)
+ #define this_cpu_add_8(pcp, val)	percpu_to_op("add", (pcp), val)
+ #define this_cpu_and_8(pcp, val)	percpu_to_op("and", (pcp), val)
+--- linux-2.6.33/arch/x86/include/asm/thread_info.h	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/arch/x86/include/asm/thread_info.h	2010-02-24 16:14:59.775249326 -0700
+@@ -215,7 +215,7 @@
+ static inline struct thread_info *current_thread_info(void)
+ {
+ 	struct thread_info *ti;
+-	ti = (void *)(percpu_read_stable(kernel_stack) +
++	ti = (void *)(percpu_read(kernel_stack) +
+ 		      KERNEL_STACK_OFFSET - THREAD_SIZE);
+ 	return ti;
+ }
+--- linux-2.6.33/arch/x86/kernel/acpi/realmode/Makefile	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/arch/x86/kernel/acpi/realmode/Makefile	2010-02-24 16:14:59.791670857 -0700
+@@ -1,3 +1,4 @@
++CC=gcc
+ #
+ # arch/x86/kernel/acpi/realmode/Makefile
+ #
+@@ -28,11 +29,11 @@
+ # How to compile the 16-bit code.  Note we always compile for -march=i386,
+ # that way we can complain to the user if the CPU is insufficient.
+ # Compile with _SETUP since this is similar to the boot-time setup code.
+-KBUILD_CFLAGS	:= $(LINUXINCLUDE) -g -Os -D_SETUP -D_WAKEUP -D__KERNEL__ \
++KBUILD_CFLAGS	:= $(LINUXINCLUDE) -Os -D_SETUP -D_WAKEUP -D__KERNEL__ \
+ 		   -I$(srctree)/$(bootsrc) \
+ 		   $(cflags-y) \
+-		   -Wall -Wstrict-prototypes \
+-		   -march=i386 -mregparm=3 \
++		   -w \
++		   -march=i386 -m32 -mregparm=3 \
+ 		   -include $(srctree)/$(bootsrc)/code16gcc.h \
+ 		   -fno-strict-aliasing -fomit-frame-pointer \
+ 		   $(call cc-option, -ffreestanding) \
+@@ -40,7 +41,6 @@
+ 			$(call cc-option, -fno-unit-at-a-time)) \
+ 		   $(call cc-option, -fno-stack-protector) \
+ 		   $(call cc-option, -mpreferred-stack-boundary=2)
+-KBUILD_CFLAGS	+= $(call cc-option, -m32)
+ KBUILD_AFLAGS	:= $(KBUILD_CFLAGS) -D__ASSEMBLY__
+ GCOV_PROFILE := n
+ 
+--- linux-2.6.33/arch/x86/kernel/apic/Makefile	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/arch/x86/kernel/apic/Makefile	2010-02-24 16:14:59.802068657 -0700
+@@ -17,3 +17,5 @@
+ obj-$(CONFIG_X86_NUMAQ)		+= numaq_32.o
+ obj-$(CONFIG_X86_ES7000)	+= es7000_32.o
+ obj-$(CONFIG_X86_SUMMIT)	+= summit_32.o
++CFLAGS_apic.o=-O1
++CFLAGS_io_apic.o=-O1
+--- linux-2.6.33/arch/x86/kernel/cpu/common.c	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/arch/x86/kernel/cpu/common.c	2010-02-24 16:14:59.811171130 -0700
+@@ -93,12 +93,12 @@
+ 	 * TLS descriptors are currently at a different place compared to i386.
+ 	 * Hopefully nobody expects them at a fixed place (Wine?)
+ 	 */
+-	[GDT_ENTRY_KERNEL32_CS]		= GDT_ENTRY_INIT(0xc09b, 0, 0xfffff),
+-	[GDT_ENTRY_KERNEL_CS]		= GDT_ENTRY_INIT(0xa09b, 0, 0xfffff),
+-	[GDT_ENTRY_KERNEL_DS]		= GDT_ENTRY_INIT(0xc093, 0, 0xfffff),
+-	[GDT_ENTRY_DEFAULT_USER32_CS]	= GDT_ENTRY_INIT(0xc0fb, 0, 0xfffff),
+-	[GDT_ENTRY_DEFAULT_USER_DS]	= GDT_ENTRY_INIT(0xc0f3, 0, 0xfffff),
+-	[GDT_ENTRY_DEFAULT_USER_CS]	= GDT_ENTRY_INIT(0xa0fb, 0, 0xfffff),
++	[GDT_ENTRY_KERNEL32_CS]		= { { { 0x0000ffff, 0x00cf9b00 } } },
++	[GDT_ENTRY_KERNEL_CS]		= { { { 0x0000ffff, 0x00af9b00 } } },
++	[GDT_ENTRY_KERNEL_DS]		= { { { 0x0000ffff, 0x00cf9300 } } },
++	[GDT_ENTRY_DEFAULT_USER32_CS]	= { { { 0x0000ffff, 0x00cffb00 } } },
++	[GDT_ENTRY_DEFAULT_USER_DS]	= { { { 0x0000ffff, 0x00cff300 } } },
++	[GDT_ENTRY_DEFAULT_USER_CS]	= { { { 0x0000ffff, 0x00affb00 } } },
+ #else
+ 	[GDT_ENTRY_KERNEL_CS]		= GDT_ENTRY_INIT(0xc09a, 0, 0xfffff),
+ 	[GDT_ENTRY_KERNEL_DS]		= GDT_ENTRY_INIT(0xc092, 0, 0xfffff),
+--- linux-2.6.33/arch/x86/kernel/cpu/mtrr/Makefile	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/arch/x86/kernel/cpu/mtrr/Makefile	2010-02-24 16:14:59.820857743 -0700
+@@ -1,3 +1,5 @@
+ obj-y		:= main.o if.o generic.o state.o cleanup.o
+ obj-$(CONFIG_X86_32) += amd.o cyrix.o centaur.o
+-
++CFLAGS_main.o=-O1
++CFLAGS_cleanup.o=-O1
++CFLAGS_if.o=-O1
+--- linux-2.6.33/arch/x86/mm/Makefile	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/arch/x86/mm/Makefile	2010-02-24 16:14:59.830823023 -0700
+@@ -26,3 +26,4 @@
+ obj-$(CONFIG_ACPI_NUMA)		+= srat_$(BITS).o
+ 
+ obj-$(CONFIG_MEMTEST)		+= memtest.o
++CFLAGS_ioremap.o=-O1
+--- linux-2.6.33/arch/x86/vdso/Makefile	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/arch/x86/vdso/Makefile	2010-02-24 16:14:59.841295934 -0700
+@@ -118,7 +118,7 @@
+ # The DSO images are built using a special linker script.
+ #
+ quiet_cmd_vdso = VDSO    $@
+-      cmd_vdso = $(CC) -nostdlib -o $@ \
++      cmd_vdso = gcc -nostdlib -o $@ \
+ 		       $(VDSO_LDFLAGS) $(VDSO_LDFLAGS_$(filter %.lds,$(^F))) \
+ 		       -Wl,-T,$(filter %.lds,$^) $(filter %.o,$^)
+ 
+--- linux-2.6.33/drivers/acpi/acpica/Makefile	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/drivers/acpi/acpica/Makefile	2010-02-24 16:14:59.851658831 -0700
+@@ -45,3 +45,4 @@
+ acpi-y += utalloc.o utdebug.o uteval.o utinit.o utmisc.o utxface.o \
+ 		utcopy.o utdelete.o utglobal.o utmath.o utobject.o \
+ 		utstate.o utmutex.o utobject.o utresrc.o utlock.o utids.o
++CFLAGS_tbutils.o=-no-ip
+--- linux-2.6.33/drivers/char/Makefile	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/drivers/char/Makefile	2010-02-24 16:14:59.862055793 -0700
+@@ -135,3 +135,4 @@
+ 	rm $@.tmp
+ 
+ endif
++CFLAGS_vt.o=-O1
+--- linux-2.6.33/drivers/char/agp/Makefile	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/drivers/char/agp/Makefile	2010-02-24 16:14:59.870901379 -0700
+@@ -19,3 +19,4 @@
+ obj-$(CONFIG_AGP_SWORKS)	+= sworks-agp.o
+ obj-$(CONFIG_AGP_UNINORTH)	+= uninorth-agp.o
+ obj-$(CONFIG_AGP_VIA)		+= via-agp.o
++CFLAGS_isoch.o=-O1
+--- linux-2.6.33/drivers/video/console/Makefile	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/drivers/video/console/Makefile	2010-02-24 16:14:59.882007853 -0700
+@@ -39,3 +39,6 @@
+ ifeq ($(CONFIG_USB_SISUSBVGA_CON),y)
+ obj-$(CONFIG_USB_SISUSBVGA)           += font.o
+ endif
++CFLAGS_fbcon.o=-O1
++CFLAGS_bitblit.o=-O1
++CFLAGS_softcursor.o=-O1
+--- linux-2.6.33/fs/cifs/Makefile	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/fs/cifs/Makefile	2010-02-24 16:14:59.893390760 -0700
+@@ -11,3 +11,7 @@
+ cifs-$(CONFIG_CIFS_UPCALL) += cifs_spnego.o
+ 
+ cifs-$(CONFIG_CIFS_DFS_UPCALL) += dns_resolve.o cifs_dfs_ref.o
++CFLAGS_cifs_unicode.o=-no-vec
++CFLAGS_inode.o=-no-vec
++CFLAGS_md4.o=-no-vec
++CFLAGS_smbdes.o=-no-vec
+--- linux-2.6.33/fs/fuse/Makefile	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/fs/fuse/Makefile	2010-02-24 16:14:59.910864972 -0700
+@@ -6,3 +6,5 @@
+ obj-$(CONFIG_CUSE) += cuse.o
+ 
+ fuse-objs := dev.o dir.o file.o inode.o control.o
++CFLAGS_dev.o=-O1
++CFLAGS_file.o=-O1
+--- linux-2.6.33/fs/compat_ioctl.c	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/fs/compat_ioctl.c	2010-02-24 16:14:59.920862084 -0700
+@@ -1660,7 +1660,7 @@
+ 	int i;
+ 	const int max = ARRAY_SIZE(ioctl_pointer) - 1;
+ 
+-	BUILD_BUG_ON(max >= (1 << 16));
++	MAYBE_BUILD_BUG_ON(max >= (1 << 16));
+ 
+ 	/* guess initial offset into table, assuming a
+ 	   normalized distribution */
+--- linux-2.6.33/fs/ext4/Makefile	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/fs/ext4/Makefile	2010-02-24 16:14:59.931415971 -0700
+@@ -11,3 +11,4 @@
+ ext4-$(CONFIG_EXT4_FS_XATTR)		+= xattr.o xattr_user.o xattr_trusted.o
+ ext4-$(CONFIG_EXT4_FS_POSIX_ACL)	+= acl.o
+ ext4-$(CONFIG_EXT4_FS_SECURITY)		+= xattr_security.o
++CFLAGS_hash.o=-O1
+--- linux-2.6.33/kernel/Makefile	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/kernel/Makefile	2010-02-24 16:14:59.942060326 -0700
+@@ -131,3 +131,6 @@
+ targets += timeconst.h
+ $(obj)/timeconst.h: $(src)/timeconst.pl FORCE
+ 	$(call if_changed,timeconst)
++CFLAGS_pid.o=-O1
++CFLAGS_groups.o=-O1
++CFLAGS_cgroup.o=-O1
+--- linux-2.6.33/kernel/module.c	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/kernel/module.c	2010-02-24 16:14:59.951368867 -0700
+@@ -2029,6 +2029,8 @@
+ 	versindex = find_sec(hdr, sechdrs, secstrings, "__versions");
+ 	infoindex = find_sec(hdr, sechdrs, secstrings, ".modinfo");
+ 	pcpuindex = find_pcpusec(hdr, sechdrs, secstrings);
++	if (!sechdrs[pcpuindex].sh_size)
++		pcpuindex=0;
+ 
+ 	/* Don't keep modinfo and version sections. */
+ 	sechdrs[infoindex].sh_flags &= ~(unsigned long)SHF_ALLOC;
+--- linux-2.6.33/lib/Makefile	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/lib/Makefile	2010-02-24 16:14:59.961443882 -0700
+@@ -110,3 +110,4 @@
+ 
+ $(obj)/crc32table.h: $(obj)/gen_crc32table
+ 	$(call cmd,crc32)
++CFLAGS_swiotlb.o=-no-vec
+--- linux-2.6.33/lib/zlib_inflate/inflate.c	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/lib/zlib_inflate/inflate.c	2010-02-24 16:14:59.970829490 -0700
+@@ -363,6 +363,120 @@
+     ret = Z_OK;
+     for (;;)
+         switch (state->mode) {
++#ifdef HANDLE_ICC
++	case HEAD:
++            if (state->wrap == 0) {
++                state->mode = TYPEDO;
++                break;
++            }
++        case TYPE:
++            if (flush == Z_BLOCK) goto inf_leave;
++        case TYPEDO:
++            if (state->last) {
++                BYTEBITS();
++                state->mode = CHECK;
++                break;
++            }
++            NEEDBITS(3);
++            state->last = BITS(1);
++            DROPBITS(1);
++            state->mode = TABLE;
++            DROPBITS(2);
++            NEEDBITS(14);
++            state->nlen = BITS(5) + 257;
++            DROPBITS(5);
++            state->ndist = BITS(5) + 1;
++            DROPBITS(5);
++            state->ncode = BITS(4) + 4;
++            DROPBITS(4);
++            state->have = 0;
++            state->mode = LENLENS;
++            while (state->have < state->ncode) {
++                NEEDBITS(3);
++                state->lens[order[state->have++]] = (unsigned short)BITS(3);
++                DROPBITS(3);
++            }
++            while (state->have < 19)
++                state->lens[order[state->have++]] = 0;
++            state->next = state->codes;
++            state->lencode = (code const *)(state->next);
++            state->lenbits = 7;
++            ret = zlib_inflate_table(CODES, state->lens, 19, &(state->next),
++                                &(state->lenbits), state->work);
++            state->have = 0;
++            state->mode = CODELENS;
++            while (state->have < state->nlen + state->ndist) {
++                for (;;) {
++                    this = state->lencode[BITS(state->lenbits)];
++                    if ((unsigned)(this.bits) <= bits) break;
++                    PULLBYTE();
++                }
++                if (this.val < 16) {
++                    NEEDBITS(this.bits);
++                    DROPBITS(this.bits);
++                    state->lens[state->have++] = this.val;
++                }
++                else {
++			if (this.val == 16) {
++                        NEEDBITS(this.bits + 2);
++                        DROPBITS(this.bits);
++                        len = state->lens[state->have - 1];
++                        copy = 3 + BITS(2);
++                        DROPBITS(2);
++                    }
++                    else if (this.val == 17) {
++                        NEEDBITS(this.bits + 3);
++                        DROPBITS(this.bits);
++                        len = 0;
++                        copy = 3 + BITS(3);
++                        DROPBITS(3);
++                    }
++                    else {
++                        NEEDBITS(this.bits + 7);
++                        DROPBITS(this.bits);
++                        len = 0;
++                        copy = 11 + BITS(7);
++                        DROPBITS(7);
++                    }
++                    while (copy--)
++                        state->lens[state->have++] = (unsigned short)len;
++                }
++            }
++
++            /* build code tables */
++            state->next = state->codes;
++            state->lencode = (code const *)(state->next);
++            state->lenbits = 9;
++            ret = zlib_inflate_table(LENS, state->lens, state->nlen, &(state->next),
++                                &(state->lenbits), state->work);
++            state->distcode = (code const *)(state->next);
++            state->distbits = 6;
++            ret = zlib_inflate_table(DISTS, state->lens + state->nlen, state->ndist,
++                            &(state->next), &(state->distbits), state->work);
++            state->mode = LEN;
++                RESTORE();
++                inflate_fast(strm, out);
++                LOAD();
++                break;
++        case CHECK:
++            if (state->wrap) {
++                NEEDBITS(32);
++                out -= left;
++                strm->total_out += out;
++               state->total += out;
++                if (out)
++                    strm->adler = state->check =
++                        UPDATE(state->check, put - out, out);
++               out = left;
++                INITBITS();
++            }
++            state->mode = DONE;
++            ret = Z_STREAM_END;
++            goto inf_leave;
++        default:
++            return Z_STREAM_ERROR;
++        }
++#else
+         case HEAD:
+             if (state->wrap == 0) {
+                 state->mode = TYPEDO;
+@@ -721,6 +835,7 @@
+         default:
+             return Z_STREAM_ERROR;
+         }
++#endif
+ 
+     /*
+        Return from inflate(), updating the total counts and the check value.
+--- linux-2.6.33/mm/Makefile	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/mm/Makefile	2010-02-24 16:14:59.990844375 -0700
+@@ -40,3 +40,4 @@
+ obj-$(CONFIG_HWPOISON_INJECT) += hwpoison-inject.o
+ obj-$(CONFIG_DEBUG_KMEMLEAK) += kmemleak.o
+ obj-$(CONFIG_DEBUG_KMEMLEAK_TEST) += kmemleak-test.o
++CFLAGS_slab.o=-O1
+--- linux-2.6.33/mm/vmalloc.c	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/mm/vmalloc.c	2010-02-24 16:15:00.000838135 -0700
+@@ -673,6 +673,8 @@
+ struct vmap_block_queue {
+ 	spinlock_t lock;
+ 	struct list_head free;
++	struct list_head dirty;
++	unsigned int nr_dirty;
+ };
+ 
+ struct vmap_block {
+@@ -1097,6 +1099,8 @@
+ 		vbq = &per_cpu(vmap_block_queue, i);
+ 		spin_lock_init(&vbq->lock);
+ 		INIT_LIST_HEAD(&vbq->free);
++		INIT_LIST_HEAD(&vbq->dirty);
++		vbq->nr_dirty = 0;
+ 	}
+ 
+ 	/* Import existing vmlist entries. */
+--- linux-2.6.33/net/xfrm/Makefile	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/net/xfrm/Makefile	2010-02-24 16:15:00.011110283 -0700
+@@ -8,3 +8,4 @@
+ obj-$(CONFIG_XFRM_STATISTICS) += xfrm_proc.o
+ obj-$(CONFIG_XFRM_USER) += xfrm_user.o
+ obj-$(CONFIG_XFRM_IPCOMP) += xfrm_ipcomp.o
++CFLAGS_xfrm_policy.o=-O1
+--- linux-2.6.33/sound/core/Makefile	2010-02-24 11:52:17.000000000 -0700
++++ linux-2.6.33.dna/sound/core/Makefile	2010-02-24 16:15:00.021225786 -0700
+@@ -31,3 +31,4 @@
+ 
+ obj-$(CONFIG_SND_OSSEMUL)	+= oss/
+ obj-$(CONFIG_SND_SEQUENCER)	+= seq/
++CFLAGS_pcm_native.o=-O1

@@ -1,0 +1,69 @@
+Uniprocessor fixes for BFS.
+
+Fix a build warning with spin_locked.
+
+Microoptimise try_preempt to compile out this_rq
+
+Fix suitable_idle_cpus since it is NOT always called from a busy cpu.
+This may have been causing stalls.
+
+-ck
+
+---
+ include/linux/sched.h |    2 +-
+ kernel/sched_bfs.c    |   13 ++++++-------
+ 2 files changed, 7 insertions(+), 8 deletions(-)
+
+Index: linux-2.6.33-bfs/kernel/sched_bfs.c
+===================================================================
+--- linux-2.6.33-bfs.orig/kernel/sched_bfs.c	2010-04-25 15:35:17.766506862 +1000
++++ linux-2.6.33-bfs/kernel/sched_bfs.c	2010-04-25 15:35:27.904506830 +1000
+@@ -763,10 +763,9 @@ static inline void clear_cpuidle_map(uns
+ {
+ }
+ 
+-/* Always called from a busy cpu on UP */
+ static inline int suitable_idle_cpus(struct task_struct *p)
+ {
+-	return 0;
++	return uprq->curr == uprq->idle;
+ }
+ 
+ static inline void resched_suitable_idle(struct task_struct *p)
+@@ -945,7 +944,7 @@ static void resched_task(struct task_str
+ #else
+ static inline void resched_task(struct task_struct *p)
+ {
+-	assert_spin_locked(&grq.lock);
++	assert_raw_spin_locked(&grq.lock);
+ 	set_tsk_need_resched(p);
+ }
+ #endif
+@@ -1211,10 +1210,10 @@ static void try_preempt(struct task_stru
+ #else /* CONFIG_SMP */
+ static void try_preempt(struct task_struct *p, struct rq *this_rq)
+ {
+-	if (p->prio < this_rq->rq_prio ||
+-	    (p->prio == this_rq->rq_prio && p->policy == SCHED_NORMAL &&
+-	     time_before(p->deadline, this_rq->rq_deadline)))
+-		resched_task(this_rq->curr);
++	if (p->prio < uprq->rq_prio ||
++	    (p->prio == uprq->rq_prio && p->policy == SCHED_NORMAL &&
++	     time_before(p->deadline, uprq->rq_deadline)))
++		resched_task(uprq->curr);
+ 	return;
+ }
+ #endif /* CONFIG_SMP */
+Index: linux-2.6.33-bfs/include/linux/sched.h
+===================================================================
+--- linux-2.6.33-bfs.orig/include/linux/sched.h	2010-04-25 15:35:17.767507160 +1000
++++ linux-2.6.33-bfs/include/linux/sched.h	2010-04-25 15:35:27.905258011 +1000
+@@ -1612,7 +1612,7 @@ static inline void tsk_cpus_current(stru
+ 
+ static inline void print_scheduler_version(void)
+ {
+-	printk(KERN_INFO"BFS CPU scheduler v0.315 by Con Kolivas.\n");
++	printk(KERN_INFO"BFS CPU scheduler v0.316 by Con Kolivas.\n");
+ }
+ 
+ static inline int iso_task(struct task_struct *p)
