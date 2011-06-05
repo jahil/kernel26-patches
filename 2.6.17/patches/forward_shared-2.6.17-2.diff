@@ -1,0 +1,195 @@
+diff -ur v2.6.17/linux/Documentation/filesystems/proc.txt linux/Documentation/filesystems/proc.txt
+--- v2.6.17/linux/Documentation/filesystems/proc.txt	2006-06-18 17:23:33.000000000 +0300
++++ linux/Documentation/filesystems/proc.txt	2006-06-18 20:33:13.625164408 +0300
+@@ -1699,6 +1699,18 @@
+ (external addresses  can  still  be  spoofed), without the need for additional
+ firewall rules.
+ 
++forward_shared
++--------------
++
++Integer  value determines  if a source  validation should  allow forwarding of
++packets  with local source  address. 1 means  yes, 0 means  no. By default the
++flag is disabled and such packets are not forwarded.
++
++If  you enable this flag on internal  network, the router will forward packets
++from  internal hosts with shared  IP addresses no matter  how the rp_filter is
++set.  This flag  is activated only  if it  is enabled both  in specific device
++section and in "all" section.
++
+ secure_redirects
+ ----------------
+ 
+diff -ur v2.6.17/linux/Documentation/networking/ip-sysctl.txt linux/Documentation/networking/ip-sysctl.txt
+--- v2.6.17/linux/Documentation/networking/ip-sysctl.txt	2006-06-18 17:23:33.000000000 +0300
++++ linux/Documentation/networking/ip-sysctl.txt	2006-06-18 20:33:13.626164256 +0300
+@@ -481,6 +481,17 @@
+ forwarding - BOOLEAN
+ 	Enable IP forwarding on this interface.
+ 
++forward_shared - BOOLEAN
++	Integer value determines if a source validation should allow
++	forwarding of packets with local source address. 1 means yes,
++	0 means no. By default the flag is disabled and such packets
++	are not forwarded.
++ 
++	If you enable this flag on internal network, the router will forward
++	packets from internal hosts with shared IP addresses no matter how
++	the rp_filter is set. This flag is activated only if it is
++	enabled both in specific device section and in "all" section.
++
+ mc_forwarding - BOOLEAN
+ 	Do multicast routing. The kernel needs to be compiled with CONFIG_MROUTE
+ 	and a multicast routing daemon is required.
+diff -ur v2.6.17/linux/include/linux/inetdevice.h linux/include/linux/inetdevice.h
+--- v2.6.17/linux/include/linux/inetdevice.h	2006-06-18 17:23:40.000000000 +0300
++++ linux/include/linux/inetdevice.h	2006-06-18 20:33:13.627164104 +0300
+@@ -31,6 +31,7 @@
+ 	int	no_policy;
+ 	int	force_igmp_version;
+ 	int	promote_secondaries;
++	int	forward_shared;
+ 	void	*sysctl;
+ };
+ 
+@@ -85,6 +86,8 @@
+ #define IN_DEV_ARP_ANNOUNCE(in_dev)	(max(ipv4_devconf.arp_announce, (in_dev)->cnf.arp_announce))
+ #define IN_DEV_ARP_IGNORE(in_dev)	(max(ipv4_devconf.arp_ignore, (in_dev)->cnf.arp_ignore))
+ 
++#define IN_DEV_FORWARD_SHARED(in_dev)	((in_dev)->cnf.forward_shared && ipv4_devconf.forward_shared)
++
+ struct in_ifaddr
+ {
+ 	struct in_ifaddr	*ifa_next;
+diff -ur v2.6.17/linux/include/linux/sysctl.h linux/include/linux/sysctl.h
+--- v2.6.17/linux/include/linux/sysctl.h	2006-06-18 17:23:40.000000000 +0300
++++ linux/include/linux/sysctl.h	2006-06-18 20:33:55.231839232 +0300
+@@ -458,6 +458,7 @@
+ 	NET_IPV4_CONF_ARP_IGNORE=19,
+ 	NET_IPV4_CONF_PROMOTE_SECONDARIES=20,
+ 	NET_IPV4_CONF_ARP_ACCEPT=21,
++	NET_IPV4_CONF_FORWARD_SHARED=22,
+ 	__NET_IPV4_CONF_MAX
+ };
+ 
+diff -ur v2.6.17/linux/include/net/ip_fib.h linux/include/net/ip_fib.h
+--- v2.6.17/linux/include/net/ip_fib.h	2006-03-22 10:51:59.000000000 +0200
++++ linux/include/net/ip_fib.h	2006-06-18 20:33:13.629163800 +0300
+@@ -235,7 +235,7 @@
+ extern int inet_rtm_getroute(struct sk_buff *skb, struct nlmsghdr* nlh, void *arg);
+ extern int inet_dump_fib(struct sk_buff *skb, struct netlink_callback *cb);
+ extern int fib_validate_source(u32 src, u32 dst, u8 tos, int oif,
+-			       struct net_device *dev, u32 *spec_dst, u32 *itag);
++			       struct net_device *dev, u32 *spec_dst, u32 *itag, int our);
+ extern void fib_select_multipath(const struct flowi *flp, struct fib_result *res);
+ 
+ struct rtentry;
+diff -ur v2.6.17/linux/net/ipv4/devinet.c linux/net/ipv4/devinet.c
+--- v2.6.17/linux/net/ipv4/devinet.c	2006-06-18 17:23:40.000000000 +0300
++++ linux/net/ipv4/devinet.c	2006-06-18 20:33:13.630163648 +0300
+@@ -1404,6 +1404,14 @@
+ 			.proc_handler	= &proc_dointvec,
+ 		},
+ 		{
++			.ctl_name	= NET_IPV4_CONF_FORWARD_SHARED,
++			.procname	= "forward_shared",
++			.data		= &ipv4_devconf.forward_shared,
++			.maxlen		= sizeof(int),
++			.mode		= 0644,
++			.proc_handler	= &proc_dointvec,
++		},
++		{
+ 			.ctl_name	= NET_IPV4_CONF_NOXFRM,
+ 			.procname	= "disable_xfrm",
+ 			.data		= &ipv4_devconf.no_xfrm,
+diff -ur v2.6.17/linux/net/ipv4/fib_frontend.c linux/net/ipv4/fib_frontend.c
+--- v2.6.17/linux/net/ipv4/fib_frontend.c	2006-06-18 17:23:40.000000000 +0300
++++ linux/net/ipv4/fib_frontend.c	2006-06-18 20:33:13.631163496 +0300
+@@ -161,7 +161,8 @@
+  */
+ 
+ int fib_validate_source(u32 src, u32 dst, u8 tos, int oif,
+-			struct net_device *dev, u32 *spec_dst, u32 *itag)
++			struct net_device *dev, u32 *spec_dst, u32 *itag,
++			int our)
+ {
+ 	struct in_device *in_dev;
+ 	struct flowi fl = { .nl_u = { .ip4_u =
+@@ -172,6 +173,7 @@
+ 	struct fib_result res;
+ 	int no_addr, rpf;
+ 	int ret;
++	int fwdsh = 0;
+ 
+ 	no_addr = rpf = 0;
+ 	rcu_read_lock();
+@@ -179,6 +181,7 @@
+ 	if (in_dev) {
+ 		no_addr = in_dev->ifa_list == NULL;
+ 		rpf = IN_DEV_RPFILTER(in_dev);
++		fwdsh = IN_DEV_FORWARD_SHARED(in_dev);
+ 	}
+ 	rcu_read_unlock();
+ 
+@@ -187,7 +190,12 @@
+ 
+ 	if (fib_lookup(&fl, &res))
+ 		goto last_resort;
+-	if (res.type != RTN_UNICAST)
++	if (fwdsh) {
++		fwdsh = (res.type == RTN_LOCAL && !our);
++		if (fwdsh)
++			rpf = 0;
++	}
++	if (res.type != RTN_UNICAST && !fwdsh)
+ 		goto e_inval_res;
+ 	*spec_dst = FIB_RES_PREFSRC(res);
+ 	fib_combine_itag(itag, &res);
+@@ -207,6 +215,8 @@
+ 	if (rpf)
+ 		goto e_inval;
+ 	fl.oif = dev->ifindex;
++	if (fwdsh)
++		fl.iif = loopback_dev.ifindex;
+ 
+ 	ret = 0;
+ 	if (fib_lookup(&fl, &res) == 0) {
+diff -ur v2.6.17/linux/net/ipv4/route.c linux/net/ipv4/route.c
+--- v2.6.17/linux/net/ipv4/route.c	2006-06-18 17:23:40.000000000 +0300
++++ linux/net/ipv4/route.c	2006-06-18 20:33:13.633163192 +0300
+@@ -1606,7 +1606,7 @@
+ 			goto e_inval;
+ 		spec_dst = inet_select_addr(dev, 0, RT_SCOPE_LINK);
+ 	} else if (fib_validate_source(saddr, 0, tos, 0,
+-					dev, &spec_dst, &itag) < 0)
++					dev, &spec_dst, &itag, our) < 0)
+ 		goto e_inval;
+ 
+ 	rth = dst_alloc(&ipv4_dst_ops);
+@@ -1720,7 +1720,7 @@
+ 
+ 
+ 	err = fib_validate_source(saddr, daddr, tos, FIB_RES_OIF(*res), 
+-				  in_dev->dev, &spec_dst, &itag);
++				  in_dev->dev, &spec_dst, &itag, 0);
+ 	if (err < 0) {
+ 		ip_handle_martian_source(in_dev->dev, in_dev, skb, daddr, 
+ 					 saddr);
+@@ -1954,7 +1954,7 @@
+ 		int result;
+ 		result = fib_validate_source(saddr, daddr, tos,
+ 					     loopback_dev.ifindex,
+-					     dev, &spec_dst, &itag);
++					     dev, &spec_dst, &itag, 1);
+ 		if (result < 0)
+ 			goto martian_source;
+ 		if (result)
+@@ -1988,7 +1988,7 @@
+ 		spec_dst = inet_select_addr(dev, 0, RT_SCOPE_LINK);
+ 	else {
+ 		err = fib_validate_source(saddr, 0, tos, 0, dev, &spec_dst,
+-					  &itag);
++					  &itag, 1);
+ 		if (err < 0)
+ 			goto martian_source;
+ 		if (err)
