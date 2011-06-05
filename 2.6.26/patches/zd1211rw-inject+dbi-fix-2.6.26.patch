@@ -1,0 +1,61 @@
+diff -pur drivers/net/wireless/zd1211rw/zd_mac.c.orig drivers/net/wireless/zd1211rw/zd_mac.c
+--- drivers/net/wireless/zd1211rw/zd_mac.c.orig	2008-07-20 19:44:42.000000000 +0200
++++ drivers/net/wireless/zd1211rw/zd_mac.c	2008-07-20 19:49:24.000000000 +0200
+@@ -1,5 +1,4 @@
+-/* ZD1211 USB-WLAN driver for Linux
+- *
++/*
+  * Copyright (C) 2005-2007 Ulrich Kunitz <kune@deine-taler.de>
+  * Copyright (C) 2006-2007 Daniel Drake <dsd@gentoo.org>
+  * Copyright (C) 2006-2007 Michael Wu <flamingice@sourmilk.net>
+@@ -191,14 +190,19 @@
+ static int set_rx_filter(struct zd_mac *mac)
+ {
+ 	unsigned long flags;
+-	u32 filter = STA_RX_FILTER;
++	struct zd_ioreq32 ioreqs[] = {
++		{CR_RX_FILTER, STA_RX_FILTER},
++		{ CR_SNIFFER_ON, 0U },
++	};
+ 
+ 	spin_lock_irqsave(&mac->lock, flags);
+-	if (mac->pass_ctrl)
+-		filter |= RX_FILTER_CTRL;
++	if (mac->pass_ctrl) {
++		ioreqs[0].value |= 0xFFFFFFFF;
++		ioreqs[1].value = 0x1;
++	}
+ 	spin_unlock_irqrestore(&mac->lock, flags);
+ 
+-	return zd_iowrite32(&mac->chip, CR_RX_FILTER, filter);
++	return zd_iowrite32a(&mac->chip, ioreqs, ARRAY_SIZE(ioreqs));
+ }
+ 
+ static int set_mc_hash(struct zd_mac *mac)
+@@ -661,7 +665,8 @@
+ 	/* Caller has to ensure that length >= sizeof(struct rx_status). */
+ 	status = (struct rx_status *)
+ 		(buffer + (length - sizeof(struct rx_status)));
+-	if (status->frame_status & ZD_RX_ERROR) {
++	if ((status->frame_status & ZD_RX_ERROR) || 
++		(status->frame_status & ~0x21)) {
+ 		if (mac->pass_failed_fcs &&
+ 				(status->frame_status & ZD_RX_CRC32_ERROR)) {
+ 			stats.flag |= RX_FLAG_FAILED_FCS_CRC;
+@@ -674,6 +679,7 @@
+ 	stats.freq = zd_channels[_zd_chip_get_channel(&mac->chip) - 1].center_freq;
+ 	stats.band = IEEE80211_BAND_2GHZ;
+ 	stats.signal = status->signal_strength;
++	stats.signal = stats.signal - 90;
+ 	stats.qual = zd_rx_qual_percent(buffer,
+ 		                          length - sizeof(struct rx_status),
+ 		                          status);
+@@ -974,7 +980,7 @@
+ 	hw->wiphy->bands[IEEE80211_BAND_2GHZ] = &mac->band;
+ 
+ 	hw->flags = IEEE80211_HW_RX_INCLUDES_FCS |
+-		    IEEE80211_HW_SIGNAL_UNSPEC;
++		    IEEE80211_HW_SIGNAL_DBM;
+ 
+ 	hw->wiphy->interface_modes =
+ 		BIT(NL80211_IFTYPE_MESH_POINT) |
