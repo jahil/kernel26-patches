@@ -1,0 +1,17 @@
+Kernel 2.6.xx Patches and Patchsets Collection
+==============================================
+
+
+I was archiving kernel patches from 2.6.11 relaese. Most of patches and patchsets projects are dead or added into mainline.
+
+It is also worth noting that some patchsets are built on the back of other patchsets (which may or may not be reflected in the title of the patch).
+
+Dead Patchsets
+--------------
+PowerPack ;] - http://snaj.ath.cx/26x/index.html
+nitro
+beyound
+emission
+
+
+
