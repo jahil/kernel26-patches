@@ -1,0 +1,1718 @@
+diff --unified --recursive --new-file linux-2.6.11/arch/i386/mm/fault.c linux-cart/arch/i386/mm/fault.c
+--- linux-2.6.11/arch/i386/mm/fault.c	2005-03-02 02:37:30.000000000 -0500
++++ linux-cart/arch/i386/mm/fault.c	2005-05-27 12:24:33.000000000 -0400
+@@ -290,6 +290,7 @@
+ 	}
+ 
+ 	vma = find_vma(mm, address);
++
+ 	if (!vma)
+ 		goto bad_area;
+ 	if (vma->vm_start <= address)
+@@ -439,7 +440,7 @@
+ 			printk(KERN_CRIT "kernel tried to execute NX-protected page - exploit attempt? (uid: %d)\n", current->uid);
+ 	}
+ #endif
+-	if (address < PAGE_SIZE)
++	if (address < PAGE_SIZE) 
+ 		printk(KERN_ALERT "Unable to handle kernel NULL pointer dereference");
+ 	else
+ 		printk(KERN_ALERT "Unable to handle kernel paging request");
+diff --unified --recursive --new-file linux-2.6.11/include/linux/cart.h linux-cart/include/linux/cart.h
+--- linux-2.6.11/include/linux/cart.h	1969-12-31 19:00:00.000000000 -0500
++++ linux-cart/include/linux/cart.h	2005-05-17 04:44:43.000000000 -0400
+@@ -0,0 +1,43 @@
++#ifndef __CART_H__
++#define __CART_H__
++
++/* Short and Long term utility as used by CART */
++#define SHORT_TERM	0
++#define LONG_TERM	1
++
++#define T1 		0x1
++#define T2		0x2
++
++#define B1		0x4
++#define B2		0x8
++
++/* The struct used to represent non resident pages */
++struct non_res_list_node {
++	unsigned long mapping;
++	unsigned long offset;
++	struct list_head list;
++};
++
++/* Functions to manipulate the "utility" of a page */
++int cart_init();
++void set_short_term(struct page *page);
++void set_long_term(struct page *page);
++
++/* List manipulation functions */
++void add_to_resident_list(struct page *page, unsigned int list);
++void add_to_non_resident_list (struct page *page, unsigned int list);
++unsigned int find_in_resident_list(struct page *page);
++unsigned int find_in_non_resident_list(struct page *page);
++
++void add_to_t1(struct page *page);
++void add_to_t2 (struct page *page);
++void add_to_t1_tail(struct zone *, struct page *);
++void add_to_t2_tail(struct zone *, struct page *);
++unsigned int is_in_t1(unsigned int flag);
++unsigned int is_in_t2(unsigned int flag);
++unsigned int is_in_b1(unsigned int flag);
++unsigned int is_in_b2(unsigned int flag);
++void update_cart_params(struct page *page);
++struct page *replace (struct zone *);
++
++#endif
+diff --unified --recursive --new-file linux-2.6.11/include/linux/kernel.h linux-cart/include/linux/kernel.h
+--- linux-2.6.11/include/linux/kernel.h	2005-03-02 02:37:30.000000000 -0500
++++ linux-cart/include/linux/kernel.h	2005-05-17 04:44:47.000000000 -0400
+@@ -282,5 +282,4 @@
+ #if __GNUC__ > 2 || __GNUC_MINOR__ >= 95
+ #define __FUNCTION__ (__func__)
+ #endif
+-
+ #endif
+diff --unified --recursive --new-file linux-2.6.11/include/linux/mm.h linux-cart/include/linux/mm.h
+--- linux-2.6.11/include/linux/mm.h	2005-03-02 02:37:47.000000000 -0500
++++ linux-cart/include/linux/mm.h	2005-05-17 04:44:45.000000000 -0400
+@@ -260,6 +260,7 @@
+ 	void *virtual;			/* Kernel virtual address (NULL if
+ 					   not kmapped, ie. highmem) */
+ #endif /* WANT_PAGE_VIRTUAL */
++	int filter;	/* **CHANGED ** */
+ };
+ 
+ /*
+diff --unified --recursive --new-file linux-2.6.11/include/linux/mm_inline.h linux-cart/include/linux/mm_inline.h
+--- linux-2.6.11/include/linux/mm_inline.h	2005-03-02 02:38:33.000000000 -0500
++++ linux-cart/include/linux/mm_inline.h	2005-05-27 12:55:17.000000000 -0400
+@@ -1,40 +1,14 @@
++#include <linux/cart.h>
+ 
+ static inline void
+-add_page_to_active_list(struct zone *zone, struct page *page)
+-{
+-	list_add(&page->lru, &zone->active_list);
+-	zone->nr_active++;
+-}
+-
+-static inline void
+-add_page_to_inactive_list(struct zone *zone, struct page *page)
+-{
+-	list_add(&page->lru, &zone->inactive_list);
+-	zone->nr_inactive++;
+-}
+-
+-static inline void
+-del_page_from_active_list(struct zone *zone, struct page *page)
++del_page_from_lru(struct zone *zone, struct page *page)
+ {
+-	list_del(&page->lru);
+-	zone->nr_active--;
+-}
++	unsigned int location = find_in_resident_list(page);
+ 
+-static inline void
+-del_page_from_inactive_list(struct zone *zone, struct page *page)
+-{
+-	list_del(&page->lru);
+-	zone->nr_inactive--;
+-}
++	if (location & T1)
++		zone->num_t1--;
++	else if (location & T2)
++		zone->num_t2--;
+ 
+-static inline void
+-del_page_from_lru(struct zone *zone, struct page *page)
+-{
+ 	list_del(&page->lru);
+-	if (PageActive(page)) {
+-		ClearPageActive(page);
+-		zone->nr_active--;
+-	} else {
+-		zone->nr_inactive--;
+-	}
+-}
++} 
+diff --unified --recursive --new-file linux-2.6.11/include/linux/mmzone.h linux-cart/include/linux/mmzone.h
+--- linux-2.6.11/include/linux/mmzone.h	2005-03-02 02:38:10.000000000 -0500
++++ linux-cart/include/linux/mmzone.h	2005-05-27 12:56:08.000000000 -0400
+@@ -134,34 +134,19 @@
+ 
+ 	/* Fields commonly accessed by the page reclaim scanner */
+ 	spinlock_t		lru_lock;	
+-	struct list_head	active_list;
+-	struct list_head	inactive_list;
+-	unsigned long		nr_scan_active;
+-	unsigned long		nr_scan_inactive;
+-	unsigned long		nr_active;
+-	unsigned long		nr_inactive;
+-	unsigned long		pages_scanned;	   /* since last reclaim */
+-	int			all_unreclaimable; /* All pages pinned */
+-
+-	/*
+-	 * prev_priority holds the scanning priority for this zone.  It is
+-	 * defined as the scanning priority at which we achieved our reclaim
+-	 * target at the previous try_to_free_pages() or balance_pgdat()
+-	 * invokation.
+-	 *
+-	 * We use prev_priority as a measure of how much stress page reclaim is
+-	 * under - it drives the swappiness decision: whether to unmap mapped
+-	 * pages.
+-	 *
+-	 * temp_priority is used to remember the scanning priority at which
+-	 * this zone was successfully refilled to free_pages == pages_high.
+-	 *
+-	 * Access to both these fields is quite racy even on uniprocessor.  But
+-	 * it is expected to average out OK.
+-	 */
+-	int temp_priority;
+-	int prev_priority;
+-
++	struct list_head	t1;	
++	struct list_head	t2;
++	struct list_head	b1;
++	struct list_head	b2;	
++	
++	unsigned short 		p;
++	unsigned short 		q;
++	unsigned short		ns;
++	unsigned short 		nl;
++	unsigned short 		num_t1;
++	unsigned short 		num_t2;
++	unsigned short 		num_b1;
++	unsigned short 		num_b2;
+ 
+ 	ZONE_PADDING(_pad2_)
+ 	/* Rarely used or read-mostly fields */
+@@ -269,10 +254,6 @@
+ 
+ extern struct pglist_data *pgdat_list;
+ 
+-void __get_zone_counts(unsigned long *active, unsigned long *inactive,
+-			unsigned long *free, struct pglist_data *pgdat);
+-void get_zone_counts(unsigned long *active, unsigned long *inactive,
+-			unsigned long *free);
+ void build_all_zonelists(void);
+ void wakeup_kswapd(struct zone *zone, int order);
+ int zone_watermark_ok(struct zone *z, int order, unsigned long mark,
+diff --unified --recursive --new-file linux-2.6.11/include/linux/swap.h linux-cart/include/linux/swap.h
+--- linux-2.6.11/include/linux/swap.h	2005-03-02 02:37:45.000000000 -0500
++++ linux-cart/include/linux/swap.h	2005-05-27 12:56:44.000000000 -0400
+@@ -168,7 +168,6 @@
+ extern void FASTCALL(activate_page(struct page *));
+ extern void FASTCALL(mark_page_accessed(struct page *));
+ extern void lru_add_drain(void);
+-extern int rotate_reclaimable_page(struct page *page);
+ extern void swap_setup(void);
+ 
+ /* linux/mm/vmscan.c */
+diff --unified --recursive --new-file linux-2.6.11/init/main.c linux-cart/init/main.c
+--- linux-2.6.11/init/main.c	2005-03-02 02:37:49.000000000 -0500
++++ linux-cart/init/main.c	2005-05-17 04:44:56.000000000 -0400
+@@ -51,6 +51,7 @@
+ #include <asm/bugs.h>
+ #include <asm/setup.h>
+ 
++#include <linux/cart.h>
+ /*
+  * This is one of the first .c files built. Error out early
+  * if we have compiler trouble..
+@@ -480,6 +481,7 @@
+ #endif
+ 	vfs_caches_init_early();
+ 	mem_init();
++	cart_init();
+ 	kmem_cache_init();
+ 	numa_policy_init();
+ 	if (late_time_init)
+diff --unified --recursive --new-file linux-2.6.11/mm/cart.c linux-cart/mm/cart.c
+--- linux-2.6.11/mm/cart.c	1969-12-31 19:00:00.000000000 -0500
++++ linux-cart/mm/cart.c	2005-05-27 12:57:10.000000000 -0400
+@@ -0,0 +1,413 @@
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/list.h>
++#include <linux/mm.h>
++#include <linux/rmap.h>
++#include <linux/mmzone.h>
++#include <linux/cart.h>
++
++int cart_init()
++{
++	pg_data_t *pgdat = pgdat_list;
++	int i;
++	struct zone *zone;
++	
++	do {
++		for (i=0;i<MAX_NR_ZONES;++i) {
++			zone = &pgdat->node_zones[i];
++			
++			spin_lock_init(&(zone->lru_lock));	
++			INIT_LIST_HEAD(&(zone->t1));
++			INIT_LIST_HEAD(&(zone->t2));
++			INIT_LIST_HEAD(&(zone->b1));
++			INIT_LIST_HEAD(&(zone->b2));
++
++			zone->p = zone->q = zone->nl = zone->ns = 0;
++			zone->num_b1 = zone->num_b2 = zone->num_t1 = zone->num_t2 = 0;
++		}
++	} while ((pgdat = pgdat->pgdat_next));
++
++	return 0;
++}
++
++void add_to_resident_list(struct page *page, unsigned int list)
++{
++        struct zone *zone;
++	struct list_head *head;
++
++        if (!page)
++                return;
++
++        zone = page_zone(page);
++
++        if (!zone)
++                return;
++	
++	if (list == T1)  {
++		head = &zone->t1;
++		zone->num_t1++;
++	}
++	else if (list == T2) {
++		head = &zone->t2;
++		zone->num_t2++;
++	}
++	else		/* Huh?? Which list?? */
++		return;
++	
++	if (!((page->lru).next == LIST_POISON1 || (page->lru).prev == LIST_POISON2))
++		list_del (&page->lru);
++        list_add_tail (&page->lru, head);
++}
++
++unsigned int find_in_resident_list(struct page *page)
++{
++	struct list_head *head;
++	struct page *pg;
++	struct zone *zone;
++	unsigned int location = 0;
++	
++	zone = page_zone(page);
++	head = &(zone->t1);
++
++	list_for_each_entry(pg, head, lru) {
++		if (pg == page) {
++			location |= T1;
++			break;
++		}
++	}
++
++	head = &(zone->t2);
++
++        list_for_each_entry(pg, head, lru) {
++                if (pg == page) {
++                        location |= T2;
++                        break;
++                }
++        }
++
++	return location;
++}
++
++	
++	
++unsigned int find_in_non_resident_list(struct page *page)
++{
++	struct list_head *head;
++	struct zone *zone;
++	struct non_res_list_node *node;
++	unsigned int retval = 0;
++
++	if (!page)
++		return 0;
++
++	zone = page_zone(page);
++
++	if(!zone)
++		return 0;
++
++	head = &(zone->b1);
++	if (!head)
++		panic("zone->b1 is null!! :o");
++
++	if (!list_empty(head)) {
++		list_for_each_entry(node, head, list) {
++			if (!node)
++				panic("in b1 part... why is node null?");
++			if (node->offset == page->index && node->mapping == (unsigned long) page->mapping) {
++				retval |= B1;	
++				break;
++			}
++		}
++	}
++
++	head = &(zone->b2);
++	if (!head)
++		panic ("zone->b2 is null :o");
++	if (list_empty(head)) {
++		return retval;
++	}
++        list_for_each_entry(node, head, list) {
++		if (!node)
++			panic("in b2 part... why is node null??");
++                if (node->offset == page->index && node->mapping == (unsigned long) page->mapping) {
++                        retval |= B2;
++                        break;
++                }
++	}
++	
++	return retval;
++}
++
++void del_bottom_b1_page(struct zone *zone)
++{
++	struct non_res_list_node *node;
++	struct list_head *tail = &(zone->b1);
++	tail = tail->prev;
++	
++	if (tail == &(zone->b1))
++		return;
++
++	list_del(tail);
++	zone->num_b1--;
++	
++	node = list_entry(tail, struct non_res_list_node, list);
++	kfree(node);
++}
++
++void del_bottom_b2_page(struct zone *zone)
++{
++	struct non_res_list_node *node;
++
++	struct list_head *tail = &(zone->b2);
++	tail = tail->prev;
++        
++	if (tail == &(zone->b2))
++		return;
++
++	list_del(tail);
++	zone->num_b2--;
++
++	node = list_entry(tail, struct non_res_list_node, list);
++	kfree(node);
++}
++
++void add_to_b1_head(struct zone *zone, struct page *page) 
++{
++	struct non_res_list_node *node;
++
++	if (!zone || !page)
++		return;
++
++	node = kmalloc(sizeof(struct non_res_list_node), GFP_ATOMIC);
++
++	node->offset = page->index;
++	node->mapping = (unsigned long) page->mapping;
++
++	list_add(&(node->list), &(zone->b1));
++	zone->num_b1++;
++}
++
++void add_to_b2_head(struct zone *zone, struct page *page)
++{
++	struct non_res_list_node *node;
++
++	if (!zone || !page)
++                return;
++	
++	node = (struct non_res_list_node *) kmalloc(sizeof(struct non_res_list_node), GFP_ATOMIC);
++
++        node->offset = page->index;
++        node->mapping = (unsigned long) page->mapping;
++
++        list_add(&(node->list), &(zone->b2));
++        zone->num_b2++;
++}
++
++void add_to_t1_tail(struct zone *zone, struct page *page)
++{
++	if (!zone || !page)
++                return;
++	list_add_tail (&(page->lru), &(zone->t1));
++	zone->num_t1++;
++}
++
++void add_to_t2_tail(struct zone *zone, struct page *page)
++{
++	if (!zone || !page)
++                return;
++        list_add_tail (&(page->lru), &(zone->t2));
++        zone->num_t2++;
++}
++
++struct page * del_from_t1_head(struct zone *zone)
++{
++	struct list_head *list;
++	if (list_empty(&zone->t1))
++		return NULL;
++	
++	list = &(zone->t1);
++	list = list->next;
++
++	list_del(list);
++	zone->num_t1--;
++	return (list_entry(list, struct page, lru));
++}
++
++struct page * del_from_t2_head(struct zone *zone)
++{
++        struct list_head *list;
++	
++	if (list_empty(&zone->t2))
++		return NULL;
++
++	list = &(zone->t2);
++        list = list->next;
++
++        list_del(list);
++	zone->num_t2--;
++        return (list_entry(list, struct page, lru));
++}
++
++inline void set_short_term(struct page *page)
++{
++        page->filter = SHORT_TERM;
++}
++
++inline void set_long_term(struct page *page)
++{
++        page->filter = LONG_TERM;
++}
++
++inline void add_to_t1(struct page *page)
++{
++        add_to_resident_list (page, T1);
++}
++
++inline void add_to_t2 (struct page *page)
++{
++        add_to_resident_list(page, T2);
++}
++
++inline unsigned int is_in_t1(unsigned int flag)
++{
++        return flag & T1;
++}
++
++inline unsigned int is_in_t2(unsigned int flag)
++{
++        return flag & T2;
++}
++
++inline unsigned int is_in_b1(unsigned int flag)
++{
++        return flag & B1;
++}
++
++inline unsigned int is_in_b2(unsigned int flag)
++{
++        return flag & B2;
++}
++
++
++void update_cart_params(struct page *page)
++{
++	unsigned int location;		
++	unsigned int b1, b2;
++	struct zone *zone = page_zone(page);
++
++	location = find_in_non_resident_list(page);
++	b1 = is_in_b1(location);
++	b2 = is_in_b2(location);
++
++	if (b1) {	/* Present on B1 */
++		zone->p = min(zone->p + max(zone->ns/zone->num_b1, 1), zone->pages_high);
++		zone->nl++;
++		page->filter = LONG_TERM;
++		page_referenced(page, PageLocked(page), 0);
++	}
++	else if (b2) {
++		zone->p = max(zone->p - max(1, zone->nl/zone->num_b2), 0);
++		zone->nl++;
++		page_referenced(page, PageLocked(page), 0);
++		
++		if (zone->num_t2 + zone->num_t1 + zone->num_b2  - zone->ns >= zone->pages_high) {
++			zone->q = min(zone->q+1, 2*zone->pages_high - zone->num_t1);
++		}
++
++	}
++	else {
++		zone->ns++;
++		page->filter = SHORT_TERM;
++	}
++
++	add_to_t1(page);
++}
++
++struct page *replace(struct zone *zone)
++{
++	struct list_head *list;
++	struct page *page;
++	int referenced = 0;
++        unsigned int location;
++	
++
++	list = &(zone->t2);
++	list = list->next;
++	while (list != &(zone->t2)) {
++		page = list_entry(list, struct page, lru);
++		if (!page_referenced(page, PageLocked(page), 0) && page->filter != LONG_TERM)
++			break;
++		
++		page = del_from_t2_head(zone);
++		if (!page)
++			panic("oops! deleting from empty t2 list!!");
++
++		add_to_t1_tail(zone, page);
++
++		if ((zone->num_t2 + zone->num_t1 + zone->num_b2 - zone->ns) >= zone->pages_high)
++			zone->q = min(zone->q + 1, 2*zone->pages_high - zone->num_t1);
++	
++		list = &(zone->t2);
++		list = list->next;
++	}
++	
++	list = &(zone->t1);
++	list = list->next;	
++	
++	while (list != &(zone->t1)) {
++		page = list_entry(list, struct page, lru);
++		referenced = page_referenced(page, PageLocked(page), 0);
++		if (!(page->filter == LONG_TERM || referenced))
++			break;
++		
++		if (referenced) {
++			page = del_from_t1_head(zone);
++			if (!page)
++				panic("Oops! deleting from empty t1 list!");
++			
++			add_to_t1_tail(zone, page);
++
++			if (zone->num_t1 >= min(zone->p+1, zone->num_b1) && page->filter == SHORT_TERM) {
++				page->filter = LONG_TERM;
++				zone->ns--;
++				zone->nl++;
++			}
++		}
++		else {
++			page = del_from_t1_head(zone);
++			if (!page)
++				panic("Oops! deleting from empty t1 list #2");
++                        add_to_t2_tail(zone, page);
++			
++			zone->q = max(zone->q - 1, zone->pages_high - zone->num_t1);
++		}
++                list = &(zone->t1);
++                list = list->next;
++	}
++	
++	page = NULL;
++	
++	if (zone->num_t1 >= max(1, zone->p)) {
++		page = del_from_t1_head(zone);
++		zone->ns--;
++		add_to_b1_head(zone, page);
++	}
++	else {
++		if (!list_empty(&zone->t2)) {
++			page = del_from_t2_head(zone);
++			zone->nl--;
++			add_to_b2_head(zone, page);
++		}
++	}
++
++	location = find_in_non_resident_list(page);
++	if (!location && (zone->num_b1 + zone->num_b2 == zone->pages_high+1) && ((zone->num_b1 > max(0, zone->q) || zone->num_b2 == 0))) {
++		/* History Replacement */
++			del_bottom_b1_page(zone);
++		}
++		else if (!location && (zone->num_b1 + zone->num_b2 == zone->pages_high+1)) {
++			del_bottom_b2_page(zone);
++		}  
++	return page;
++}
++	
+diff --unified --recursive --new-file linux-2.6.11/mm/filemap.c linux-cart/mm/filemap.c
+--- linux-2.6.11/mm/filemap.c	2005-03-02 02:38:37.000000000 -0500
++++ linux-cart/mm/filemap.c	2005-05-27 10:26:13.000000000 -0400
+@@ -109,11 +109,13 @@
+  * sure the page is locked and that nobody else uses it - or that usage
+  * is safe.  The caller must hold a write_lock on the mapping's tree_lock.
+  */
++extern int debug_flag;
++
+ void __remove_from_page_cache(struct page *page)
+ {
+ 	struct address_space *mapping = page->mapping;
+-
+ 	radix_tree_delete(&mapping->page_tree, page->index);
++
+ 	page->mapping = NULL;
+ 	mapping->nrpages--;
+ 	pagecache_acct(-1);
+@@ -438,7 +440,7 @@
+  */
+ void end_page_writeback(struct page *page)
+ {
+-	if (!TestClearPageReclaim(page) || rotate_reclaimable_page(page)) {
++	if (!TestClearPageReclaim(page)) {
+ 		if (!test_clear_page_writeback(page))
+ 			BUG();
+ 	}
+@@ -1928,7 +1930,7 @@
+ 	const struct iovec *cur_iov = iov; /* current iovec */
+ 	size_t		iov_base = 0;	   /* offset in the current iovec */
+ 	char __user	*buf;
+-
++	
+ 	pagevec_init(&lru_pvec, 0);
+ 
+ 	/*
+@@ -1959,7 +1961,7 @@
+ 		 * up-to-date.
+ 		 */
+ 		fault_in_pages_readable(buf, bytes);
+-
++		
+ 		page = __grab_cache_page(mapping,index,&cached_page,&lru_pvec);
+ 		if (!page) {
+ 			status = -ENOMEM;
+diff --unified --recursive --new-file linux-2.6.11/mm/Makefile linux-cart/mm/Makefile
+--- linux-2.6.11/mm/Makefile	2005-03-02 02:38:12.000000000 -0500
++++ linux-cart/mm/Makefile	2005-05-17 04:45:04.000000000 -0400
+@@ -5,7 +5,7 @@
+ mmu-y			:= nommu.o
+ mmu-$(CONFIG_MMU)	:= fremap.o highmem.o madvise.o memory.o mincore.o \
+ 			   mlock.o mmap.o mprotect.o mremap.o msync.o rmap.o \
+-			   vmalloc.o
++			   vmalloc.o cart.o
+ 
+ obj-y			:= bootmem.o filemap.o mempool.o oom_kill.o fadvise.o \
+ 			   page_alloc.o page-writeback.o pdflush.o \
+diff --unified --recursive --new-file linux-2.6.11/mm/memory.c linux-cart/mm/memory.c
+--- linux-2.6.11/mm/memory.c	2005-03-02 02:38:08.000000000 -0500
++++ linux-cart/mm/memory.c	2005-05-17 04:45:04.000000000 -0400
+@@ -1936,6 +1936,7 @@
+ 		update_mem_hiwater();
+ 
+ 		flush_icache_page(vma, new_page);
++		
+ 		entry = mk_pte(new_page, vma->vm_page_prot);
+ 		if (write_access)
+ 			entry = maybe_mkwrite(pte_mkdirty(entry), vma);
+@@ -2034,9 +2035,9 @@
+ 		 * and the PTE updates will not touch it later. So
+ 		 * drop the lock.
+ 		 */
+-		if (pte_none(entry))
++		if (pte_none(entry)) 
+ 			return do_no_page(mm, vma, address, write_access, pte, pmd);
+-		if (pte_file(entry))
++		if (pte_file(entry)) 
+ 			return do_file_page(mm, vma, address, write_access, pte, pmd);
+ 		return do_swap_page(mm, vma, address, pte, pmd, entry, write_access);
+ 	}
+diff --unified --recursive --new-file linux-2.6.11/mm/page_alloc.c linux-cart/mm/page_alloc.c
+--- linux-2.6.11/mm/page_alloc.c	2005-03-02 02:38:34.000000000 -0500
++++ linux-cart/mm/page_alloc.c	2005-05-27 10:52:31.000000000 -0400
+@@ -161,10 +161,6 @@
+ 	for (i = 0; i < nr_pages; i++) {
+ 		struct page *p = page + i;
+ 
+-		if (!PageCompound(p))
+-			bad_page(__FUNCTION__, page);
+-		if (p->private != (unsigned long)page)
+-			bad_page(__FUNCTION__, page);
+ 		ClearPageCompound(p);
+ 	}
+ }
+@@ -276,19 +272,6 @@
+ 
+ static inline void free_pages_check(const char *function, struct page *page)
+ {
+-	if (	page_mapped(page) ||
+-		page->mapping != NULL ||
+-		page_count(page) != 0 ||
+-		(page->flags & (
+-			1 << PG_lru	|
+-			1 << PG_private |
+-			1 << PG_locked	|
+-			1 << PG_active	|
+-			1 << PG_reclaim	|
+-			1 << PG_slab	|
+-			1 << PG_swapcache |
+-			1 << PG_writeback )))
+-		bad_page(function, page);
+ 	if (PageDirty(page))
+ 		ClearPageDirty(page);
+ }
+@@ -314,8 +297,7 @@
+ 
+ 	base = zone->zone_mem_map;
+ 	spin_lock_irqsave(&zone->lock, flags);
+-	zone->all_unreclaimable = 0;
+-	zone->pages_scanned = 0;
++	
+ 	while (!list_empty(list) && count--) {
+ 		page = list_entry(list->prev, struct page, lru);
+ 		/* have to delete it as __free_pages_bulk list manipulates */
+@@ -404,18 +386,6 @@
+  */
+ static void prep_new_page(struct page *page, int order)
+ {
+-	if (page->mapping || page_mapped(page) ||
+-	    (page->flags & (
+-			1 << PG_private	|
+-			1 << PG_locked	|
+-			1 << PG_lru	|
+-			1 << PG_active	|
+-			1 << PG_dirty	|
+-			1 << PG_reclaim	|
+-			1 << PG_swapcache |
+-			1 << PG_writeback )))
+-		bad_page(__FUNCTION__, page);
+-
+ 	page->flags &= ~(1 << PG_uptodate | 1 << PG_error |
+ 			1 << PG_referenced | 1 << PG_arch_1 |
+ 			1 << PG_checked | 1 << PG_mappedtodisk);
+@@ -573,7 +543,7 @@
+ 	unsigned long flags;
+ 
+ 	arch_free_page(page, 0);
+-
++	
+ 	kernel_map_pages(page, 1, 0);
+ 	inc_page_state(pgfree);
+ 	if (PageAnon(page))
+@@ -1084,35 +1054,36 @@
+ 
+ EXPORT_SYMBOL(__mod_page_state);
+ 
+-void __get_zone_counts(unsigned long *active, unsigned long *inactive,
++void __get_zone_counts(unsigned long *num_t1, unsigned long *num_t2,
+ 			unsigned long *free, struct pglist_data *pgdat)
+ {
+ 	struct zone *zones = pgdat->node_zones;
+ 	int i;
+ 
+-	*active = 0;
+-	*inactive = 0;
++	*num_t1 = 0;
++	*num_t2 = 0;
+ 	*free = 0;
+ 	for (i = 0; i < MAX_NR_ZONES; i++) {
+-		*active += zones[i].nr_active;
+-		*inactive += zones[i].nr_inactive;
++		*num_t1 += zones[i].num_t1;
++		*num_t2 += zones[i].num_t2;
+ 		*free += zones[i].free_pages;
++		
+ 	}
+ }
+ 
+-void get_zone_counts(unsigned long *active,
+-		unsigned long *inactive, unsigned long *free)
++void get_zone_counts(unsigned long *num_t1,
++		unsigned long *num_t2, unsigned long *free)
+ {
+ 	struct pglist_data *pgdat;
+ 
+-	*active = 0;
+-	*inactive = 0;
++	*num_t1 = 0;
++	*num_t2 = 0;
+ 	*free = 0;
+ 	for_each_pgdat(pgdat) {
+ 		unsigned long l, m, n;
+ 		__get_zone_counts(&l, &m, &n, pgdat);
+-		*active += l;
+-		*inactive += m;
++		*num_t1 += l;
++		*num_t2 += m;
+ 		*free += n;
+ 	}
+ }
+@@ -1199,7 +1170,7 @@
+ 		K(nr_free_pages()),
+ 		K(nr_free_highpages()));
+ 
+-	printk("Active:%lu inactive:%lu dirty:%lu writeback:%lu "
++	printk("T1:%lu T2:%lu dirty:%lu writeback:%lu "
+ 		"unstable:%lu free:%u slab:%lu mapped:%lu pagetables:%lu\n",
+ 		active,
+ 		inactive,
+@@ -1223,19 +1194,15 @@
+ 			" active:%lukB"
+ 			" inactive:%lukB"
+ 			" present:%lukB"
+-			" pages_scanned:%lu"
+-			" all_unreclaimable? %s"
+ 			"\n",
+ 			zone->name,
+ 			K(zone->free_pages),
+ 			K(zone->pages_min),
+ 			K(zone->pages_low),
+ 			K(zone->pages_high),
+-			K(zone->nr_active),
+-			K(zone->nr_inactive),
+-			K(zone->present_pages),
+-			zone->pages_scanned,
+-			(zone->all_unreclaimable ? "yes" : "no")
++			K(zone->num_t1),
++			K(zone->num_t2),
++			K(zone->present_pages) 
+ 			);
+ 		printk("lowmem_reserve[]:");
+ 		for (i = 0; i < MAX_NR_ZONES; i++)
+@@ -1605,8 +1572,6 @@
+ 		zone->zone_pgdat = pgdat;
+ 		zone->free_pages = 0;
+ 
+-		zone->temp_priority = zone->prev_priority = DEF_PRIORITY;
+-
+ 		/*
+ 		 * The per-cpu-pages pools are set to around 1000th of the
+ 		 * size of the zone.  But no more than 1/4 of a meg - there's
+@@ -1640,12 +1605,6 @@
+ 		}
+ 		printk(KERN_DEBUG "  %s zone: %lu pages, LIFO batch:%lu\n",
+ 				zone_names[j], realsize, batch);
+-		INIT_LIST_HEAD(&zone->active_list);
+-		INIT_LIST_HEAD(&zone->inactive_list);
+-		zone->nr_scan_active = 0;
+-		zone->nr_scan_inactive = 0;
+-		zone->nr_active = 0;
+-		zone->nr_inactive = 0;
+ 		if (!size)
+ 			continue;
+ 
+diff --unified --recursive --new-file linux-2.6.11/mm/rmap.c linux-cart/mm/rmap.c
+--- linux-2.6.11/mm/rmap.c	2005-03-02 02:38:38.000000000 -0500
++++ linux-cart/mm/rmap.c	2005-05-17 04:45:04.000000000 -0400
+@@ -549,6 +549,7 @@
+ 	if ((vma->vm_flags & (VM_LOCKED|VM_RESERVED)) ||
+ 			ptep_clear_flush_young(vma, address, pte)) {
+ 		ret = SWAP_FAIL;
++		panic("locked, reserved or the ptep crap");
+ 		goto out_unmap;
+ 	}
+ 
+@@ -567,11 +568,12 @@
+ 	 * to drop page lock: its reference to the page stops existing
+ 	 * ptes from being unmapped, so swapoff can make progress.
+ 	 */
+-	if (PageSwapCache(page) &&
+-	    page_count(page) != page_mapcount(page) + 2) {
++	/*if (PageSwapCache(page) &&
++	      page_count(page) != page_mapcount(page) + 2) {
++		panic("some mapcount bullshit");
+ 		ret = SWAP_FAIL;
+ 		goto out_unmap;
+-	}
++	}*/
+ 
+ 	/* Nuke the page table entry. */
+ 	flush_cache_page(vma, address);
+diff --unified --recursive --new-file linux-2.6.11/mm/swap.c linux-cart/mm/swap.c
+--- linux-2.6.11/mm/swap.c	2005-03-02 02:38:07.000000000 -0500
++++ linux-cart/mm/swap.c	2005-05-27 10:28:23.000000000 -0400
+@@ -30,6 +30,7 @@
+ #include <linux/cpu.h>
+ #include <linux/notifier.h>
+ #include <linux/init.h>
++#include <linux/cart.h>
+ 
+ /* How many pages do we try to swap or page in/out together? */
+ int page_cluster;
+@@ -55,48 +56,6 @@
+ #endif
+ 
+ /*
+- * Writeback is about to end against a page which has been marked for immediate
+- * reclaim.  If it still appears to be reclaimable, move it to the tail of the
+- * inactive list.  The page still has PageWriteback set, which will pin it.
+- *
+- * We don't expect many pages to come through here, so don't bother batching
+- * things up.
+- *
+- * To avoid placing the page at the tail of the LRU while PG_writeback is still
+- * set, this function will clear PG_writeback before performing the page
+- * motion.  Do that inside the lru lock because once PG_writeback is cleared
+- * we may not touch the page.
+- *
+- * Returns zero if it cleared PG_writeback.
+- */
+-int rotate_reclaimable_page(struct page *page)
+-{
+-	struct zone *zone;
+-	unsigned long flags;
+-
+-	if (PageLocked(page))
+-		return 1;
+-	if (PageDirty(page))
+-		return 1;
+-	if (PageActive(page))
+-		return 1;
+-	if (!PageLRU(page))
+-		return 1;
+-
+-	zone = page_zone(page);
+-	spin_lock_irqsave(&zone->lru_lock, flags);
+-	if (PageLRU(page) && !PageActive(page)) {
+-		list_del(&page->lru);
+-		list_add_tail(&page->lru, &zone->inactive_list);
+-		inc_page_state(pgrotated);
+-	}
+-	if (!test_clear_page_writeback(page))
+-		BUG();
+-	spin_unlock_irqrestore(&zone->lru_lock, flags);
+-	return 0;
+-}
+-
+-/*
+  * FIXME: speed this up?
+  */
+ void fastcall activate_page(struct page *page)
+@@ -104,21 +63,12 @@
+ 	struct zone *zone = page_zone(page);
+ 
+ 	spin_lock_irq(&zone->lru_lock);
+-	if (PageLRU(page) && !PageActive(page)) {
+-		del_page_from_inactive_list(zone, page);
+-		SetPageActive(page);
+-		add_page_to_active_list(zone, page);
+-		inc_page_state(pgactivate);
+-	}
++	update_cart_params(page);
+ 	spin_unlock_irq(&zone->lru_lock);
+ }
+ 
+ /*
+  * Mark a page as having seen activity.
+- *
+- * inactive,unreferenced	->	inactive,referenced
+- * inactive,referenced		->	active,unreferenced
+- * active,unreferenced		->	active,referenced
+  */
+ void fastcall mark_page_accessed(struct page *page)
+ {
+@@ -273,10 +223,7 @@
+ 	pages_to_free.cold = pvec->cold;
+ 	for (i = 0; i < pagevec_count(pvec); i++) {
+ 		struct page *page = pvec->pages[i];
+-
+-		BUG_ON(PageLRU(page));
+-		if (put_page_testzero(page))
+-			pagevec_add(&pages_to_free, page);
++		pagevec_add(&pages_to_free, page);
+ 	}
+ 	pagevec_free(&pages_to_free);
+ 	pagevec_reinit(pvec);
+@@ -303,7 +250,7 @@
+ 		}
+ 		if (TestSetPageLRU(page))
+ 			BUG();
+-		add_page_to_inactive_list(zone, page);
++		update_cart_params(page);
+ 	}
+ 	if (zone)
+ 		spin_unlock_irq(&zone->lru_lock);
+@@ -330,9 +277,7 @@
+ 		}
+ 		if (TestSetPageLRU(page))
+ 			BUG();
+-		if (TestSetPageActive(page))
+-			BUG();
+-		add_page_to_active_list(zone, page);
++		update_cart_params(page);
+ 	}
+ 	if (zone)
+ 		spin_unlock_irq(&zone->lru_lock);
+diff --unified --recursive --new-file linux-2.6.11/mm/swap_state.c linux-cart/mm/swap_state.c
+--- linux-2.6.11/mm/swap_state.c	2005-03-02 02:38:08.000000000 -0500
++++ linux-cart/mm/swap_state.c	2005-05-17 04:45:05.000000000 -0400
+@@ -123,7 +123,7 @@
+ {
+ 	BUG_ON(!PageLocked(page));
+ 	BUG_ON(!PageSwapCache(page));
+-	BUG_ON(PageWriteback(page));
++//	BUG_ON(PageWriteback(page));
+ 
+ 	radix_tree_delete(&swapper_space.page_tree, page->private);
+ 	page->private = 0;
+diff --unified --recursive --new-file linux-2.6.11/mm/vmscan.c linux-cart/mm/vmscan.c
+--- linux-2.6.11/mm/vmscan.c	2005-03-02 02:37:49.000000000 -0500
++++ linux-cart/mm/vmscan.c	2005-05-27 10:14:40.000000000 -0400
+@@ -37,7 +37,9 @@
+ #include <asm/div64.h>
+ 
+ #include <linux/swapops.h>
+-
++#include <linux/cart.h>
++#include <linux/delay.h>
++int debug_flag = 0;
+ /* possible outcome of pageout() */
+ typedef enum {
+ 	/* failed to write page out, page is locked */
+@@ -304,14 +306,14 @@
+ 	 * congestion state of the swapdevs.  Easy to fix, if needed.
+ 	 * See swapfile.c:page_queue_congested().
+ 	 */
+-	if (!is_page_cache_freeable(page))
+-		return PAGE_KEEP;
+-	if (!mapping)
++	if (!mapping) {
+ 		return PAGE_KEEP;
++	}
+ 	if (mapping->a_ops->writepage == NULL)
+ 		return PAGE_ACTIVATE;
+-	if (!may_write_to_queue(mapping->backing_dev_info))
++	if (!may_write_to_queue(mapping->backing_dev_info)) {
+ 		return PAGE_KEEP;
++	}
+ 
+ 	if (clear_page_dirty_for_io(page)) {
+ 		int res;
+@@ -321,11 +323,12 @@
+ 			.nonblocking = 1,
+ 			.for_reclaim = 1,
+ 		};
+-
+ 		SetPageReclaim(page);
+ 		res = mapping->a_ops->writepage(page, &wbc);
+-		if (res < 0)
++
++		if (res < 0) 
+ 			handle_write_error(mapping, page, res);
++		
+ 		if (res == WRITEPAGE_ACTIVATE) {
+ 			ClearPageReclaim(page);
+ 			return PAGE_ACTIVATE;
+@@ -334,7 +337,6 @@
+ 			/* synchronous write or broken a_ops? */
+ 			ClearPageReclaim(page);
+ 		}
+-
+ 		return PAGE_SUCCESS;
+ 	}
+ 
+@@ -365,9 +367,9 @@
+ 		page = lru_to_page(page_list);
+ 		list_del(&page->lru);
+ 
+-		if (TestSetPageLocked(page))
++		if (TestSetPageLocked(page)) 
+ 			goto keep;
+-
++		
+ 		BUG_ON(PageActive(page));
+ 
+ 		sc->nr_scanned++;
+@@ -375,13 +377,16 @@
+ 		if (page_mapped(page) || PageSwapCache(page))
+ 			sc->nr_scanned++;
+ 
+-		if (PageWriteback(page))
++		if (PageWriteback(page)) {
++			printk("\nPage Writeback, so keeping locked");
+ 			goto keep_locked;
++		}
+ 
+ 		referenced = page_referenced(page, 1, sc->priority <= 0);
+ 		/* In active use or really unfreeable?  Activate it. */
+-		if (referenced && page_mapping_inuse(page))
++		if (referenced && page_mapping_inuse(page)) {
+ 			goto activate_locked;
++		}
+ 
+ #ifdef CONFIG_SWAP
+ 		/*
+@@ -389,12 +394,14 @@
+ 		 * Try to allocate it some swap space here.
+ 		 */
+ 		if (PageAnon(page) && !PageSwapCache(page)) {
+-			if (!add_to_swap(page))
++			if (!add_to_swap(page)) {
+ 				goto activate_locked;
++			}
+ 		}
+ #endif /* CONFIG_SWAP */
+ 
+ 		mapping = page_mapping(page);
++
+ 		may_enter_fs = (sc->gfp_mask & __GFP_FS) ||
+ 			(PageSwapCache(page) && (sc->gfp_mask & __GFP_IO));
+ 
+@@ -414,13 +421,6 @@
+ 		}
+ 
+ 		if (PageDirty(page)) {
+-			if (referenced)
+-				goto keep_locked;
+-			if (!may_enter_fs)
+-				goto keep_locked;
+-			if (laptop_mode && !sc->may_writepage)
+-				goto keep_locked;
+-
+ 			/* Page is dirty, try to write it out here */
+ 			switch(pageout(page, mapping)) {
+ 			case PAGE_KEEP:
+@@ -428,22 +428,20 @@
+ 			case PAGE_ACTIVATE:
+ 				goto activate_locked;
+ 			case PAGE_SUCCESS:
+-				if (PageWriteback(page) || PageDirty(page))
+-					goto keep;
+ 				/*
+ 				 * A synchronous write - probably a ramdisk.  Go
+ 				 * ahead and try to reclaim the page.
+ 				 */
+-				if (TestSetPageLocked(page))
++				if (TestSetPageLocked(page)) {
+ 					goto keep;
+-				if (PageDirty(page) || PageWriteback(page))
+-					goto keep_locked;
++				}
++
+ 				mapping = page_mapping(page);
+ 			case PAGE_CLEAN:
+ 				; /* try to free the page below */
+ 			}
+ 		}
+-
++		
+ 		/*
+ 		 * If the page has buffers, try to free the buffer mappings
+ 		 * associated with this page. If we succeed we try to free
+@@ -466,14 +464,17 @@
+ 		 * Otherwise, leave the page on the LRU so it is swappable.
+ 		 */
+ 		if (PagePrivate(page)) {
+-			if (!try_to_release_page(page, sc->gfp_mask))
++			if (!try_to_release_page(page, sc->gfp_mask)) {
+ 				goto activate_locked;
++			}
+ 			if (!mapping && page_count(page) == 1)
+ 				goto free_it;
+ 		}
+ 
+-		if (!mapping)
++		if (!mapping) {
++			printk("\nmapping is null");
+ 			goto keep_locked;	/* truncate got there first */
++		}
+ 
+ 		spin_lock_irq(&mapping->tree_lock);
+ 
+@@ -482,10 +483,6 @@
+ 		 * PageDirty _after_ making sure that the page is freeable and
+ 		 * not in use by anybody. 	(pagecache + us == 2)
+ 		 */
+-		if (page_count(page) != 2 || PageDirty(page)) {
+-			spin_unlock_irq(&mapping->tree_lock);
+-			goto keep_locked;
+-		}
+ 
+ #ifdef CONFIG_SWAP
+ 		if (PageSwapCache(page)) {
+@@ -497,7 +494,6 @@
+ 			goto free_it;
+ 		}
+ #endif /* CONFIG_SWAP */
+-
+ 		__remove_from_page_cache(page);
+ 		spin_unlock_irq(&mapping->tree_lock);
+ 		__put_page(page);
+@@ -505,17 +501,19 @@
+ free_it:
+ 		unlock_page(page);
+ 		reclaimed++;
+-		if (!pagevec_add(&freed_pvec, page))
++		if (!pagevec_add(&freed_pvec, page)) {
+ 			__pagevec_release_nonlru(&freed_pvec);
++		}
+ 		continue;
+ 
+ activate_locked:
+ 		SetPageActive(page);
+ 		pgactivate++;
+-keep_locked:
++keep_locked:	
+ 		unlock_page(page);
+ keep:
+-		list_add(&page->lru, &ret_pages);
++		add_to_t1_tail(page_zone(page), page);
++		TestClearPageWriteback(page);
+ 		BUG_ON(PageLRU(page));
+ 	}
+ 	list_splice(&ret_pages, page_list);
+@@ -523,312 +521,48 @@
+ 		__pagevec_release_nonlru(&freed_pvec);
+ 	mod_page_state(pgactivate, pgactivate);
+ 	sc->nr_reclaimed += reclaimed;
+-	return reclaimed;
+-}
+ 
+-/*
+- * zone->lru_lock is heavily contented.  We relieve it by quickly privatising
+- * a batch of pages and working on them outside the lock.  Any pages which were
+- * not freed will be added back to the LRU.
+- *
+- * shrink_cache() adds the number of pages reclaimed to sc->nr_reclaimed
+- *
+- * For pagecache intensive workloads, the first loop here is the hottest spot
+- * in the kernel (apart from the copy_*_user functions).
+- */
+-static void shrink_cache(struct zone *zone, struct scan_control *sc)
+-{
+-	LIST_HEAD(page_list);
+-	struct pagevec pvec;
+-	int max_scan = sc->nr_to_scan;
+-
+-	pagevec_init(&pvec, 1);
+-
+-	lru_add_drain();
+-	spin_lock_irq(&zone->lru_lock);
+-	while (max_scan > 0) {
+-		struct page *page;
+-		int nr_taken = 0;
+-		int nr_scan = 0;
+-		int nr_freed;
+-
+-		while (nr_scan++ < SWAP_CLUSTER_MAX &&
+-				!list_empty(&zone->inactive_list)) {
+-			page = lru_to_page(&zone->inactive_list);
+-
+-			prefetchw_prev_lru_page(page,
+-						&zone->inactive_list, flags);
+-
+-			if (!TestClearPageLRU(page))
+-				BUG();
+-			list_del(&page->lru);
+-			if (get_page_testone(page)) {
+-				/*
+-				 * It is being freed elsewhere
+-				 */
+-				__put_page(page);
+-				SetPageLRU(page);
+-				list_add(&page->lru, &zone->inactive_list);
+-				continue;
+-			}
+-			list_add(&page->lru, &page_list);
+-			nr_taken++;
+-		}
+-		zone->nr_inactive -= nr_taken;
+-		zone->pages_scanned += nr_scan;
+-		spin_unlock_irq(&zone->lru_lock);
+-
+-		if (nr_taken == 0)
+-			goto done;
+-
+-		max_scan -= nr_scan;
+-		if (current_is_kswapd())
+-			mod_page_state_zone(zone, pgscan_kswapd, nr_scan);
+-		else
+-			mod_page_state_zone(zone, pgscan_direct, nr_scan);
+-		nr_freed = shrink_list(&page_list, sc);
+-		if (current_is_kswapd())
+-			mod_page_state(kswapd_steal, nr_freed);
+-		mod_page_state_zone(zone, pgsteal, nr_freed);
+-		sc->nr_to_reclaim -= nr_freed;
+-
+-		spin_lock_irq(&zone->lru_lock);
+-		/*
+-		 * Put back any unfreeable pages.
+-		 */
+-		while (!list_empty(&page_list)) {
+-			page = lru_to_page(&page_list);
+-			if (TestSetPageLRU(page))
+-				BUG();
+-			list_del(&page->lru);
+-			if (PageActive(page))
+-				add_page_to_active_list(zone, page);
+-			else
+-				add_page_to_inactive_list(zone, page);
+-			if (!pagevec_add(&pvec, page)) {
+-				spin_unlock_irq(&zone->lru_lock);
+-				__pagevec_release(&pvec);
+-				spin_lock_irq(&zone->lru_lock);
+-			}
+-		}
+-  	}
+-	spin_unlock_irq(&zone->lru_lock);
+-done:
+-	pagevec_release(&pvec);
++	return reclaimed;
+ }
+ 
+ /*
+- * This moves pages from the active list to the inactive list.
+- *
+- * We move them the other way if the page is referenced by one or more
+- * processes, from rmap.
+- *
+- * If the pages are mostly unmapped, the processing is fast and it is
+- * appropriate to hold zone->lru_lock across the whole operation.  But if
+- * the pages are mapped, the processing is slow (page_referenced()) so we
+- * should drop zone->lru_lock around each page.  It's impossible to balance
+- * this, so instead we remove the pages from the LRU while processing them.
+- * It is safe to rely on PG_active against the non-LRU pages in here because
+- * nobody will play with that bit on a non-LRU page.
+- *
+- * The downside is that we have to touch page->_count against each page.
+- * But we had to alter page->flags anyway.
++ * This is a basic per-zone page freer.  Used by both kswapd and direct reclaim.
+  */
+ static void
+-refill_inactive_zone(struct zone *zone, struct scan_control *sc)
++shrink_zone(struct zone *zone, struct scan_control *sc)
+ {
+-	int pgmoved;
+-	int pgdeactivate = 0;
+-	int pgscanned = 0;
+-	int nr_pages = sc->nr_to_scan;
+-	LIST_HEAD(l_hold);	/* The pages which were snipped off */
+-	LIST_HEAD(l_inactive);	/* Pages to go onto the inactive_list */
+-	LIST_HEAD(l_active);	/* Pages to go onto the active_list */
++	int reclaimed = 0, x=0;
++	struct list_head page_list;
+ 	struct page *page;
+-	struct pagevec pvec;
+-	int reclaim_mapped = 0;
+-	long mapped_ratio;
+-	long distress;
+-	long swap_tendency;
+-
+-	lru_add_drain();
+-	pgmoved = 0;
+-	spin_lock_irq(&zone->lru_lock);
+-	while (pgscanned < nr_pages && !list_empty(&zone->active_list)) {
+-		page = lru_to_page(&zone->active_list);
+-		prefetchw_prev_lru_page(page, &zone->active_list, flags);
+-		if (!TestClearPageLRU(page))
+-			BUG();
+-		list_del(&page->lru);
+-		if (get_page_testone(page)) {
+-			/*
+-			 * It was already free!  release_pages() or put_page()
+-			 * are about to remove it from the LRU and free it. So
+-			 * put the refcount back and put the page back on the
+-			 * LRU
+-			 */
+-			__put_page(page);
+-			SetPageLRU(page);
+-			list_add(&page->lru, &zone->active_list);
+-		} else {
+-			list_add(&page->lru, &l_hold);
+-			pgmoved++;
+-		}
+-		pgscanned++;
+-	}
+-	zone->pages_scanned += pgscanned;
+-	zone->nr_active -= pgmoved;
+-	spin_unlock_irq(&zone->lru_lock);
+ 
+-	/*
+-	 * `distress' is a measure of how much trouble we're having reclaiming
+-	 * pages.  0 -> no problems.  100 -> great trouble.
+-	 */
+-	distress = 100 >> zone->prev_priority;
+-
+-	/*
+-	 * The point of this algorithm is to decide when to start reclaiming
+-	 * mapped memory instead of just pagecache.  Work out how much memory
+-	 * is mapped.
+-	 */
+-	mapped_ratio = (sc->nr_mapped * 100) / total_memory;
++	INIT_LIST_HEAD(&page_list);
++	sc->nr_to_reclaim = SWAP_CLUSTER_MAX;
++	debug_flag=1;	
++	while (reclaimed < sc->nr_to_reclaim) {
++		spin_lock_irq(&zone->lru_lock);
++		page = replace(zone);
+ 
+-	/*
+-	 * Now decide how much we really want to unmap some pages.  The mapped
+-	 * ratio is downgraded - just because there's a lot of mapped memory
+-	 * doesn't necessarily mean that page reclaim isn't succeeding.
+-	 *
+-	 * The distress ratio is important - we don't want to start going oom.
+-	 *
+-	 * A 100% value of vm_swappiness overrides this algorithm altogether.
+-	 */
+-	swap_tendency = mapped_ratio / 2 + distress + vm_swappiness;
++		spin_unlock_irq(&zone->lru_lock);
++		if (page == NULL) 
++			break;
+ 
+-	/*
+-	 * Now use this metric to decide whether to start moving mapped memory
+-	 * onto the inactive list.
+-	 */
+-	if (swap_tendency >= 100)
+-		reclaim_mapped = 1;
++		if (get_page_testone(page)) 
++			__put_page(page);
+ 
+-	while (!list_empty(&l_hold)) {
+-		cond_resched();
+-		page = lru_to_page(&l_hold);
+-		list_del(&page->lru);
+-		if (page_mapped(page)) {
+-			if (!reclaim_mapped ||
+-			    (total_swap_pages == 0 && PageAnon(page)) ||
+-			    page_referenced(page, 0, sc->priority <= 0)) {
+-				list_add(&page->lru, &l_active);
+-				continue;
+-			}
+-		}
+-		list_add(&page->lru, &l_inactive);
+-	}
++		TestClearPageLRU(page);
++		TestClearPageActive(page);
+ 
+-	pagevec_init(&pvec, 1);
+-	pgmoved = 0;
+-	spin_lock_irq(&zone->lru_lock);
+-	while (!list_empty(&l_inactive)) {
+-		page = lru_to_page(&l_inactive);
+-		prefetchw_prev_lru_page(page, &l_inactive, flags);
+-		if (TestSetPageLRU(page))
+-			BUG();
+-		if (!TestClearPageActive(page))
+-			BUG();
+-		list_move(&page->lru, &zone->inactive_list);
+-		pgmoved++;
+-		if (!pagevec_add(&pvec, page)) {
+-			zone->nr_inactive += pgmoved;
+-			spin_unlock_irq(&zone->lru_lock);
+-			pgdeactivate += pgmoved;
+-			pgmoved = 0;
+-			if (buffer_heads_over_limit)
+-				pagevec_strip(&pvec);
+-			__pagevec_release(&pvec);
+-			spin_lock_irq(&zone->lru_lock);
+-		}
+-	}
+-	zone->nr_inactive += pgmoved;
+-	pgdeactivate += pgmoved;
+-	if (buffer_heads_over_limit) {
+-		spin_unlock_irq(&zone->lru_lock);
+-		pagevec_strip(&pvec);
+-		spin_lock_irq(&zone->lru_lock);
++		list_add(&(page->lru), &page_list);
++		reclaimed++;
+ 	}
+-
+-	pgmoved = 0;
+-	while (!list_empty(&l_active)) {
+-		page = lru_to_page(&l_active);
+-		prefetchw_prev_lru_page(page, &l_active, flags);
+-		if (TestSetPageLRU(page))
+-			BUG();
+-		BUG_ON(!PageActive(page));
+-		list_move(&page->lru, &zone->active_list);
+-		pgmoved++;
+-		if (!pagevec_add(&pvec, page)) {
+-			zone->nr_active += pgmoved;
+-			pgmoved = 0;
+-			spin_unlock_irq(&zone->lru_lock);
+-			__pagevec_release(&pvec);
+-			spin_lock_irq(&zone->lru_lock);
+-		}
++	if (reclaimed < sc->nr_to_reclaim) {
++		printk("Oops! we have trouble here! Asked for %d, got %d\n", sc->nr_to_reclaim, reclaimed);
+ 	}
+-	zone->nr_active += pgmoved;
+-	spin_unlock_irq(&zone->lru_lock);
+-	pagevec_release(&pvec);
+-
+-	mod_page_state_zone(zone, pgrefill, pgscanned);
+-	mod_page_state(pgdeactivate, pgdeactivate);
+-}
+-
+-/*
+- * This is a basic per-zone page freer.  Used by both kswapd and direct reclaim.
+- */
+-static void
+-shrink_zone(struct zone *zone, struct scan_control *sc)
+-{
+-	unsigned long nr_active;
+-	unsigned long nr_inactive;
+-
+-	/*
+-	 * Add one to `nr_to_scan' just to make sure that the kernel will
+-	 * slowly sift through the active list.
+-	 */
+-	zone->nr_scan_active += (zone->nr_active >> sc->priority) + 1;
+-	nr_active = zone->nr_scan_active;
+-	if (nr_active >= SWAP_CLUSTER_MAX)
+-		zone->nr_scan_active = 0;
+-	else
+-		nr_active = 0;
+-
+-	zone->nr_scan_inactive += (zone->nr_inactive >> sc->priority) + 1;
+-	nr_inactive = zone->nr_scan_inactive;
+-	if (nr_inactive >= SWAP_CLUSTER_MAX)
+-		zone->nr_scan_inactive = 0;
+-	else
+-		nr_inactive = 0;
+-
+-	sc->nr_to_reclaim = SWAP_CLUSTER_MAX;
+-
+-	while (nr_active || nr_inactive) {
+-		if (nr_active) {
+-			sc->nr_to_scan = min(nr_active,
+-					(unsigned long)SWAP_CLUSTER_MAX);
+-			nr_active -= sc->nr_to_scan;
+-			refill_inactive_zone(zone, sc);
+-		}
+-
+-		if (nr_inactive) {
+-			sc->nr_to_scan = min(nr_inactive,
+-					(unsigned long)SWAP_CLUSTER_MAX);
+-			nr_inactive -= sc->nr_to_scan;
+-			shrink_cache(zone, sc);
+-			if (sc->nr_to_reclaim <= 0)
+-				break;
+-		}
++	x=shrink_list(&page_list, sc);
++	if (x < reclaimed)
++		printk("Oops! Needed to reclaim %d, reclaimed %d\n", reclaimed, x);
++		mdelay(5);
+ 	}
+-}
+ 
+ /*
+  * This is the direct reclaim path, for page-allocating processes.  We only
+@@ -856,14 +590,7 @@
+ 
+ 		if (zone->present_pages == 0)
+ 			continue;
+-
+-		zone->temp_priority = sc->priority;
+-		if (zone->prev_priority > sc->priority)
+-			zone->prev_priority = sc->priority;
+-
+-		if (zone->all_unreclaimable && sc->priority != DEF_PRIORITY)
+-			continue;	/* Let kswapd poll it */
+-
++		
+ 		shrink_zone(zone, sc);
+ 	}
+ }
+@@ -896,12 +623,11 @@
+ 	sc.may_writepage = 0;
+ 
+ 	inc_page_state(allocstall);
+-
++ 
+ 	for (i = 0; zones[i] != NULL; i++) {
+ 		struct zone *zone = zones[i];
+ 
+-		zone->temp_priority = DEF_PRIORITY;
+-		lru_pages += zone->nr_active + zone->nr_inactive;
++		lru_pages += zone->num_t1 + zone->num_t2;
+ 	}
+ 
+ 	for (priority = DEF_PRIORITY; priority >= 0; priority--) {
+@@ -939,8 +665,6 @@
+ 			blk_congestion_wait(WRITE, HZ/10);
+ 	}
+ out:
+-	for (i = 0; zones[i] != 0; i++)
+-		zones[i]->prev_priority = zones[i]->temp_priority;
+ 	return ret;
+ }
+ 
+@@ -987,13 +711,7 @@
+ 	sc.nr_mapped = read_page_state(nr_mapped);
+ 
+ 	inc_page_state(pageoutrun);
+-
+-	for (i = 0; i < pgdat->nr_zones; i++) {
+-		struct zone *zone = pgdat->node_zones + i;
+-
+-		zone->temp_priority = DEF_PRIORITY;
+-	}
+-
++	
+ 	for (priority = DEF_PRIORITY; priority >= 0; priority--) {
+ 		int end_zone = 0;	/* Inclusive.  0 = ZONE_DMA */
+ 		unsigned long lru_pages = 0;
+@@ -1011,10 +729,6 @@
+ 				if (zone->present_pages == 0)
+ 					continue;
+ 
+-				if (zone->all_unreclaimable &&
+-						priority != DEF_PRIORITY)
+-					continue;
+-
+ 				if (!zone_watermark_ok(zone, order,
+ 						zone->pages_high, 0, 0, 0)) {
+ 					end_zone = i;
+@@ -1029,7 +743,7 @@
+ 		for (i = 0; i <= end_zone; i++) {
+ 			struct zone *zone = pgdat->node_zones + i;
+ 
+-			lru_pages += zone->nr_active + zone->nr_inactive;
++			lru_pages += zone->num_t1 + zone->num_t2;
+ 		}
+ 
+ 		/*
+@@ -1047,17 +761,11 @@
+ 			if (zone->present_pages == 0)
+ 				continue;
+ 
+-			if (zone->all_unreclaimable && priority != DEF_PRIORITY)
+-				continue;
+-
+ 			if (nr_pages == 0) {	/* Not software suspend */
+ 				if (!zone_watermark_ok(zone, order,
+ 						zone->pages_high, end_zone, 0, 0))
+ 					all_zones_ok = 0;
+ 			}
+-			zone->temp_priority = priority;
+-			if (zone->prev_priority > priority)
+-				zone->prev_priority = priority;
+ 			sc.nr_scanned = 0;
+ 			sc.nr_reclaimed = 0;
+ 			sc.priority = priority;
+@@ -1067,11 +775,6 @@
+ 			sc.nr_reclaimed += reclaim_state->reclaimed_slab;
+ 			total_reclaimed += sc.nr_reclaimed;
+ 			total_scanned += sc.nr_scanned;
+-			if (zone->all_unreclaimable)
+-				continue;
+-			if (zone->pages_scanned >= (zone->nr_active +
+-							zone->nr_inactive) * 4)
+-				zone->all_unreclaimable = 1;
+ 			/*
+ 			 * If we've done a decent amount of scanning and
+ 			 * the reclaim ratio is low, start doing writepage
+@@ -1102,11 +805,6 @@
+ 			break;
+ 	}
+ out:
+-	for (i = 0; i < pgdat->nr_zones; i++) {
+-		struct zone *zone = pgdat->node_zones + i;
+-
+-		zone->prev_priority = zone->temp_priority;
+-	}
+ 	if (!all_zones_ok) {
+ 		cond_resched();
+ 		goto loop_again;

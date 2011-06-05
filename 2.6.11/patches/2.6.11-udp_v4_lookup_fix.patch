@@ -1,0 +1,15 @@
+Index: linux/net/ipv4/udp.c
+===================================================================
+--- linux.orig/net/ipv4/udp.c	2005-03-05 14:40:51.562554848 +0100
++++ linux/net/ipv4/udp.c	2005-03-07 21:27:04.307090072 +0100
+@@ -264,8 +264,8 @@ static struct sock *udp_v4_lookup_longwa
+ 	return result;
+ }
+ 
+-static __inline__ struct sock *udp_v4_lookup(u32 saddr, u16 sport,
+-					     u32 daddr, u16 dport, int dif)
++__inline__ struct sock *udp_v4_lookup(u32 saddr, u16 sport,
++				     u32 daddr, u16 dport, int dif)
+ {
+ 	struct sock *sk;
+ 

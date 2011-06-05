@@ -1,0 +1,3221 @@
+Index: nfs-2.6/Makefile
+diff -u nfs-2.6/Makefile:1.1.1.12 nfs-2.6/Makefile:1.15
+--- nfs-2.6/Makefile:1.1.1.12	Wed Mar  2 10:10:24 2005
++++ nfs-2.6/Makefile	Wed Mar  2 11:00:18 2005
+@@ -1,7 +1,7 @@
+ VERSION = 2
+ PATCHLEVEL = 6
+ SUBLEVEL = 11
+-EXTRAVERSION =
++EXTRAVERSION = -selinux1-nfs1
+ NAME=Woozy Numbat
+ 
+ # *DOCUMENTATION*
+Index: nfs-2.6/fs/Kconfig
+diff -u nfs-2.6/fs/Kconfig:1.1.1.12 nfs-2.6/fs/Kconfig:1.12
+--- nfs-2.6/fs/Kconfig:1.1.1.12	Wed Mar  2 10:21:02 2005
++++ nfs-2.6/fs/Kconfig	Wed Mar  2 11:00:41 2005
+@@ -1359,6 +1359,24 @@
+ 
+ 	  If unsure, say Y.
+ 
++config NFS_XATTR
++	bool "Provide NFSv3 client support for extended attributes"
++	depends on NFS_FS && NFS_V3
++	help
++	 Say Y here if you want your NFS client to be able to use extended
++	 attributes.  This requires the server to be configured as well.
++
++	 If unsure, say N
++config NFS_SELINUX
++	bool "Provide NFSv3 client support for SELinux"
++	depends on NFS_FS && NFS_V3 && NFS_XATTR
++	help
++	 Say Y here for SELinux support for NFSv3.  This requires the
++	 SELinux security module on the client, and also that the server 
++	 is configured to use SELinux for NFSv3 as well.
++
++	 If unsure, say N
++	 	 
+ config NFS_V4
+ 	bool "Provide NFSv4 client support (EXPERIMENTAL)"
+ 	depends on NFS_FS && EXPERIMENTAL
+@@ -1432,6 +1450,24 @@
+ 	  If you would like to include the NFSv3 server as well as the NFSv2
+ 	  server, say Y here.  If unsure, say Y.
+ 
++config NFSD_XATTR
++	bool "Provide NFSv3 server support for extended attributes"
++	depends on NFSD && NFSD_V3
++	help
++	 Say Y here if you want your NFS server to be able to use extended
++	 attributes.
++
++	 If unsure, say N
++
++config NFSD_SELINUX
++	bool "Provide NFSv3 server support for SELinux"
++	depends on NFSD && NFSD_V3 && NFSD_XATTR
++	help
++	 Say Y here for SELinux support for NFSV3.  This requires the
++	 SELinux security module as well.
++
++	 If unsure, say N
++
+ config NFSD_V4
+ 	bool "Provide NFSv4 server support (EXPERIMENTAL)"
+ 	depends on NFSD_V3 && EXPERIMENTAL
+Index: nfs-2.6/fs/lockd/svc.c
+diff -u nfs-2.6/fs/lockd/svc.c:1.1.1.6 nfs-2.6/fs/lockd/svc.c:1.13
+--- nfs-2.6/fs/lockd/svc.c:1.1.1.6	Wed Mar  2 10:22:22 2005
++++ nfs-2.6/fs/lockd/svc.c	Wed Mar 16 13:17:01 2005
+@@ -477,6 +477,7 @@
+ 
+ #define NLM_NRVERS	(sizeof(nlmsvc_version)/sizeof(nlmsvc_version[0]))
+ static struct svc_program	nlmsvc_program = {
++	.pg_next		= NULL,			/* last registered program */
+ 	.pg_prog		= NLM_PROGRAM,		/* program number */
+ 	.pg_nvers		= NLM_NRVERS,		/* number of entries in nlmsvc_version */
+ 	.pg_vers		= nlmsvc_version,	/* version table */
+Index: nfs-2.6/fs/nfs/Makefile
+diff -u nfs-2.6/fs/nfs/Makefile:1.1.1.2 nfs-2.6/fs/nfs/Makefile:1.5
+--- nfs-2.6/fs/nfs/Makefile:1.1.1.2	Thu Oct 21 12:02:33 2004
++++ nfs-2.6/fs/nfs/Makefile	Fri Oct 22 16:27:14 2004
+@@ -6,6 +6,8 @@
+ 
+ nfs-y 			:= dir.o file.o inode.o nfs2xdr.o pagelist.o \
+ 			   proc.o read.o symlink.o unlink.o write.o
++
++nfs-$(CONFIG_NFS_XATTR) += xattr.o
+ nfs-$(CONFIG_ROOT_NFS)	+= nfsroot.o mount_clnt.o      
+ nfs-$(CONFIG_NFS_V3)	+= nfs3proc.o nfs3xdr.o
+ nfs-$(CONFIG_NFS_V4)	+= nfs4proc.o nfs4xdr.o nfs4state.o nfs4renewd.o \
+Index: nfs-2.6/fs/nfs/dir.c
+diff -u nfs-2.6/fs/nfs/dir.c:1.1.1.7 nfs-2.6/fs/nfs/dir.c:1.13
+--- nfs-2.6/fs/nfs/dir.c:1.1.1.7	Wed Mar  2 10:21:25 2005
++++ nfs-2.6/fs/nfs/dir.c	Wed Mar  2 11:00:42 2005
+@@ -31,6 +31,7 @@
+ #include <linux/pagemap.h>
+ #include <linux/smp_lock.h>
+ #include <linux/namei.h>
++#include <linux/sunrpc/xattr.h>
+ 
+ #include "delegation.h"
+ 
+@@ -72,6 +73,10 @@
+ 	.permission	= nfs_permission,
+ 	.getattr	= nfs_getattr,
+ 	.setattr	= nfs_setattr,
++#ifdef CONFIG_NFS_XATTR
++	.getxattr	= nfs_getxattr,
++	.setxattr	= nfs_setxattr,
++#endif
+ };
+ 
+ #ifdef CONFIG_NFS_V4
+@@ -1498,13 +1503,14 @@
+ int nfs_permission(struct inode *inode, int mask, struct nameidata *nd)
+ {
+ 	struct rpc_cred *cred;
++	struct rpc_clnt *client = NFS_CLIENT(inode);
+ 	int res;
+ 
+ 	if (mask == 0)
+ 		return 0;
+ 
+ 	/* Are we checking permissions on anything other than lookup/execute? */
+-	if ((mask & MAY_EXEC) == 0) {
++	if (!client->cl_selinux && ((mask & MAY_EXEC) == 0)) {
+ 		/* We only need to check permissions on file open() and access() */
+ 		if (!nd || !(nd->flags & (LOOKUP_OPEN|LOOKUP_ACCESS)))
+ 			return 0;
+Index: nfs-2.6/fs/nfs/file.c
+diff -u nfs-2.6/fs/nfs/file.c:1.1.1.9 nfs-2.6/fs/nfs/file.c:1.12
+--- nfs-2.6/fs/nfs/file.c:1.1.1.9	Wed Mar  2 10:21:29 2005
++++ nfs-2.6/fs/nfs/file.c	Wed Mar  2 11:00:42 2005
+@@ -30,6 +30,7 @@
+ 
+ #include <asm/uaccess.h>
+ #include <asm/system.h>
++#include <linux/sunrpc/xattr.h>
+ 
+ #include "delegation.h"
+ 
+@@ -65,6 +66,10 @@
+ 	.permission	= nfs_permission,
+ 	.getattr	= nfs_getattr,
+ 	.setattr	= nfs_setattr,
++#ifdef CONFIG_NFS_XATTR
++	.getxattr	= nfs_getxattr,
++	.setxattr	= nfs_setxattr,
++#endif
+ };
+ 
+ /* Hack for future NFS swap support */
+Index: nfs-2.6/fs/nfs/inode.c
+diff -u nfs-2.6/fs/nfs/inode.c:1.1.1.10 nfs-2.6/fs/nfs/inode.c:1.27
+--- nfs-2.6/fs/nfs/inode.c:1.1.1.10	Wed Mar  2 10:21:27 2005
++++ nfs-2.6/fs/nfs/inode.c	Wed Mar 30 12:41:41 2005
+@@ -35,6 +35,8 @@
+ #include <linux/mount.h>
+ #include <linux/nfs_idmap.h>
+ #include <linux/vfs.h>
++#include <linux/sunrpc/selinux.h>
++#include <linux/sunrpc/xattr.h>
+ 
+ #include <asm/system.h>
+ #include <asm/uaccess.h>
+@@ -104,6 +106,54 @@
+ 	.pipe_dir_name		= "/nfs",
+ };
+ 
++#ifdef CONFIG_NFS_SELINUX
++/* RPC cruft for selinuxnfs  */
++struct rpc_stat			selinux_nfs_rpcstat = {
++	.program		= &selinux_nfs_program
++};
++
++static struct rpc_version *	selinux_nfs_version[] = {
++	NULL,
++	NULL,
++	NULL,
++	&selinux_nfs_version3,
++};
++
++struct rpc_program		selinux_nfs_program = {
++	.name			= "selinuxnfs",
++	.number			= SELINUX_NFS_PROGRAM,
++	.nrvers			= sizeof(selinux_nfs_version) / 
++	                                sizeof(selinux_nfs_version[0]),
++	.version		= selinux_nfs_version,
++	.stats			= &selinux_nfs_rpcstat,
++	.pipe_dir_name		= "/selinuxnfs",
++};
++#endif /* CONFIG_NFS_SELINUX */
++
++#ifdef CONFIG_NFS_XATTR
++/* RPC cruft for xattrnfs  */
++struct rpc_stat			xattr_nfs_rpcstat = {
++	.program		= &xattr_nfs_program
++};
++
++static struct rpc_version *	xattr_nfs_version[] = {
++	NULL,
++	NULL,
++	NULL,
++	&xattr_nfs_version3,
++};
++
++struct rpc_program		xattr_nfs_program = {
++	.name			= "xattrnfs",
++	.number			= XATTR_NFS_PROGRAM,
++	.nrvers			= sizeof(xattr_nfs_version) / 
++	                                sizeof(xattr_nfs_version[0]),
++	.version		= xattr_nfs_version,
++	.stats			= &xattr_nfs_rpcstat,
++	.pipe_dir_name		= "/xattrnfs",
++};
++#endif /* CONFIG_NFS_XATTR */
++
+ static inline unsigned long
+ nfs_fattr_to_ino_t(struct nfs_fattr *fattr)
+ {
+@@ -337,6 +387,7 @@
+ 	struct rpc_timeout	timeparms;
+ 	struct rpc_xprt		*xprt = NULL;
+ 	struct rpc_clnt		*clnt = NULL;
++	struct rpc_program	*program;
+ 	int			tcp   = (data->flags & NFS_MOUNT_TCP);
+ 
+ 	/* Initialize timeout values */
+@@ -357,7 +408,18 @@
+ 		printk(KERN_WARNING "NFS: cannot create RPC transport.\n");
+ 		return (struct rpc_clnt *)xprt;
+ 	}
+-	clnt = rpc_create_client(xprt, server->hostname, &nfs_program,
++
++	program = &nfs_program;
++#ifdef CONFIG_NFS_XATTR
++	if (data->flags & NFS_MOUNT_XATTR)
++		program = &xattr_nfs_program;
++#endif
++#ifdef CONFIG_NFS_SELINUX
++	if (data->flags & NFS_MOUNT_SELINUX)
++		program = &selinux_nfs_program;
++#endif	
++
++	clnt = rpc_create_client(xprt, server->hostname, program,
+ 				 server->rpc_ops->version, data->pseudoflavor);
+ 	if (IS_ERR(clnt)) {
+ 		printk(KERN_WARNING "NFS: cannot create RPC client.\n");
+@@ -368,6 +430,11 @@
+ 	clnt->cl_softrtry = (server->flags & NFS_MOUNT_SOFT) ? 1 : 0;
+ 	clnt->cl_droppriv = (server->flags & NFS_MOUNT_BROKEN_SUID) ? 1 : 0;
+ 	clnt->cl_chatty   = 1;
++#ifdef CONFIG_NFS_SELINUX
++	clnt->cl_selinux = (server->flags & NFS_MOUNT_SELINUX) ? 1 : 0;
++#else
++	clnt->cl_selinux = 0;
++#endif
+ 
+ 	return clnt;
+ 
+@@ -419,6 +486,19 @@
+ 	if (server->flags & NFS_MOUNT_VER3) {
+ #ifdef CONFIG_NFS_V3
+ 		server->rpc_ops = &nfs_v3_clientops;
++		if (data->flags & NFS_MOUNT_XATTR)
++#ifdef CONFIG_NFS_XATTR
++			server->rpc_ops = &nfs_v3ea_clientops;
++#else
++		        printk(KERN_NOTICE "NFS: NFSv3 extended attributes not supported.\n");
++#endif
++		if (data->flags & NFS_MOUNT_SELINUX)
++#ifdef CONFIG_NFS_SELINUX
++			server->rpc_ops = &nfs_v3se_clientops;
++#else
++		        printk(KERN_NOTICE "NFS: NFSv3 with selinux not supported.\n");
++#endif
++			
+ 		server->caps |= NFS_CAP_READDIRPLUS;
+ 		if (data->version < 4) {
+ 			printk(KERN_NOTICE "NFS: NFSv3 not supported by mount program.\n");
+@@ -534,6 +614,8 @@
+ 		{ NFS_MOUNT_SOFT, ",soft", ",hard" },
+ 		{ NFS_MOUNT_INTR, ",intr", "" },
+ 		{ NFS_MOUNT_POSIX, ",posix", "" },
++		{ NFS_MOUNT_XATTR, ",xattr", "" },
++		{ NFS_MOUNT_SELINUX, ",selinux", "" },
+ 		{ NFS_MOUNT_TCP, ",tcp", ",udp" },
+ 		{ NFS_MOUNT_NOCTO, ",nocto", "" },
+ 		{ NFS_MOUNT_NOAC, ",noac", "" },
+@@ -968,7 +1050,8 @@
+ 			goto out_nowait;
+ 		if (NFS_ATTRTIMEO(inode) == 0)
+ 			continue;
+-		if (NFS_FLAGS(inode) & (NFS_INO_INVALID_ATTR|NFS_INO_INVALID_DATA|NFS_INO_INVALID_ATIME))
++		if (NFS_FLAGS(inode) & (NFS_INO_INVALID_ATTR|NFS_INO_INVALID_DATA|
++					NFS_INO_INVALID_ATIME|NFS_INO_INVALID_XATTR))
+ 			continue;
+ 		status = NFS_STALE(inode) ? -ESTALE : 0;
+ 		goto out_nowait;
+@@ -1024,6 +1107,17 @@
+ 		inode->i_sb->s_id,
+ 		(long long)NFS_FILEID(inode));
+ 
++#ifdef CONFIG_NFS_SELINUX
++	if ((NFS_PROTO(inode)->getxattr) && 
++	    (nfsi->flags & NFS_INO_INVALID_XATTR)) {
++		status = security_revalidate_inode(inode);
++		if (status) {
++			dfprintk(PAGECACHE, "security_revalidate_inode: (%s/%Ld) failed, error=%d\n",
++				 inode->i_sb->s_id, (long long)NFS_FILEID(inode), status);
++		}
++		nfsi->flags &= ~NFS_INO_INVALID_XATTR;
++	}
++#endif
+ out:
+ 	NFS_FLAGS(inode) &= ~NFS_INO_REVALIDATING;
+ 	wake_up(&nfsi->nfs_i_wait);
+@@ -1050,7 +1144,8 @@
+  */
+ int nfs_revalidate_inode(struct nfs_server *server, struct inode *inode)
+ {
+-	if (!(NFS_FLAGS(inode) & (NFS_INO_INVALID_ATTR|NFS_INO_INVALID_DATA))
++	if (!(NFS_FLAGS(inode) & (NFS_INO_INVALID_ATTR|NFS_INO_INVALID_DATA|
++				  NFS_INO_INVALID_XATTR))
+ 			&& !nfs_attribute_timeout(inode))
+ 		return NFS_STALE(inode) ? -ESTALE : 0;
+ 	return __nfs_revalidate_inode(server, inode);
+@@ -1139,7 +1234,7 @@
+ 			nfsi->flags |= NFS_INO_INVALID_ATTR;
+ 	}
+ 
+-	if ((fattr->valid & NFS_ATTR_FATTR) == 0)
++	if ((fattr->valid & (NFS_ATTR_FATTR | NFS_XATTR_FATTR)) == 0)
+ 		return 0;
+ 
+ 	/* Has the inode gone and changed behind our back? */
+@@ -1179,6 +1274,12 @@
+ 	if (!timespec_equal(&inode->i_atime, &fattr->atime))
+ 		nfsi->flags |= NFS_INO_INVALID_ATIME;
+ 
++#ifdef CONFIG_NFS_SELINUX
++	/* Has the security context changed? */
++	if ((fattr->valid & NFS_XATTR_FATTR) && (nfsi->sid != fattr->sid))
++		nfsi->flags |= (NFS_INO_INVALID_XATTR | NFS_INO_INVALID_ACCESS);
++#endif
++
+ 	nfsi->read_cache_jiffies = fattr->timestamp;
+ 	return 0;
+ }
+@@ -1322,6 +1423,13 @@
+ 	if (!nfs_have_delegation(inode, FMODE_READ))
+ 		nfsi->flags |= invalid;
+ 
++#ifdef CONFIG_NFS_SELINUX
++	/* Save security id from the server */
++	if ((fattr->valid & NFS_XATTR_FATTR) && (nfsi->sid != fattr->sid)) {
++		nfsi->flags |= (NFS_INO_INVALID_XATTR | NFS_INO_INVALID_ACCESS);
++		nfsi->sid = fattr->sid;
++	}
++#endif
+ 	return 0;
+  out_changed:
+ 	/*
+@@ -1929,6 +2037,12 @@
+ 
+ #ifdef CONFIG_PROC_FS
+ 	rpc_proc_register(&nfs_rpcstat);
++#ifdef CONFIG_NFS_SELINUX
++	rpc_proc_register(&selinux_nfs_rpcstat);
++#endif
++#ifdef CONFIG_NFS_XATTR
++	rpc_proc_register(&xattr_nfs_rpcstat);
++#endif
+ #endif
+         err = register_filesystem(&nfs_fs_type);
+ 	if (err)
+@@ -1940,6 +2054,12 @@
+ #ifdef CONFIG_PROC_FS
+ 	rpc_proc_unregister("nfs");
+ #endif
++#ifdef CONFIG_NFS_SELINUX
++	rpc_proc_unregister("selinuxnfs");
++#endif
++#ifdef CONFIG_NFS_XATTR
++	rpc_proc_unregister("xattrnfs");
++#endif
+ 	nfs_destroy_writepagecache();
+ #ifdef CONFIG_NFS_DIRECTIO
+ out0:
+@@ -1966,6 +2086,12 @@
+ 	nfs_destroy_nfspagecache();
+ #ifdef CONFIG_PROC_FS
+ 	rpc_proc_unregister("nfs");
++#ifdef CONFIG_NFS_SELINUX
++	rpc_proc_unregister("selinuxnfs");
++#endif
++#ifdef CONFIG_NFS_XATTR
++	rpc_proc_unregister("xattrnfs");
++#endif
+ #endif
+ 	unregister_filesystem(&nfs_fs_type);
+ 	unregister_nfs4fs();
+Index: nfs-2.6/fs/nfs/nfs2xdr.c
+diff -u nfs-2.6/fs/nfs/nfs2xdr.c:1.1.1.7 nfs-2.6/fs/nfs/nfs2xdr.c:1.7
+--- nfs-2.6/fs/nfs/nfs2xdr.c:1.1.1.7	Thu Oct 21 12:02:32 2004
++++ nfs-2.6/fs/nfs/nfs2xdr.c	Fri Oct 22 16:27:14 2004
+@@ -638,6 +638,10 @@
+ 	{ NFSERR_NOSPC,		ENOSPC		},
+ 	{ NFSERR_ROFS,		EROFS		},
+ 	{ NFSERR_MLINK,		EMLINK		},
++#ifdef CONFIG_NFSD_XATTR
++	{ NFSERR_ERANGE,	ERANGE		},
++	{ NFSERR_EOPNOTSUPP,	EOPNOTSUPP 	},
++#endif
+ 	{ NFSERR_NAMETOOLONG,	ENAMETOOLONG	},
+ 	{ NFSERR_NOTEMPTY,	ENOTEMPTY	},
+ 	{ NFSERR_DQUOT,		EDQUOT		},
+Index: nfs-2.6/fs/nfs/nfs3proc.c
+diff -u nfs-2.6/fs/nfs/nfs3proc.c:1.1.1.7 nfs-2.6/fs/nfs/nfs3proc.c:1.14
+--- nfs-2.6/fs/nfs/nfs3proc.c:1.1.1.7	Wed Mar  2 10:21:26 2005
++++ nfs-2.6/fs/nfs/nfs3proc.c	Wed Mar 30 09:51:35 2005
+@@ -17,11 +17,11 @@
+ #include <linux/nfs_page.h>
+ #include <linux/lockd/bind.h>
+ #include <linux/smp_lock.h>
++#include <linux/limits.h>
++#include <linux/sunrpc/xattr.h>
+ 
+ #define NFSDBG_FACILITY		NFSDBG_PROC
+ 
+-extern struct rpc_procinfo nfs3_procedures[];
+-
+ /* A wrapper to handle the EJUKEBOX error message */
+ static int
+ nfs3_rpc_wrapper(struct rpc_clnt *clnt, struct rpc_message *msg, int flags)
+@@ -45,7 +45,7 @@
+ nfs3_rpc_call_wrapper(struct rpc_clnt *clnt, u32 proc, void *argp, void *resp, int flags)
+ {
+ 	struct rpc_message msg = {
+-		.rpc_proc	= &nfs3_procedures[proc],
++		.rpc_proc	= &clnt->cl_procinfo[proc],
+ 		.rpc_argp	= argp,
+ 		.rpc_resp	= resp,
+ 	};
+@@ -155,6 +155,7 @@
+ 
+ static int nfs3_proc_access(struct inode *inode, struct nfs_access_entry *entry)
+ {
++	struct rpc_clnt		*clnt = NFS_CLIENT(inode);
+ 	struct nfs_fattr	fattr;
+ 	struct nfs3_accessargs	arg = {
+ 		.fh		= NFS_FH(inode),
+@@ -163,7 +164,7 @@
+ 		.fattr		= &fattr,
+ 	};
+ 	struct rpc_message msg = {
+-		.rpc_proc	= &nfs3_procedures[NFS3PROC_ACCESS],
++		.rpc_proc	= &clnt->cl_procinfo[NFS3PROC_ACCESS],
+ 		.rpc_argp	= &arg,
+ 		.rpc_resp	= &res,
+ 		.rpc_cred	= entry->cred
+@@ -187,7 +188,7 @@
+ 		if (mode & MAY_EXEC)
+ 			arg.access |= NFS3_ACCESS_EXECUTE;
+ 	}
+-	status = rpc_call_sync(NFS_CLIENT(inode), &msg, 0);
++	status = rpc_call_sync(clnt, &msg, 0);
+ 	nfs_refresh_inode(inode, &fattr);
+ 	if (status == 0) {
+ 		entry->mask = 0;
+@@ -227,9 +228,10 @@
+ {
+ 	int			flags = rdata->flags;
+ 	struct inode *		inode = rdata->inode;
++	struct rpc_clnt	*	clnt = NFS_CLIENT(inode);
+ 	struct nfs_fattr *	fattr = rdata->res.fattr;
+ 	struct rpc_message	msg = {
+-		.rpc_proc	= &nfs3_procedures[NFS3PROC_READ],
++		.rpc_proc	= &clnt->cl_procinfo[NFS3PROC_READ],
+ 		.rpc_argp	= &rdata->args,
+ 		.rpc_resp	= &rdata->res,
+ 		.rpc_cred	= rdata->cred,
+@@ -239,7 +241,7 @@
+ 	dprintk("NFS call  read %d @ %Ld\n", rdata->args.count,
+ 			(long long) rdata->args.offset);
+ 	fattr->valid = 0;
+-	status = rpc_call_sync(NFS_CLIENT(inode), &msg, flags);
++	status = rpc_call_sync(clnt, &msg, flags);
+ 	if (status >= 0)
+ 		nfs_refresh_inode(inode, fattr);
+ 	dprintk("NFS reply read: %d\n", status);
+@@ -250,9 +252,10 @@
+ {
+ 	int			rpcflags = wdata->flags;
+ 	struct inode *		inode = wdata->inode;
++	struct rpc_clnt	*	clnt = NFS_CLIENT(inode);
+ 	struct nfs_fattr *	fattr = wdata->res.fattr;
+ 	struct rpc_message	msg = {
+-		.rpc_proc	= &nfs3_procedures[NFS3PROC_WRITE],
++		.rpc_proc	= &clnt->cl_procinfo[NFS3PROC_WRITE],
+ 		.rpc_argp	= &wdata->args,
+ 		.rpc_resp	= &wdata->res,
+ 		.rpc_cred	= wdata->cred,
+@@ -262,7 +265,7 @@
+ 	dprintk("NFS call  write %d @ %Ld\n", wdata->args.count,
+ 			(long long) wdata->args.offset);
+ 	fattr->valid = 0;
+-	status = rpc_call_sync(NFS_CLIENT(inode), &msg, rpcflags);
++	status = rpc_call_sync(clnt, &msg, rpcflags);
+ 	if (status >= 0)
+ 		nfs_refresh_inode(inode, fattr);
+ 	dprintk("NFS reply write: %d\n", status);
+@@ -272,9 +275,10 @@
+ static int nfs3_proc_commit(struct nfs_write_data *cdata)
+ {
+ 	struct inode *		inode = cdata->inode;
++	struct rpc_clnt	*	clnt = NFS_CLIENT(inode);
+ 	struct nfs_fattr *	fattr = cdata->res.fattr;
+ 	struct rpc_message	msg = {
+-		.rpc_proc	= &nfs3_procedures[NFS3PROC_COMMIT],
++		.rpc_proc	= &clnt->cl_procinfo[NFS3PROC_COMMIT],
+ 		.rpc_argp	= &cdata->args,
+ 		.rpc_resp	= &cdata->res,
+ 		.rpc_cred	= cdata->cred,
+@@ -284,7 +288,7 @@
+ 	dprintk("NFS call  commit %d @ %Ld\n", cdata->args.count,
+ 			(long long) cdata->args.offset);
+ 	fattr->valid = 0;
+-	status = rpc_call_sync(NFS_CLIENT(inode), &msg, 0);
++	status = rpc_call_sync(clnt, &msg, 0);
+ 	if (status >= 0)
+ 		nfs_refresh_inode(inode, fattr);
+ 	dprintk("NFS reply commit: %d\n", status);
+@@ -394,6 +398,7 @@
+ static int
+ nfs3_proc_remove(struct inode *dir, struct qstr *name)
+ {
++	struct rpc_clnt	*	clnt = NFS_CLIENT(dir);
+ 	struct nfs_fattr	dir_attr;
+ 	struct nfs3_diropargs	arg = {
+ 		.fh		= NFS_FH(dir),
+@@ -401,7 +406,7 @@
+ 		.len		= name->len
+ 	};
+ 	struct rpc_message	msg = {
+-		.rpc_proc	= &nfs3_procedures[NFS3PROC_REMOVE],
++		.rpc_proc	= &clnt->cl_procinfo[NFS3PROC_REMOVE],
+ 		.rpc_argp	= &arg,
+ 		.rpc_resp	= &dir_attr,
+ 	};
+@@ -409,7 +414,7 @@
+ 
+ 	dprintk("NFS call  remove %s\n", name->name);
+ 	dir_attr.valid = 0;
+-	status = rpc_call_sync(NFS_CLIENT(dir), &msg, 0);
++	status = rpc_call_sync(clnt, &msg, 0);
+ 	nfs_refresh_inode(dir, &dir_attr);
+ 	dprintk("NFS reply remove: %d\n", status);
+ 	return status;
+@@ -418,6 +423,8 @@
+ static int
+ nfs3_proc_unlink_setup(struct rpc_message *msg, struct dentry *dir, struct qstr *name)
+ {
++	struct inode *		inode = dir->d_inode;	
++	struct rpc_clnt	*	clnt = NFS_CLIENT(inode);
+ 	struct unlinkxdr {
+ 		struct nfs3_diropargs arg;
+ 		struct nfs_fattr res;
+@@ -426,11 +433,11 @@
+ 	ptr = (struct unlinkxdr *)kmalloc(sizeof(*ptr), GFP_KERNEL);
+ 	if (!ptr)
+ 		return -ENOMEM;
+-	ptr->arg.fh = NFS_FH(dir->d_inode);
++	ptr->arg.fh = NFS_FH(inode);
+ 	ptr->arg.name = name->name;
+ 	ptr->arg.len = name->len;
+ 	ptr->res.valid = 0;
+-	msg->rpc_proc = &nfs3_procedures[NFS3PROC_REMOVE];
++	msg->rpc_proc = &clnt->cl_procinfo[NFS3PROC_REMOVE];
+ 	msg->rpc_argp = &ptr->arg;
+ 	msg->rpc_resp = &ptr->res;
+ 	return 0;
+@@ -599,6 +606,7 @@
+ 		  u64 cookie, struct page *page, unsigned int count, int plus)
+ {
+ 	struct inode		*dir = dentry->d_inode;
++	struct rpc_clnt		*clnt = NFS_CLIENT(dir);
+ 	struct nfs_fattr	dir_attr;
+ 	u32			*verf = NFS_COOKIEVERF(dir);
+ 	struct nfs3_readdirargs	arg = {
+@@ -615,7 +623,7 @@
+ 		.plus		= plus
+ 	};
+ 	struct rpc_message	msg = {
+-		.rpc_proc	= &nfs3_procedures[NFS3PROC_READDIR],
++		.rpc_proc	= &clnt->cl_procinfo[NFS3PROC_READDIR],
+ 		.rpc_argp	= &arg,
+ 		.rpc_resp	= &res,
+ 		.rpc_cred	= cred
+@@ -625,13 +633,13 @@
+ 	lock_kernel();
+ 
+ 	if (plus)
+-		msg.rpc_proc = &nfs3_procedures[NFS3PROC_READDIRPLUS];
++		msg.rpc_proc = &clnt->cl_procinfo[NFS3PROC_READDIRPLUS];
+ 
+ 	dprintk("NFS call  readdir%s %d\n",
+ 			plus? "plus" : "", (unsigned int) cookie);
+ 
+ 	dir_attr.valid = 0;
+-	status = rpc_call_sync(NFS_CLIENT(dir), &msg, 0);
++	status = rpc_call_sync(clnt, &msg, 0);
+ 	nfs_refresh_inode(dir, &dir_attr);
+ 	dprintk("NFS reply readdir: %d\n", status);
+ 	unlock_kernel();
+@@ -734,9 +742,10 @@
+ {
+ 	struct rpc_task		*task = &data->task;
+ 	struct inode		*inode = data->inode;
++	struct rpc_clnt		*clnt = NFS_CLIENT(inode);
+ 	int			flags;
+ 	struct rpc_message	msg = {
+-		.rpc_proc	= &nfs3_procedures[NFS3PROC_READ],
++		.rpc_proc	= &clnt->cl_procinfo[NFS3PROC_READ],
+ 		.rpc_argp	= &data->args,
+ 		.rpc_resp	= &data->res,
+ 		.rpc_cred	= data->cred,
+@@ -746,7 +755,7 @@
+ 	flags = RPC_TASK_ASYNC | (IS_SWAPFILE(inode)? NFS_RPC_SWAPFLAGS : 0);
+ 
+ 	/* Finalize the task. */
+-	rpc_init_task(task, NFS_CLIENT(inode), nfs3_read_done, flags);
++	rpc_init_task(task, clnt, nfs3_read_done, flags);
+ 	rpc_call_setup(task, &msg, 0);
+ }
+ 
+@@ -768,10 +777,11 @@
+ {
+ 	struct rpc_task		*task = &data->task;
+ 	struct inode		*inode = data->inode;
++	struct rpc_clnt		*clnt = NFS_CLIENT(inode);
+ 	int			stable;
+ 	int			flags;
+ 	struct rpc_message	msg = {
+-		.rpc_proc	= &nfs3_procedures[NFS3PROC_WRITE],
++		.rpc_proc	= &clnt->cl_procinfo[NFS3PROC_WRITE],
+ 		.rpc_argp	= &data->args,
+ 		.rpc_resp	= &data->res,
+ 		.rpc_cred	= data->cred,
+@@ -790,7 +800,7 @@
+ 	flags = (how & FLUSH_SYNC) ? 0 : RPC_TASK_ASYNC;
+ 
+ 	/* Finalize the task. */
+-	rpc_init_task(task, NFS_CLIENT(inode), nfs3_write_done, flags);
++	rpc_init_task(task, clnt, nfs3_write_done, flags);
+ 	rpc_call_setup(task, &msg, 0);
+ }
+ 
+@@ -812,9 +822,10 @@
+ {
+ 	struct rpc_task		*task = &data->task;
+ 	struct inode		*inode = data->inode;
++	struct rpc_clnt		*clnt = NFS_CLIENT(inode);
+ 	int			flags;
+ 	struct rpc_message	msg = {
+-		.rpc_proc	= &nfs3_procedures[NFS3PROC_COMMIT],
++		.rpc_proc	= &clnt->cl_procinfo[NFS3PROC_COMMIT],
+ 		.rpc_argp	= &data->args,
+ 		.rpc_resp	= &data->res,
+ 		.rpc_cred	= data->cred,
+@@ -824,7 +835,7 @@
+ 	flags = (how & FLUSH_SYNC) ? 0 : RPC_TASK_ASYNC;
+ 
+ 	/* Finalize the task. */
+-	rpc_init_task(task, NFS_CLIENT(inode), nfs3_commit_done, flags);
++	rpc_init_task(task, clnt, nfs3_commit_done, flags);
+ 	rpc_call_setup(task, &msg, 0);
+ }
+ 
+@@ -834,6 +845,50 @@
+ 	return nlmclnt_proc(filp->f_dentry->d_inode, cmd, fl);
+ }
+ 
++#ifdef CONFIG_NFS_XATTR
++static int
++nfs3_proc_getxattr(struct dentry *dentry, const char *name, void *buffer,
++		   unsigned int size, unsigned int *xattrlen)
++{
++	struct inode *inode = dentry->d_inode;
++	struct nfs3_getxattrargs	arg = {
++		.fh			= NFS_FH(inode),
++		.name			= name,
++		.namelen		= strnlen(name, XATTR_NAME_MAX+1),
++		.bufsize		= size,
++	};
++	struct nfs3_getxattrres		res = {	
++		.buffer			= buffer,
++		.xattrlen		= xattrlen,
++		.sid			= &NFS_I(inode)->sid,
++	};
++	if (arg.namelen > XATTR_NAME_MAX)
++		return -ERANGE;
++	return rpc_call(NFS_CLIENT(inode), NFS3PROC_GETXATTR, &arg, &res, 0);
++}
++
++static int
++nfs3_proc_setxattr(struct dentry *dentry, const char *name, const void *value, 
++			     unsigned int size, int flags)
++{
++	struct inode *inode = dentry->d_inode;
++	struct nfs3_setxattrargs	arg = {
++		.fh			= NFS_FH(inode),
++		.name			= name,
++		.namelen		= strnlen(name, XATTR_NAME_MAX+1),
++		.value			= value,
++		.size			= size,
++		.flags			= flags,
++	};
++	struct nfs3_setxattrres		res = {
++		.sid			= &NFS_I(inode)->sid,
++	};
++	if (arg.namelen > XATTR_NAME_MAX)
++		return -ERANGE;
++	return rpc_call(NFS_CLIENT(inode), NFS3PROC_SETXATTR, &arg, &res, 0);
++}
++#endif /* CONFIG_NFS_XATTR */
++
+ struct nfs_rpc_ops	nfs_v3_clientops = {
+ 	.version	= 3,			/* protocol version */
+ 	.dentry_ops	= &nfs_dentry_operations,
+@@ -869,3 +924,87 @@
+ 	.file_release	= nfs_release,
+ 	.lock		= nfs3_proc_lock,
+ };
++
++#ifdef CONFIG_NFS_XATTR
++struct nfs_rpc_ops	nfs_v3ea_clientops = {
++	.version	= 3,			/* protocol version */
++	.dentry_ops	= &nfs_dentry_operations,
++	.dir_inode_ops	= &nfs_dir_inode_operations,
++	.getroot	= nfs3_proc_get_root,
++	.getattr	= nfs3_proc_getattr,
++	.setattr	= nfs3_proc_setattr,
++	.lookup		= nfs3_proc_lookup,
++	.access		= nfs3_proc_access,
++	.readlink	= nfs3_proc_readlink,
++	.read		= nfs3_proc_read,
++	.write		= nfs3_proc_write,
++	.commit		= nfs3_proc_commit,
++	.create		= nfs3_proc_create,
++	.remove		= nfs3_proc_remove,
++	.unlink_setup	= nfs3_proc_unlink_setup,
++	.unlink_done	= nfs3_proc_unlink_done,
++	.rename		= nfs3_proc_rename,
++	.link		= nfs3_proc_link,
++	.symlink	= nfs3_proc_symlink,
++	.mkdir		= nfs3_proc_mkdir,
++	.rmdir		= nfs3_proc_rmdir,
++	.readdir	= nfs3_proc_readdir,
++	.mknod		= nfs3_proc_mknod,
++	.statfs		= nfs3_proc_statfs,
++	.fsinfo		= nfs3_proc_fsinfo,
++	.pathconf	= nfs3_proc_pathconf,
++	.decode_dirent	= nfs3_decode_dirent,
++	.read_setup	= nfs3_proc_read_setup,
++	.write_setup	= nfs3_proc_write_setup,
++	.commit_setup	= nfs3_proc_commit_setup,
++	.file_open	= nfs_open,
++	.file_release	= nfs_release,
++	.lock		= nfs3_proc_lock,
++	.getxattr	= nfs3_proc_getxattr,
++	.setxattr	= nfs3_proc_setxattr,
++};
++#else
++#define nfs_v3ea_clientops nfs_v3_clientops
++#endif /* CONFIG_NFS_XATTR */
++
++#ifdef CONFIG_NFS_SELINUX
++struct nfs_rpc_ops	nfs_v3se_clientops = {
++	.version	= 3,			/* protocol version */
++	.dentry_ops	= &nfs_dentry_operations,
++	.dir_inode_ops	= &nfs_dir_inode_operations,
++	.getroot	= nfs3_proc_get_root,
++	.getattr	= nfs3_proc_getattr,
++	.setattr	= nfs3_proc_setattr,
++	.lookup		= nfs3_proc_lookup,
++	.access		= nfs3_proc_access,
++	.readlink	= nfs3_proc_readlink,
++	.read		= nfs3_proc_read,
++	.write		= nfs3_proc_write,
++	.commit		= nfs3_proc_commit,
++	.create		= nfs3_proc_create,
++	.remove		= nfs3_proc_remove,
++	.unlink_setup	= nfs3_proc_unlink_setup,
++	.unlink_done	= nfs3_proc_unlink_done,
++	.rename		= nfs3_proc_rename,
++	.link		= nfs3_proc_link,
++	.symlink	= nfs3_proc_symlink,
++	.mkdir		= nfs3_proc_mkdir,
++	.rmdir		= nfs3_proc_rmdir,
++	.readdir	= nfs3_proc_readdir,
++	.mknod		= nfs3_proc_mknod,
++	.statfs		= nfs3_proc_statfs,
++	.fsinfo		= nfs3_proc_fsinfo,
++	.pathconf	= nfs3_proc_pathconf,
++	.decode_dirent	= nfs3_decode_dirent,
++	.read_setup	= nfs3_proc_read_setup,
++	.write_setup	= nfs3_proc_write_setup,
++	.commit_setup	= nfs3_proc_commit_setup,
++	.file_open	= nfs_open,
++	.file_release	= nfs_release,
++	.lock		= nfs3_proc_lock,
++	.getxattr	= nfs3_proc_getxattr,
++	.setxattr	= nfs3_proc_setxattr,
++};
++#else
++#define nfs_v3se_clientops nfs_v3_clientops
++#endif /* CONFIG_NFS_SELINUX */
+Index: nfs-2.6/fs/nfs/nfs3xdr.c
+diff -u nfs-2.6/fs/nfs/nfs3xdr.c:1.1.1.7 nfs-2.6/fs/nfs/nfs3xdr.c:1.21
+--- nfs-2.6/fs/nfs/nfs3xdr.c:1.1.1.7	Thu Oct 21 12:02:32 2004
++++ nfs-2.6/fs/nfs/nfs3xdr.c	Wed Mar 30 09:51:35 2005
+@@ -21,6 +21,8 @@
+ #include <linux/nfs.h>
+ #include <linux/nfs3.h>
+ #include <linux/nfs_fs.h>
++#include <linux/limits.h> 	/* for XATTR_NAME_MAX */
++#include <linux/sunrpc/xattr.h>
+ 
+ #define NFSDBG_FACILITY		NFSDBG_XDR
+ 
+@@ -33,12 +35,14 @@
+  * Declare the space requirements for NFS arguments and replies as
+  * number of 32bit-words
+  */
++#define NFS3_xattr_name_sz	(1+XDR_QUADLEN(XATTR_NAME_MAX))
++#define NFS3_xattr_value_sz	(1+XDR_QUADLEN(NFS_XATTR_SIZE_MAX))
+ #define NFS3_fhandle_sz		(1+16)
+ #define NFS3_fh_sz		(NFS3_fhandle_sz)	/* shorthand */
+ #define NFS3_sattr_sz		(15)
+ #define NFS3_filename_sz	(1+(NFS3_MAXNAMLEN>>2))
+ #define NFS3_path_sz		(1+(NFS3_MAXPATHLEN>>2))
+-#define NFS3_fattr_sz		(21)
++#define NFS3_fattr_sz		(21 + 1) /* + 1 for SELinux sid */
+ #define NFS3_wcc_attr_sz		(6)
+ #define NFS3_pre_op_attr_sz	(1+NFS3_wcc_attr_sz)
+ #define NFS3_post_op_attr_sz	(1+NFS3_fattr_sz)
+@@ -62,6 +66,8 @@
+ #define NFS3_linkargs_sz		(NFS3_fh_sz+NFS3_diropargs_sz)
+ #define NFS3_readdirargs_sz	(NFS3_fh_sz+2)
+ #define NFS3_commitargs_sz	(NFS3_fh_sz+3)
++#define NFS3_getxattrargs_sz	(NFS3_fh_sz+NFS3_xattr_name_sz+1)
++#define NFS3_setxattrargs_sz	(NFS3_fh_sz+NFS3_xattr_name_sz+NFS3_xattr_value_sz+1)
+ 
+ #define NFS3_attrstat_sz	(1+NFS3_fattr_sz)
+ #define NFS3_wccstat_sz		(1+NFS3_wcc_data_sz)
+@@ -78,6 +84,8 @@
+ #define NFS3_fsinfores_sz	(1+NFS3_post_op_attr_sz+12)
+ #define NFS3_pathconfres_sz	(1+NFS3_post_op_attr_sz+6)
+ #define NFS3_commitres_sz	(1+NFS3_wcc_data_sz+2)
++#define NFS3_getxattrres_sz	(1+1+NFS3_xattr_value_sz+1)
++#define NFS3_setxattrres_sz	(1+1)
+ 
+ /*
+  * Map file type to S_IFMT bits
+@@ -229,10 +237,26 @@
+ }
+ 
+ static inline u32 *
+-xdr_decode_post_op_attr(u32 *p, struct nfs_fattr *fattr)
++_xdr_decode_post_op_attr(u32 *p, struct nfs_fattr *fattr)
+ {
+ 	if (*p++)
+ 		p = xdr_decode_fattr(p, fattr);
++
++	return p;
++}
++
++static inline u32 *
++xdr_decode_post_op_attr(struct rpc_rqst *req, u32 *p, struct nfs_fattr *fattr)
++{
++	if (*p++) {
++		p = xdr_decode_fattr(p, fattr);
++#ifdef CONFIG_NFS_SELINUX
++		if (req->rq_task->tk_client->cl_selinux) {
++			fattr->sid = ntohl(*p++);
++			fattr->valid |= NFS_XATTR_FATTR;
++		}
++#endif
++	}
+ 	return p;
+ }
+ 
+@@ -246,10 +270,10 @@
+ 
+ 
+ static inline u32 *
+-xdr_decode_wcc_data(u32 *p, struct nfs_fattr *fattr)
++xdr_decode_wcc_data(struct rpc_rqst *req, u32 *p, struct nfs_fattr *fattr)
+ {
+ 	p = xdr_decode_pre_op_attr(p, fattr);
+-	return xdr_decode_post_op_attr(p, fattr);
++	return xdr_decode_post_op_attr(req, p, fattr);
+ }
+ 
+ /*
+@@ -489,7 +513,7 @@
+ 
+ 	status = ntohl(*p++);
+ 	/* Decode post_op_attrs */
+-	p = xdr_decode_post_op_attr(p, res->dir_attr);
++	p = xdr_decode_post_op_attr(req, p, res->dir_attr);
+ 	if (status)
+ 		return -nfs_stat_to_errno(status);
+ 	/* Decode verifier cookie */
+@@ -596,7 +620,7 @@
+ 
+ 	if (plus) {
+ 		entry->fattr->valid = 0;
+-		p = xdr_decode_post_op_attr(p, entry->fattr);
++		p = _xdr_decode_post_op_attr(p, entry->fattr);
+ 		/* In fact, a post_op_fh3: */
+ 		if (*p++) {
+ 			p = xdr_decode_fhandle(p, entry->fh);
+@@ -627,6 +651,37 @@
+ 	return 0;
+ }
+ 
++#ifdef CONFIG_NFS_XATTR
++/*
++ * Encode GETXATTR request
++ */
++static int
++nfs3_xdr_getxattrargs(struct rpc_rqst *req, u32 *p, 
++		      struct nfs3_getxattrargs *args)
++{
++	p = xdr_encode_fhandle(p, args->fh);
++	p = xdr_encode_array(p, args->name, args->namelen+1);
++	*p++ = htonl(args->bufsize);
++	req->rq_slen = xdr_adjust_iovec(req->rq_svec, p);
++	return 0;
++}
++
++/*
++ * Encode SETXATTR request
++ */
++static int
++nfs3_xdr_setxattrargs(struct rpc_rqst *req, u32 *p, 
++		      struct nfs3_setxattrargs *args)
++{
++	p = xdr_encode_fhandle(p, args->fh);
++	p = xdr_encode_array(p, args->name, args->namelen+1);
++	p = xdr_encode_array(p, args->value, args->size);
++	*p++ = htonl(args->flags);
++	req->rq_slen = xdr_adjust_iovec(req->rq_svec, p);
++	return 0;
++}
++#endif /* CONFIG_NFS_XATTR */
++
+ /*
+  * NFS XDR decode functions
+  */
+@@ -641,7 +696,13 @@
+ 
+ 	if ((status = ntohl(*p++)))
+ 		return -nfs_stat_to_errno(status);
+-	xdr_decode_fattr(p, fattr);
++	p = xdr_decode_fattr(p, fattr);
++#ifdef CONFIG_NFS_SELINUX
++	if (req->rq_task->tk_client->cl_selinux) {
++		fattr->sid = ntohl(*p++);
++		fattr->valid |= NFS_XATTR_FATTR;
++	}
++#endif
+ 	return 0;
+ }
+ 
+@@ -656,7 +717,7 @@
+ 
+ 	if ((status = ntohl(*p++)))
+ 		status = -nfs_stat_to_errno(status);
+-	xdr_decode_wcc_data(p, fattr);
++	xdr_decode_wcc_data(req, p, fattr);
+ 	return status;
+ }
+ 
+@@ -673,9 +734,9 @@
+ 	} else {
+ 		if (!(p = xdr_decode_fhandle(p, res->fh)))
+ 			return -errno_NFSERR_IO;
+-		p = xdr_decode_post_op_attr(p, res->fattr);
++		p = xdr_decode_post_op_attr(req, p, res->fattr);
+ 	}
+-	xdr_decode_post_op_attr(p, res->dir_attr);
++	xdr_decode_post_op_attr(req, p, res->dir_attr);
+ 	return status;
+ }
+ 
+@@ -687,7 +748,7 @@
+ {
+ 	int	status = ntohl(*p++);
+ 
+-	p = xdr_decode_post_op_attr(p, res->fattr);
++	p = xdr_decode_post_op_attr(req, p, res->fattr);
+ 	if (status)
+ 		return -nfs_stat_to_errno(status);
+ 	res->access = ntohl(*p++);
+@@ -722,7 +783,7 @@
+ 	int	status;
+ 
+ 	status = ntohl(*p++);
+-	p = xdr_decode_post_op_attr(p, fattr);
++	p = xdr_decode_post_op_attr(req, p, fattr);
+ 
+ 	if (status != 0)
+ 		return -nfs_stat_to_errno(status);
+@@ -767,7 +828,7 @@
+ 	int	status, count, ocount, recvd, hdrlen;
+ 
+ 	status = ntohl(*p++);
+-	p = xdr_decode_post_op_attr(p, res->fattr);
++	p = xdr_decode_post_op_attr(req, p, res->fattr);
+ 
+ 	if (status != 0)
+ 		return -nfs_stat_to_errno(status);
+@@ -817,7 +878,7 @@
+ 	int	status;
+ 
+ 	status = ntohl(*p++);
+-	p = xdr_decode_wcc_data(p, res->fattr);
++	p = xdr_decode_wcc_data(req, p, res->fattr);
+ 
+ 	if (status != 0)
+ 		return -nfs_stat_to_errno(status);
+@@ -843,17 +904,17 @@
+ 		if (*p++) {
+ 			if (!(p = xdr_decode_fhandle(p, res->fh)))
+ 				return -errno_NFSERR_IO;
+-			p = xdr_decode_post_op_attr(p, res->fattr);
++			p = xdr_decode_post_op_attr(req, p, res->fattr);
+ 		} else {
+ 			memset(res->fh, 0, sizeof(*res->fh));
+ 			/* Do decode post_op_attr but set it to NULL */
+-			p = xdr_decode_post_op_attr(p, res->fattr);
++			p = xdr_decode_post_op_attr(req, p, res->fattr);
+ 			res->fattr->valid = 0;
+ 		}
+ 	} else {
+ 		status = -nfs_stat_to_errno(status);
+ 	}
+-	p = xdr_decode_wcc_data(p, res->dir_attr);
++	p = xdr_decode_wcc_data(req, p, res->dir_attr);
+ 	return status;
+ }
+ 
+@@ -867,8 +928,8 @@
+ 
+ 	if ((status = ntohl(*p++)) != 0)
+ 		status = -nfs_stat_to_errno(status);
+-	p = xdr_decode_wcc_data(p, res->fromattr);
+-	p = xdr_decode_wcc_data(p, res->toattr);
++	p = xdr_decode_wcc_data(req, p, res->fromattr);
++	p = xdr_decode_wcc_data(req, p, res->toattr);
+ 	return status;
+ }
+ 
+@@ -882,8 +943,8 @@
+ 
+ 	if ((status = ntohl(*p++)) != 0)
+ 		status = -nfs_stat_to_errno(status);
+-	p = xdr_decode_post_op_attr(p, res->fattr);
+-	p = xdr_decode_wcc_data(p, res->dir_attr);
++	p = xdr_decode_post_op_attr(req, p, res->fattr);
++	p = xdr_decode_wcc_data(req, p, res->dir_attr);
+ 	return status;
+ }
+ 
+@@ -897,7 +958,7 @@
+ 
+ 	status = ntohl(*p++);
+ 
+-	p = xdr_decode_post_op_attr(p, res->fattr);
++	p = xdr_decode_post_op_attr(req, p, res->fattr);
+ 	if (status != 0)
+ 		return -nfs_stat_to_errno(status);
+ 
+@@ -922,7 +983,7 @@
+ 
+ 	status = ntohl(*p++);
+ 
+-	p = xdr_decode_post_op_attr(p, res->fattr);
++	p = xdr_decode_post_op_attr(req, p, res->fattr);
+ 	if (status != 0)
+ 		return -nfs_stat_to_errno(status);
+ 
+@@ -950,7 +1011,7 @@
+ 
+ 	status = ntohl(*p++);
+ 
+-	p = xdr_decode_post_op_attr(p, res->fattr);
++	p = xdr_decode_post_op_attr(req, p, res->fattr);
+ 	if (status != 0)
+ 		return -nfs_stat_to_errno(status);
+ 	res->max_link = ntohl(*p++);
+@@ -969,7 +1030,7 @@
+ 	int		status;
+ 
+ 	status = ntohl(*p++);
+-	p = xdr_decode_wcc_data(p, res->fattr);
++	p = xdr_decode_wcc_data(req, p, res->fattr);
+ 	if (status != 0)
+ 		return -nfs_stat_to_errno(status);
+ 
+@@ -978,6 +1039,52 @@
+ 	return 0;
+ }
+ 
++#ifdef CONFIG_NFS_XATTR
++/*
++ * Decode GETXATTR result
++ */
++static int
++nfs3_xdr_getxattrres(struct rpc_rqst *req, u32 *p, struct nfs3_getxattrres *res)
++{
++	int status;
++	int len;
++
++	status = ntohl(*p++);
++	if (status != 0)
++		return -nfs_stat_to_errno(status);
++
++	*res->xattrlen = ntohl(*p++);
++	len = ntohl(*p++);
++	if (len) {
++		memcpy(res->buffer,p,len);
++		p += XDR_QUADLEN(len);
++	}
++#ifdef CONFIG_NFS_SELINUX
++	if ((req->rq_task->tk_client->cl_selinux) && *p)
++		*res->sid = ntohl(*p++);
++#endif	
++	return 0;
++}
++
++/*
++ * Decode SETXATTR result
++ */
++static int
++nfs3_xdr_setxattrres(struct rpc_rqst *req, u32 *p, struct nfs3_setxattrres *res)
++{
++	int status;
++
++	status = ntohl(*p++);
++	if (status != 0)
++		return -nfs_stat_to_errno(status);
++#ifdef CONFIG_NFS_SELINUX
++	if ((req->rq_task->tk_client->cl_selinux) && *p)
++		*res->sid = ntohl(*p++);	
++#endif	
++	return 0;
++}
++#endif /* CONFIG_NFS_XATTR */
++
+ #ifndef MAX
+ # define MAX(a, b)	(((a) > (b))? (a) : (b))
+ #endif
+@@ -1021,3 +1128,72 @@
+ 	.procs			= nfs3_procedures
+ };
+ 
++#ifdef CONFIG_NFS_XATTR
++struct rpc_procinfo	xattr_nfs3_procedures[] = {
++  PROC(GETATTR,		fhandle,	attrstat, 1),
++  PROC(SETATTR, 	sattrargs,	wccstat, 0),
++  PROC(LOOKUP,		diropargs,	lookupres, 2),
++  PROC(ACCESS,		accessargs,	accessres, 1),
++  PROC(READLINK,	readlinkargs,	readlinkres, 3),
++  PROC(READ,		readargs,	readres, 3),
++  PROC(WRITE,		writeargs,	writeres, 4),
++  PROC(CREATE,		createargs,	createres, 0),
++  PROC(MKDIR,		mkdirargs,	createres, 0),
++  PROC(SYMLINK,		symlinkargs,	createres, 0),
++  PROC(MKNOD,		mknodargs,	createres, 0),
++  PROC(REMOVE,		diropargs,	wccstat, 0),
++  PROC(RMDIR,		diropargs,	wccstat, 0),
++  PROC(RENAME,		renameargs,	renameres, 0),
++  PROC(LINK,		linkargs,	linkres, 0),
++  PROC(READDIR,		readdirargs,	readdirres, 3),
++  PROC(READDIRPLUS,	readdirargs,	readdirres, 3),
++  PROC(FSSTAT,		fhandle,	fsstatres, 0),
++  PROC(FSINFO,  	fhandle,	fsinfores, 0),
++  PROC(PATHCONF,	fhandle,	pathconfres, 0),
++  PROC(COMMIT,		commitargs,	commitres, 5),
++  PROC(GETXATTR,	getxattrargs,	getxattrres, 1),
++  PROC(SETXATTR,	setxattrargs,	setxattrres, 0),
++};
++
++struct rpc_version		xattr_nfs_version3 = {
++	.number			= 3,
++	.nrprocs		= sizeof(xattr_nfs3_procedures)/
++	                                 sizeof(xattr_nfs3_procedures[0]),
++	.procs			= xattr_nfs3_procedures
++};
++#endif /* CONFIG_NFS_XATTR */
++
++#ifdef CONFIG_NFS_SELINUX
++struct rpc_procinfo	selinux_nfs3_procedures[] = {
++  PROC(GETATTR,		fhandle,	attrstat, 1),
++  PROC(SETATTR, 	sattrargs,	wccstat, 0),
++  PROC(LOOKUP,		diropargs,	lookupres, 2),
++  PROC(ACCESS,		accessargs,	accessres, 1),
++  PROC(READLINK,	readlinkargs,	readlinkres, 3),
++  PROC(READ,		readargs,	readres, 3),
++  PROC(WRITE,		writeargs,	writeres, 4),
++  PROC(CREATE,		createargs,	createres, 0),
++  PROC(MKDIR,		mkdirargs,	createres, 0),
++  PROC(SYMLINK,		symlinkargs,	createres, 0),
++  PROC(MKNOD,		mknodargs,	createres, 0),
++  PROC(REMOVE,		diropargs,	wccstat, 0),
++  PROC(RMDIR,		diropargs,	wccstat, 0),
++  PROC(RENAME,		renameargs,	renameres, 0),
++  PROC(LINK,		linkargs,	linkres, 0),
++  PROC(READDIR,		readdirargs,	readdirres, 3),
++  PROC(READDIRPLUS,	readdirargs,	readdirres, 3),
++  PROC(FSSTAT,		fhandle,	fsstatres, 0),
++  PROC(FSINFO,  	fhandle,	fsinfores, 0),
++  PROC(PATHCONF,	fhandle,	pathconfres, 0),
++  PROC(COMMIT,		commitargs,	commitres, 5),
++  PROC(GETXATTR,	getxattrargs,	getxattrres, 1),
++  PROC(SETXATTR,	setxattrargs,	setxattrres, 0),
++};
++
++struct rpc_version		selinux_nfs_version3 = {
++	.number			= 3,
++	.nrprocs		= sizeof(selinux_nfs3_procedures)/
++	                                 sizeof(selinux_nfs3_procedures[0]),
++	.procs			= selinux_nfs3_procedures
++};
++#endif /* CONFIG_NFS_SELINUX */
+Index: nfs-2.6/fs/nfs/symlink.c
+diff -u nfs-2.6/fs/nfs/symlink.c:1.1.1.2 nfs-2.6/fs/nfs/symlink.c:1.3
+--- nfs-2.6/fs/nfs/symlink.c:1.1.1.2	Thu Oct 21 12:02:33 2004
++++ nfs-2.6/fs/nfs/symlink.c	Fri Oct 22 16:27:15 2004
+@@ -24,6 +24,7 @@
+ #include <linux/string.h>
+ #include <linux/smp_lock.h>
+ #include <linux/namei.h>
++#include <linux/sunrpc/xattr.h>
+ 
+ /* Symlink caching in the page cache is even more simplistic
+  * and straight-forward than readdir caching.
+@@ -114,4 +115,8 @@
+ 	.put_link	= nfs_put_link,
+ 	.getattr	= nfs_getattr,
+ 	.setattr	= nfs_setattr,
++#ifdef CONFIG_NFS_XATTR
++	.getxattr	= nfs_getxattr,
++	.setxattr	= nfs_setxattr,
++#endif
+ };
+Index: nfs-2.6/fs/nfs/xattr.c
+diff -u /dev/null nfs-2.6/fs/nfs/xattr.c:1.4
+--- /dev/null	Mon Jun 20 12:37:15 2005
++++ nfs-2.6/fs/nfs/xattr.c	Wed Mar  3 15:40:37 2004
+@@ -0,0 +1,62 @@
++/*
++ * File: fs/nfs/xattr.c
++ *
++ * Derived from fs/devpts/xattr.c
++ */
++
++#include <linux/fs.h>
++#include <linux/nfs_fs.h>
++#include <linux/sunrpc/xattr.h>
++
++/*
++ * Inode operation getxattr()
++ *
++ * dentry->d_inode->i_sem down
++ */
++
++ssize_t
++nfs_getxattr(struct dentry *dentry, const char *name, void *buffer, size_t size)
++{
++	struct inode *inode = dentry->d_inode;
++	int xattrlen;
++	int error;
++
++	error = -EOPNOTSUPP;
++	if (NFS_PROTO(inode)->getxattr) {
++		if (strcmp(name, "") == 0)
++			return -EINVAL;
++		error = NFS_PROTO(inode)->getxattr(dentry, name, buffer, size, 
++						   &xattrlen);
++	}
++	if (error < 0)
++		return (ssize_t)error;
++	
++	return (ssize_t)xattrlen;
++}
++
++/*
++ * Inode operation setxattr()
++ *
++ * dentry->d_inode->i_sem down
++ */
++int
++nfs_setxattr(struct dentry *dentry, const char *name,
++	      const void *value, size_t size, int flags)
++{
++	struct inode *inode = dentry->d_inode;
++	int error;
++
++	error = -EOPNOTSUPP;
++	if (NFS_PROTO(inode)->setxattr) {
++		if (strcmp(name, "") == 0)
++			return -EINVAL;
++		if (size == 0)
++			value = ""; /* empty EA, do not remove */
++		if (size > NFS_XATTR_SIZE_MAX)
++			return -EOPNOTSUPP;
++		error = NFS_PROTO(inode)->setxattr(dentry, name, value, size, 
++						   flags);
++	}
++
++	return error;
++}
+Index: nfs-2.6/fs/nfsd/export.c
+diff -u nfs-2.6/fs/nfsd/export.c:1.1.1.6 nfs-2.6/fs/nfsd/export.c:1.8
+--- nfs-2.6/fs/nfsd/export.c:1.1.1.6	Wed Mar  2 10:21:30 2005
++++ nfs-2.6/fs/nfsd/export.c	Wed Mar  2 11:00:43 2005
+@@ -1013,6 +1013,7 @@
+ 	{ NFSEXP_CROSSMOUNT, {"crossmnt", ""}},
+ 	{ NFSEXP_NOSUBTREECHECK, {"no_subtree_check", ""}},
+ 	{ NFSEXP_NOAUTHNLM, {"insecure_locks", ""}},
++	{ NFSEXP_SELINUX, {"selinux", ""}},
+ #ifdef MSNFS
+ 	{ NFSEXP_MSNFS, {"msnfs", ""}},
+ #endif
+Index: nfs-2.6/fs/nfsd/nfs3proc.c
+diff -u nfs-2.6/fs/nfsd/nfs3proc.c:1.1.1.4 nfs-2.6/fs/nfsd/nfs3proc.c:1.19
+--- nfs-2.6/fs/nfsd/nfs3proc.c:1.1.1.4	Thu Oct 21 12:03:18 2004
++++ nfs-2.6/fs/nfsd/nfs3proc.c	Wed Mar 30 12:41:41 2005
+@@ -24,6 +24,9 @@
+ #include <linux/nfsd/cache.h>
+ #include <linux/nfsd/xdr3.h>
+ #include <linux/nfs3.h>
++#include <linux/sunrpc/xdr.h>
++#include <linux/sunrpc/xattr.h>
++#include <linux/security.h>
+ 
+ #define NFSDDBG_FACILITY		NFSDDBG_PROC
+ 
+@@ -57,12 +60,21 @@
+ 					   struct nfsd3_attrstat *resp)
+ {
+ 	int	nfserr;
++	struct svc_fh *fhp;
+ 
+ 	dprintk("nfsd: GETATTR(3)  %s\n",
+ 				SVCFH_fmt(&argp->fh));
+ 
+ 	fh_copy(&resp->fh, &argp->fh);
+ 	nfserr = fh_verify(rqstp, &resp->fh, 0, MAY_NOP);
++#ifdef CONFIG_NFSD_SELINUX
++	if (nfserr)
++		RETURN_STATUS(nfserr);
++	fhp = &resp->fh;
++	nfserr = security_inode_getattr(fhp->fh_export->ex_mnt, fhp->fh_dentry);
++	if (nfserr)
++		nfserr = nfserrno(nfserr);
++#endif
+ 	RETURN_STATUS(nfserr);
+ }
+ 
+@@ -630,6 +642,39 @@
+ 	RETURN_STATUS(nfserr);
+ }
+ 
++#ifdef CONFIG_NFSD_XATTR
++/*
++ * Get the named Extended Attribute value for the given file
++ */
++static int
++nfsd3_proc_getxattr(struct svc_rqst *rqstp, struct nfsd3_getxattrargs *argp,
++		    struct nfsd3_getxattrres *resp)
++{
++	int nfserr;
++	fh_copy(&resp->fh, &argp->fh);
++	nfserr = nfsd_getxattr(rqstp, &resp->fh, argp->name, argp->size, 
++			       resp->buffer, &resp->xattrlen, &resp->sid);
++	if (argp->size == 0)
++		resp->buflen = 0;
++	else
++		resp->buflen = resp->xattrlen;
++	RETURN_STATUS(nfserr);
++}
++
++/*
++ * Set the named Extended Attribute value for the given file
++ */
++static int
++nfsd3_proc_setxattr(struct svc_rqst *rqstp, struct nfsd3_setxattrargs *argp,
++		    struct nfsd3_setxattrres *resp)
++{
++	int nfserr;
++	fh_copy(&resp->fh, &argp->fh);
++	nfserr = nfsd_setxattr(rqstp, &resp->fh, argp->name, argp->value, 
++			       argp->size, argp->flags, &resp->sid);
++	RETURN_STATUS(nfserr);
++}
++#endif /* CONFIG_NFSD_XATTR */
+ 
+ /*
+  * NFSv3 Server procedures.
+@@ -664,11 +709,12 @@
+ 
+ #define ST 1		/* status*/
+ #define FH 17		/* filehandle with length */
+-#define AT 21		/* attributes */
++#define AT (21 + 1)	/* attributes (+1 for SELinux sid) */
+ #define pAT (1+AT)	/* post attributes - conditional */
+ #define WC (7+pAT)	/* WCC attributes */
++#define EA (1+XDR_QUADLEN(NFS_XATTR_SIZE_MAX) + 1)	/* xattr */
+ 
+-static struct svc_procedure		nfsd_procedures3[22] = {
++static struct svc_procedure		nfsd_procedures3[24] = {
+   PROC(null,	 void,		void,		void,	  RC_NOCACHE, ST),
+   PROC(getattr,	 fhandle,	attrstat,	fhandle,  RC_NOCACHE, ST+AT),
+   PROC(setattr,  sattr,		wccstat,	fhandle,  RC_REPLBUFF, ST+WC),
+@@ -700,3 +746,77 @@
+ 		.vs_dispatch	= nfsd_dispatch,
+ 		.vs_xdrsize	= NFS3_SVC_XDRSIZE,
+ };
++
++#ifdef CONFIG_NFSD_SELINUX
++static struct svc_procedure		selinux_nfsd_procedures3[24] = {
++  PROC(null,	 void,		void,		void,	  RC_NOCACHE, ST),
++  PROC(getattr,	 fhandle,	attrstat,	fhandle,  RC_NOCACHE, ST+AT),
++  PROC(setattr,  sattr,		wccstat,	fhandle,  RC_REPLBUFF, ST+WC),
++  PROC(lookup,	 dirop,		dirop,		fhandle2, RC_NOCACHE, ST+FH+pAT+pAT),
++  PROC(access,	 access,	access,		fhandle,  RC_NOCACHE, ST+pAT+1),
++  PROC(readlink, readlink,	readlink,	fhandle,  RC_NOCACHE, ST+pAT+1+NFS3_MAXPATHLEN/4),
++  PROC(read,	 read,		read,		fhandle,  RC_NOCACHE, ST+pAT+4+NFSSVC_MAXBLKSIZE),
++  PROC(write,	 write,		write,		fhandle,  RC_REPLBUFF, ST+WC+4),
++  PROC(create,	 create,	create,		fhandle2, RC_REPLBUFF, ST+(1+FH+pAT)+WC),
++  PROC(mkdir,	 mkdir,		create,		fhandle2, RC_REPLBUFF, ST+(1+FH+pAT)+WC),
++  PROC(symlink,	 symlink,	create,		fhandle2, RC_REPLBUFF, ST+(1+FH+pAT)+WC),
++  PROC(mknod,	 mknod,		create,		fhandle2, RC_REPLBUFF, ST+(1+FH+pAT)+WC),
++  PROC(remove,	 dirop,		wccstat,	fhandle,  RC_REPLBUFF, ST+WC),
++  PROC(rmdir,	 dirop,		wccstat,	fhandle,  RC_REPLBUFF, ST+WC),
++  PROC(rename,	 rename,	rename,		fhandle2, RC_REPLBUFF, ST+WC+WC),
++  PROC(link,	 link,		link,		fhandle2, RC_REPLBUFF, ST+pAT+WC),
++  PROC(readdir,	 readdir,	readdir,	fhandle,  RC_NOCACHE, 0),
++  PROC(readdirplus,readdirplus,	readdir,	fhandle,  RC_NOCACHE, 0),
++  PROC(fsstat,	 fhandle,	fsstat,		void,     RC_NOCACHE, ST+pAT+2*6+1),
++  PROC(fsinfo,   fhandle,	fsinfo,		void,     RC_NOCACHE, ST+pAT+12),
++  PROC(pathconf, fhandle,	pathconf,	void,     RC_NOCACHE, ST+pAT+6),
++  PROC(commit,	 commit,	commit,		fhandle,  RC_NOCACHE, ST+WC+2),
++  PROC(getxattr, getxattr,	getxattr,	fhandle,  RC_NOCACHE, ST+1+EA),
++  PROC(setxattr, setxattr,	setxattr,	fhandle,  RC_NOCACHE, ST+1),
++};
++
++struct svc_version	selinux_nfsd_version3 = {
++		.vs_vers	= 3,
++		.vs_nproc	= 24,
++		.vs_proc	= selinux_nfsd_procedures3,
++		.vs_dispatch	= nfsd_dispatch,
++		.vs_xdrsize	= NFS3EA_SVC_XDRSIZE,
++};
++#endif /* CONFIG_NFSD_SELINUX */
++
++#ifdef CONFIG_NFSD_XATTR
++static struct svc_procedure		xattr_nfsd_procedures3[24] = {
++  PROC(null,	 void,		void,		void,	  RC_NOCACHE, ST),
++  PROC(getattr,	 fhandle,	attrstat,	fhandle,  RC_NOCACHE, ST+AT),
++  PROC(setattr,  sattr,		wccstat,	fhandle,  RC_REPLBUFF, ST+WC),
++  PROC(lookup,	 dirop,		dirop,		fhandle2, RC_NOCACHE, ST+FH+pAT+pAT),
++  PROC(access,	 access,	access,		fhandle,  RC_NOCACHE, ST+pAT+1),
++  PROC(readlink, readlink,	readlink,	fhandle,  RC_NOCACHE, ST+pAT+1+NFS3_MAXPATHLEN/4),
++  PROC(read,	 read,		read,		fhandle,  RC_NOCACHE, ST+pAT+4+NFSSVC_MAXBLKSIZE),
++  PROC(write,	 write,		write,		fhandle,  RC_REPLBUFF, ST+WC+4),
++  PROC(create,	 create,	create,		fhandle2, RC_REPLBUFF, ST+(1+FH+pAT)+WC),
++  PROC(mkdir,	 mkdir,		create,		fhandle2, RC_REPLBUFF, ST+(1+FH+pAT)+WC),
++  PROC(symlink,	 symlink,	create,		fhandle2, RC_REPLBUFF, ST+(1+FH+pAT)+WC),
++  PROC(mknod,	 mknod,		create,		fhandle2, RC_REPLBUFF, ST+(1+FH+pAT)+WC),
++  PROC(remove,	 dirop,		wccstat,	fhandle,  RC_REPLBUFF, ST+WC),
++  PROC(rmdir,	 dirop,		wccstat,	fhandle,  RC_REPLBUFF, ST+WC),
++  PROC(rename,	 rename,	rename,		fhandle2, RC_REPLBUFF, ST+WC+WC),
++  PROC(link,	 link,		link,		fhandle2, RC_REPLBUFF, ST+pAT+WC),
++  PROC(readdir,	 readdir,	readdir,	fhandle,  RC_NOCACHE, 0),
++  PROC(readdirplus,readdirplus,	readdir,	fhandle,  RC_NOCACHE, 0),
++  PROC(fsstat,	 fhandle,	fsstat,		void,     RC_NOCACHE, ST+pAT+2*6+1),
++  PROC(fsinfo,   fhandle,	fsinfo,		void,     RC_NOCACHE, ST+pAT+12),
++  PROC(pathconf, fhandle,	pathconf,	void,     RC_NOCACHE, ST+pAT+6),
++  PROC(commit,	 commit,	commit,		fhandle,  RC_NOCACHE, ST+WC+2),
++  PROC(getxattr, getxattr,	getxattr,	fhandle,  RC_NOCACHE, ST+1+EA),
++  PROC(setxattr, setxattr,	setxattr,	fhandle,  RC_NOCACHE, ST+1),
++};
++
++struct svc_version	xattr_nfsd_version3 = {
++		.vs_vers	= 3,
++		.vs_nproc	= 24,
++		.vs_proc	= xattr_nfsd_procedures3,
++		.vs_dispatch	= nfsd_dispatch,
++		.vs_xdrsize	= NFS3EA_SVC_XDRSIZE,
++};
++#endif /* CONFIG_NFSD_XATTR */
+Index: nfs-2.6/fs/nfsd/nfs3xdr.c
+diff -u nfs-2.6/fs/nfsd/nfs3xdr.c:1.1.1.8 nfs-2.6/fs/nfsd/nfs3xdr.c:1.22
+--- nfs-2.6/fs/nfsd/nfs3xdr.c:1.1.1.8	Wed Mar  2 10:21:29 2005
++++ nfs-2.6/fs/nfsd/nfs3xdr.c	Wed Mar 30 11:04:17 2005
+@@ -21,6 +21,7 @@
+ #include <linux/sunrpc/svc.h>
+ #include <linux/nfsd/nfsd.h>
+ #include <linux/nfsd/xdr3.h>
++#include <linux/security.h>
+ 
+ #define NFSDDBG_FACILITY		NFSDDBG_XDR
+ 
+@@ -212,6 +213,10 @@
+ 	p = encode_time3(p, &fhp->fh_post_atime);
+ 	p = encode_time3(p, &fhp->fh_post_mtime);
+ 	p = encode_time3(p, &fhp->fh_post_ctime);
++#ifdef CONFIG_NFSD_SELINUX
++	if (rqstp->rq_selinux)
++		*p++ = htonl(security_get_inode_sid(inode));
++#endif
+ 
+ 	return p;
+ }
+@@ -222,10 +227,16 @@
+  * handle. In this case, no attributes are returned.
+  */
+ static u32 *
+-encode_post_op_attr(struct svc_rqst *rqstp, u32 *p, struct svc_fh *fhp)
++_encode_post_op_attr(struct svc_rqst *rqstp, u32 *p, struct svc_fh *fhp)
+ {
+ 	struct dentry *dentry = fhp->fh_dentry;
+-	if (dentry && dentry->d_inode != NULL) {
++
++#ifdef CONFIG_NFSD_SELINUX
++	if (dentry && dentry->d_inode != NULL && 
++	    !security_inode_getattr(fhp->fh_export->ex_mnt, dentry)) {
++#else
++	if (dentry && dentry->d_inode != NULL {
++#endif
+ 		*p++ = xdr_one;		/* attributes follow */
+ 		return encode_fattr3(rqstp, p, fhp);
+ 	}
+@@ -233,6 +244,31 @@
+ 	return p;
+ }
+ 
++static u32 *
++encode_post_op_attr(struct svc_rqst *rqstp, u32 *p, struct svc_fh *fhp)
++{
++	struct dentry *dentry = fhp->fh_dentry;
++	struct inode *inode = dentry->d_inode;
++
++#ifdef CONFIG_NFSD_SELINUX
++	if (dentry && dentry->d_inode != NULL && 
++	    !security_inode_getattr(fhp->fh_export->ex_mnt, dentry)) {
++#else
++	if (dentry && dentry->d_inode != NULL {
++#endif
++		*p++ = xdr_one;		/* attributes follow */
++		p = encode_fattr3(rqstp, p, fhp);
++#ifdef CONFIG_NFSD_SELINUX
++		if (rqstp->rq_selinux)
++			*p++ = htonl(security_get_inode_sid(inode));
++#endif
++
++		return p;
++	}
++	*p++ = xdr_zero;
++	return p;
++}
++
+ /*
+  * Enocde weak cache consistency data
+  */
+@@ -583,6 +619,34 @@
+ 	return xdr_argsize_check(rqstp, p);
+ }
+ 
++#ifdef CONFIG_NFSD_XATTR
++int
++nfs3svc_decode_getxattrargs(struct svc_rqst *rqstp, u32 *p, 
++			    struct nfsd3_getxattrargs *args)
++{
++	if (!(p = decode_fh(p, &args->fh)) ||
++	      !(p = xdr_decode_string_inplace(p, &args->name, &args->namelen,
++					      XATTR_NAME_MAX)))
++		return 0;
++	args->size = ntohl(*p++);
++	return xdr_argsize_check(rqstp, p);
++}    
++
++int
++nfs3svc_decode_setxattrargs(struct svc_rqst *rqstp, u32 *p, 
++			    struct nfsd3_setxattrargs *args)
++{
++	if (!(p = decode_fh(p, &args->fh)) ||
++	      !(p = xdr_decode_string_inplace(p, &args->name, &args->namelen,
++					      XATTR_NAME_MAX)) ||
++		!(p = xdr_decode_string_inplace(p, &args->value, &args->size,
++						NFS_XATTR_SIZE_MAX)))
++		return 0;
++	args->flags = ntohl(*p++);
++	return xdr_argsize_check(rqstp, p);
++}    
++#endif /* CONFIG_NFSD_XATTR */
++
+ /*
+  * XDR encode functions
+  */
+@@ -601,8 +665,16 @@
+ nfs3svc_encode_attrstat(struct svc_rqst *rqstp, u32 *p,
+ 					struct nfsd3_attrstat *resp)
+ {
+-	if (resp->status == 0)
+-		p = encode_fattr3(rqstp, p, &resp->fh);
++	struct svc_fh	*fhp = &resp->fh;
++	struct inode	*inode = fhp->fh_dentry->d_inode;
++	
++	if (resp->status == 0) {
++		p = encode_fattr3(rqstp, p, fhp);
++#ifdef CONFIG_NFSD_SELINUX
++		if (rqstp->rq_selinux)
++			*p++ = htonl(security_get_inode_sid(inode));
++#endif
++	}
+ 	return xdr_ressize_check(rqstp, p);
+ }
+ 
+@@ -779,7 +851,7 @@
+ encode_entryplus_baggage(struct nfsd3_readdirres *cd, u32 *p,
+ 		struct svc_fh *fhp)
+ {
+-		p = encode_post_op_attr(cd->rqstp, p, fhp);
++		p = _encode_post_op_attr(cd->rqstp, p, fhp);
+ 		*p++ = xdr_one;			/* yes, a file handle follows */
+ 		p = encode_fh(p, fhp);
+ 		fh_put(fhp);
+@@ -1066,6 +1138,34 @@
+ 	return xdr_ressize_check(rqstp, p);
+ }
+ 
++#ifdef CONFIG_NFSD_XATTR
++/* GETXATTR */
++int
++nfs3svc_encode_getxattrres(struct svc_rqst *rqstp, u32 *p,
++			   struct nfsd3_getxattrres *res)
++{
++	*p++ = htonl(res->xattrlen);
++	p = xdr_encode_array(p, res->buffer, res->buflen);
++#ifdef CONFIG_NFSD_SELINUX
++	if (rqstp->rq_selinux)
++		*p++ = htonl(res->sid);
++#endif
++	return xdr_ressize_check(rqstp, p);
++}
++
++/* SETXATTR */
++int
++nfs3svc_encode_setxattrres(struct svc_rqst *rqstp, u32 *p,
++			   struct nfsd3_setxattrres *res)
++{
++#ifdef CONFIG_NFSD_SELINUX
++	if (rqstp->rq_selinux)
++		*p++ = htonl(res->sid);
++#endif
++	return xdr_ressize_check(rqstp, p);
++}
++#endif /* CONFIG_NFSD_XATTR */
++
+ /*
+  * XDR release functions
+  */
+Index: nfs-2.6/fs/nfsd/nfsfh.c
+diff -u nfs-2.6/fs/nfsd/nfsfh.c:1.1.1.7 nfs-2.6/fs/nfsd/nfsfh.c:1.13
+--- nfs-2.6/fs/nfsd/nfsfh.c:1.1.1.7	Mon Dec 27 16:08:01 2004
++++ nfs-2.6/fs/nfsd/nfsfh.c	Wed Mar 30 11:04:18 2005
+@@ -177,8 +177,14 @@
+ 		if (!exp || IS_ERR(exp))
+ 			goto out;
+ 
+-		/* Check if the request originated from a secure port. */
+ 		error = nfserr_perm;
++#ifdef CONFIG_NFSD_SELINUX
++                if (EX_SELINUX(exp) && !rqstp->rq_selinux) {
++			printk(KERN_WARNING "nfsd: request not using SELinux\n");
++			goto out;
++		}
++#endif
++		/* Check if the request originated from a secure port. */
+ 		if (!rqstp->rq_secure && EX_SECURE(exp)) {
+ 			printk(KERN_WARNING
+ 			       "nfsd: request from insecure port (%u.%u.%u.%u:%d)!\n",
+@@ -330,7 +336,8 @@
+ 		(long) exp->ex_dentry->d_inode->i_ino,
+ 		parent->d_name.name, dentry->d_name.name,
+ 		(inode ? inode->i_ino : 0));
+-
++	dprintk("nfsd: fh_compose: parent ino=%ld\n",
++		(parent->d_inode ? parent->d_inode->i_ino : 0));
+ 	if (ref_fh) {
+ 		ref_fh_version = ref_fh->fh_handle.fh_version;
+ 		if (ref_fh_version == 0xca)
+Index: nfs-2.6/fs/nfsd/nfsproc.c
+diff -u nfs-2.6/fs/nfsd/nfsproc.c:1.1.1.7 nfs-2.6/fs/nfsd/nfsproc.c:1.7
+--- nfs-2.6/fs/nfsd/nfsproc.c:1.1.1.7	Wed Mar  2 10:21:30 2005
++++ nfs-2.6/fs/nfsd/nfsproc.c	Wed Mar  2 11:00:43 2005
+@@ -580,6 +580,10 @@
+ 		{ nfserr_nospc, -ENOSPC },
+ 		{ nfserr_rofs, -EROFS },
+ 		{ nfserr_mlink, -EMLINK },
++#ifdef CONFIG_NFSD_XATTR
++		{ nfserr_erange, -ERANGE },
++		{ nfserr_eopnotsupp, -EOPNOTSUPP },
++#endif
+ 		{ nfserr_nametoolong, -ENAMETOOLONG },
+ 		{ nfserr_notempty, -ENOTEMPTY },
+ #ifdef EDQUOT
+Index: nfs-2.6/fs/nfsd/nfssvc.c
+diff -u nfs-2.6/fs/nfsd/nfssvc.c:1.1.1.4 nfs-2.6/fs/nfsd/nfssvc.c:1.14
+--- nfs-2.6/fs/nfsd/nfssvc.c:1.1.1.4	Wed Mar  2 10:21:30 2005
++++ nfs-2.6/fs/nfsd/nfssvc.c	Wed Mar  2 11:00:43 2005
+@@ -31,6 +31,8 @@
+ #include <linux/nfsd/stats.h>
+ #include <linux/nfsd/cache.h>
+ #include <linux/lockd/bind.h>
++#include <linux/sunrpc/xattr.h>
++#include <linux/sunrpc/selinux.h>
+ 
+ #define NFSDDBG_FACILITY	NFSDDBG_SVC
+ 
+@@ -48,7 +50,8 @@
+  */
+ #define	SIG_NOCLEAN	SIGHUP
+ 
+-extern struct svc_program	nfsd_program;
++extern struct svc_program	nfsd_program, selinux_nfsd_program, 
++	                        xattr_nfsd_program;
+ static void			nfsd(struct svc_rqst *rqstp);
+ struct timeval			nfssvc_boot;
+ static struct svc_serv 		*nfsd_serv;
+@@ -372,6 +375,11 @@
+ 
+ #define NFSD_NRVERS		(sizeof(nfsd_version)/sizeof(nfsd_version[0]))
+ struct svc_program		nfsd_program = {
++#ifdef CONFIG_NFSD_XATTR
++	.pg_next		= &xattr_nfsd_program,	/* next registered program */
++#else
++	.pg_next		= NULL,
++#endif
+ 	.pg_prog		= NFS_PROGRAM,		/* program number */
+ 	.pg_nvers		= NFSD_NRVERS,		/* nr of entries in nfsd_version */
+ 	.pg_vers		= nfsd_version,		/* version table */
+@@ -379,3 +387,43 @@
+ 	.pg_class		= "nfsd",		/* authentication class */
+ 	.pg_stats		= &nfsd_svcstats,	/* version table */
+ };
++
++#ifdef CONFIG_NFSD_XATTR
++extern struct svc_version	xattr_nfsd_version3;
++static struct svc_version *	xattr_nfsd_version[] = {	
++	[3] = &xattr_nfsd_version3,
++};
++#define XATTR_NFSD_NRVERS	(sizeof(xattr_nfsd_version)/sizeof(xattr_nfsd_version[0]))
++
++struct svc_program		xattr_nfsd_program = {
++#ifdef CONFIG_NFSD_SELINUX
++	.pg_next		= &selinux_nfsd_program, /* next registered program */
++#else
++	.pg_next		= NULL,
++#endif
++	.pg_prog		= XATTR_NFS_PROGRAM,	/* program number */
++	.pg_nvers		= XATTR_NFSD_NRVERS,	/* nr of entries in nfsd_version */
++	.pg_vers		= xattr_nfsd_version,	/* version table */
++	.pg_name		= "xattr_nfsd",		/* program name */
++	.pg_class		= "xattr_nfsd",		/* authentication class */
++	.pg_stats		= &xattr_nfsd_svcstats,	
++};
++#endif /* CONFIG_NFSD_XATTR */
++
++#ifdef CONFIG_NFSD_SELINUX
++extern struct svc_version	selinux_nfsd_version3;
++static struct svc_version *	selinux_nfsd_version[] = {	
++	[3] = &selinux_nfsd_version3,
++};
++#define SELINUX_NFSD_NRVERS	(sizeof(selinux_nfsd_version)/sizeof(selinux_nfsd_version[0]))
++
++struct svc_program		selinux_nfsd_program = {
++	.pg_next		= NULL,			/* next registered program */
++	.pg_prog		= SELINUX_NFS_PROGRAM,	/* program number */
++	.pg_nvers		= SELINUX_NFSD_NRVERS,	/* nr of entries in nfsd_version */
++	.pg_vers		= selinux_nfsd_version,	/* version table */
++	.pg_name		= "selinux_nfsd",	/* program name */
++	.pg_class		= "selinux_nfsd",       /* authentication class */
++	.pg_stats		= &selinux_nfsd_svcstats,	
++};
++#endif /* CONFIG_NFSD_SELINUX */
+Index: nfs-2.6/fs/nfsd/stats.c
+diff -u nfs-2.6/fs/nfsd/stats.c:1.1.1.2 nfs-2.6/fs/nfsd/stats.c:1.4
+--- nfs-2.6/fs/nfsd/stats.c:1.1.1.2	Fri Apr  2 14:13:50 2004
++++ nfs-2.6/fs/nfsd/stats.c	Mon Apr  5 09:35:36 2004
+@@ -39,6 +39,17 @@
+ struct svc_stat		nfsd_svcstats = {
+ 	.program	= &nfsd_program,
+ };
++#ifdef CONFIG_NFSD_SELINUX
++struct svc_stat		selinux_nfsd_svcstats = {
++	.program	= &selinux_nfsd_program,
++};
++#endif
++
++#ifdef CONFIG_NFSD_XATTR
++struct svc_stat		xattr_nfsd_svcstats = {
++	.program	= &xattr_nfsd_program,
++};
++#endif
+ 
+ static int nfsd_proc_show(struct seq_file *seq, void *v)
+ {
+@@ -71,7 +82,14 @@
+ 	
+ 	/* show my rpc info */
+ 	svc_seq_show(seq, &nfsd_svcstats);
+-
++#ifdef CONFIG_NFSD_XATTR
++	seq_printf(seq,"xattr:\n");
++	svc_seq_show(seq, &xattr_nfsd_svcstats);
++#endif
++#ifdef CONFIG_NFSD_SELINUX
++	seq_printf(seq,"selinux:\n");
++	svc_seq_show(seq, &selinux_nfsd_svcstats);
++#endif
+ 	return 0;
+ }
+ 
+Index: nfs-2.6/fs/nfsd/vfs.c
+diff -u nfs-2.6/fs/nfsd/vfs.c:1.1.1.10 nfs-2.6/fs/nfsd/vfs.c:1.22
+--- nfs-2.6/fs/nfsd/vfs.c:1.1.1.10	Wed Mar  2 10:21:30 2005
++++ nfs-2.6/fs/nfsd/vfs.c	Wed Mar 30 12:41:41 2005
+@@ -53,8 +53,8 @@
+ #include <linux/nfs4.h>
+ #include <linux/nfs4_acl.h>
+ #include <linux/nfsd_idmap.h>
+-#include <linux/security.h>
+ #endif /* CONFIG_NFSD_V4 */
++#include <linux/security.h>
+ 
+ #include <asm/uaccess.h>
+ 
+@@ -1767,8 +1767,14 @@
+ 	 * with NFSv3.
+ 	 */
+ 	if ((acc & MAY_OWNER_OVERRIDE) &&
+-	    inode->i_uid == current->fsuid)
+-		return 0;
++	    inode->i_uid == current->fsuid) {
++#ifdef CONFIG_NFSD_SELINUX
++		err = security_inode_permission(inode, acc & (MAY_READ|MAY_WRITE|MAY_EXEC), NULL);
++#else
++		err = 0;
++#endif
++		return err ? nfserrno(err) : 0;
++	}
+ 
+ 	err = permission(inode, acc & (MAY_READ|MAY_WRITE|MAY_EXEC), NULL);
+ 
+@@ -1817,3 +1823,85 @@
+ 	nfsdstats.ra_size = cache_size;
+ 	return 0;
+ }
++
++#ifdef CONFIG_NFSD_XATTR
++/*
++ * Get file extended attribute
++ * After this call fhp needs an fh_put
++ */
++int
++nfsd_getxattr(struct svc_rqst *rqstp, struct svc_fh *fhp, char *name, 
++	      u32 size, char *buffer, int *xattrlen, u32 *sid)
++{
++	struct dentry *dentry;
++	int error;
++
++	*xattrlen = 0;
++	*sid = 0;
++	error = fh_verify(rqstp, fhp, 0, MAY_NOP);
++	if (error)
++		return error;
++	dentry = fhp->fh_dentry;
++	error = nfserr_eopnotsupp;
++	if (dentry->d_inode->i_op && dentry->d_inode->i_op->getxattr) {
++		error = security_inode_getxattr(dentry, name);
++		if (error)
++			return  nfserrno(error);
++		if (size == 0)
++			buffer = NULL;
++		if (size > NFS_XATTR_SIZE_MAX) {
++			*xattrlen = dentry->d_inode->i_op->getxattr(dentry, name, 
++							    NULL, size);
++			if (*xattrlen > NFS_XATTR_SIZE_MAX){
++				*xattrlen = 0;
++				return  nfserrno(-EOPNOTSUPP);
++			}
++		}
++		*xattrlen = dentry->d_inode->i_op->getxattr(dentry, name, 
++							    buffer, size);
++		if (*xattrlen < 0) {
++			error = *xattrlen;
++			*xattrlen = 0;
++			return nfserrno(error);
++		}
++		if ((strcmp(name, XATTR_NAME_SELINUX) == 0) && 
++		    rqstp->rq_selinux)
++			*sid = security_get_inode_sid(dentry->d_inode);
++	}
++	return  error;
++}
++
++/*
++ * Set file extended attribute
++ * After this call fhp needs an fh_put
++ */
++int
++nfsd_setxattr(struct svc_rqst *rqstp, struct svc_fh *fhp, char *name, 
++	      char *value, u32 size, int flags, u32 *sid)
++{
++	struct dentry *dentry;
++	int error;
++
++	*sid = 0;
++	error = fh_verify(rqstp, fhp, 0, MAY_NOP);
++	if (error)
++		return error;
++	dentry = fhp->fh_dentry;
++	error = nfserr_eopnotsupp;
++	if (dentry->d_inode->i_op && dentry->d_inode->i_op->setxattr) {
++		error = security_inode_setxattr(dentry, name, value, size, flags);
++		if (error)
++			return nfserrno(error);
++		error = dentry->d_inode->i_op->setxattr(dentry, name, value, 
++							size, flags);
++		if (error)
++			return nfserrno(error);
++		security_inode_post_setxattr(dentry, name, value, size, 
++						     flags);
++		if ((strcmp(name, XATTR_NAME_SELINUX) == 0) && 
++		    rqstp->rq_selinux)
++			*sid = security_get_inode_sid(dentry->d_inode);
++	}
++	return error;
++}
++#endif /* CONFIG_NFSD_XATTR */
+Index: nfs-2.6/include/linux/nfs.h
+diff -u nfs-2.6/include/linux/nfs.h:1.1.1.3 nfs-2.6/include/linux/nfs.h:1.4
+--- nfs-2.6/include/linux/nfs.h:1.1.1.3	Thu Oct 21 11:47:43 2004
++++ nfs-2.6/include/linux/nfs.h	Fri Oct 22 16:27:18 2004
+@@ -57,12 +57,14 @@
+ 	NFSERR_NOSPC = 28,		/* v2 v3 v4 */
+ 	NFSERR_ROFS = 30,		/* v2 v3 v4 */
+ 	NFSERR_MLINK = 31,		/*    v3 v4 */
++	NFSERR_ERANGE = 34,		/*    v3ea  */
+ 	NFSERR_OPNOTSUPP = 45,		/* v2 v3 */
+ 	NFSERR_NAMETOOLONG = 63,	/* v2 v3 v4 */
+ 	NFSERR_NOTEMPTY = 66,		/* v2 v3 v4 */
+ 	NFSERR_DQUOT = 69,		/* v2 v3 v4 */
+ 	NFSERR_STALE = 70,		/* v2 v3 v4 */
+ 	NFSERR_REMOTE = 71,		/* v2 v3 */
++	NFSERR_EOPNOTSUPP = 95,		/*    v3ea  */
+ 	NFSERR_WFLUSH = 99,		/* v2    */
+ 	NFSERR_BADHANDLE = 10001,	/*    v3 v4 */
+ 	NFSERR_NOT_SYNC = 10002,	/*    v3 */
+Index: nfs-2.6/include/linux/nfs3.h
+diff -u nfs-2.6/include/linux/nfs3.h:1.1.1.1 nfs-2.6/include/linux/nfs3.h:1.2
+--- nfs-2.6/include/linux/nfs3.h:1.1.1.1	Mon Aug 18 12:47:53 2003
++++ nfs-2.6/include/linux/nfs3.h	Wed Nov 26 14:19:57 2003
+@@ -87,6 +87,8 @@
+ #define NFS3PROC_FSINFO		19
+ #define NFS3PROC_PATHCONF	20
+ #define NFS3PROC_COMMIT		21
++#define NFS3PROC_GETXATTR	22
++#define NFS3PROC_SETXATTR	23
+ 
+ #define NFS_MNT3_PROGRAM	100005
+ #define NFS_MNT3_VERSION	3
+Index: nfs-2.6/include/linux/nfs_fs.h
+diff -u nfs-2.6/include/linux/nfs_fs.h:1.1.1.8 nfs-2.6/include/linux/nfs_fs.h:1.10
+--- nfs-2.6/include/linux/nfs_fs.h:1.1.1.8	Wed Mar  2 10:30:14 2005
++++ nfs-2.6/include/linux/nfs_fs.h	Fri Mar 18 10:20:42 2005
+@@ -190,6 +190,8 @@
+ 	struct rw_semaphore	rwsem;
+ #endif /* CONFIG_NFS_V4*/
+ 
++	/* Security id passed back from the server */
++	__u32			sid;
+ 	struct inode		vfs_inode;
+ };
+ 
+@@ -203,6 +205,7 @@
+ #define NFS_INO_INVALID_DATA	0x0010		/* cached data is invalid */
+ #define NFS_INO_INVALID_ATIME	0x0020		/* cached atime is invalid */
+ #define NFS_INO_INVALID_ACCESS	0x0040		/* cached access cred invalid */
++#define NFS_INO_INVALID_XATTR	0x1000		/* SELinux Security Context invalid */
+ 
+ static inline struct nfs_inode *NFS_I(struct inode *inode)
+ {
+Index: nfs-2.6/include/linux/nfs_mount.h
+diff -u nfs-2.6/include/linux/nfs_mount.h:1.1.1.2 nfs-2.6/include/linux/nfs_mount.h:1.5
+--- nfs-2.6/include/linux/nfs_mount.h:1.1.1.2	Thu Feb 19 14:08:42 2004
++++ nfs-2.6/include/linux/nfs_mount.h	Mon May 10 15:19:29 2004
+@@ -60,6 +60,8 @@
+ #define NFS_MOUNT_BROKEN_SUID	0x0400	/* 4 */
+ #define NFS_MOUNT_STRICTLOCK	0x1000	/* reserved for NFSv4 */
+ #define NFS_MOUNT_SECFLAVOUR	0x2000	/* 5 */
+-#define NFS_MOUNT_FLAGMASK	0xFFFF
++#define NFS_MOUNT_XATTR		0x100000 /* xattr */
++#define NFS_MOUNT_SELINUX	0x200000 /* SELinux */
++#define NFS_MOUNT_FLAGMASK	0x30FFFF
+ 
+ #endif
+Index: nfs-2.6/include/linux/nfs_xdr.h
+diff -u nfs-2.6/include/linux/nfs_xdr.h:1.1.1.7 nfs-2.6/include/linux/nfs_xdr.h:1.14
+--- nfs-2.6/include/linux/nfs_xdr.h:1.1.1.7	Wed Mar  2 10:30:30 2005
++++ nfs-2.6/include/linux/nfs_xdr.h	Wed Mar 30 09:51:36 2005
+@@ -37,6 +37,7 @@
+ 	struct timespec		atime;
+ 	struct timespec		mtime;
+ 	struct timespec		ctime;
++	__u32			sid;		/* For SELinux */
+ 	__u32			bitmap[2];	/* NFSv4 returned attribute bitmap */
+ 	__u64			change_attr;	/* NFSv4 change attribute */
+ 	__u64			pre_change_attr;/* pre-op NFSv4 change attribute */
+@@ -48,6 +49,8 @@
+ #define NFS_ATTR_FATTR_V3	0x0004		/* NFSv3 attributes */
+ #define NFS_ATTR_FATTR_V4	0x0008
+ #define NFS_ATTR_PRE_CHANGE	0x0010
++#define NFS_XATTR_WCC		0x0100
++#define NFS_XATTR_FATTR		0x0200
+ 
+ /*
+  * Info on the file system
+@@ -443,6 +446,24 @@
+ 	struct page **		pages;
+ };
+ 
++#ifdef CONFIG_NFS_XATTR
++struct nfs3_getxattrargs {
++	struct nfs_fh *		fh;
++	const char *		name;
++	unsigned int		namelen;
++	unsigned int		bufsize;
++};
++
++struct nfs3_setxattrargs {
++	struct nfs_fh *		fh;
++	const char *		name;
++	unsigned int		namelen;
++	const char *		value;
++	int			size;
++	int			flags;
++};
++#endif /* CONFIG_NFS_XATTR */
++
+ struct nfs3_diropres {
+ 	struct nfs_fattr *	dir_attr;
+ 	struct nfs_fh *		fh;
+@@ -477,6 +498,19 @@
+ 	int			plus;
+ };
+ 
++#ifdef CONFIG_NFS_XATTR
++struct nfs3_getxattrres {	
++	char *			buffer;
++	unsigned int		size;
++	unsigned int *		xattrlen;
++	__u32 *			sid;
++};
++
++struct nfs3_setxattrres {
++	__u32 *			sid;
++};
++#endif /* CONFIG_NFS_XATTR */
++
+ #ifdef CONFIG_NFS_V4
+ 
+ typedef u64 clientid4;
+@@ -710,6 +744,12 @@
+ 	void	(*read_setup)   (struct nfs_read_data *);
+ 	void	(*write_setup)  (struct nfs_write_data *, int how);
+ 	void	(*commit_setup) (struct nfs_write_data *, int how);
++#ifdef CONFIG_NFS_XATTR
++	int	(*getxattr) (struct dentry *, const char *, void *, unsigned int, 
++			     unsigned int *);
++	int	(*setxattr) (struct dentry *, const char *, const void *, 
++			     unsigned int, int);
++#endif
+ 	int	(*file_open)   (struct inode *, struct file *);
+ 	int	(*file_release) (struct inode *, struct file *);
+ 	int	(*lock)(struct file *, int, struct file_lock *);
+@@ -733,5 +773,16 @@
+ extern struct rpc_version	nfs_version4;
+ extern struct rpc_program	nfs_program;
+ extern struct rpc_stat		nfs_rpcstat;
+-
++#ifdef CONFIG_NFS_XATTR
++extern struct nfs_rpc_ops	nfs_v3ea_clientops;
++extern struct rpc_version	xattr_nfs_version3;
++extern struct rpc_program	xattr_nfs_program;
++extern struct rpc_stat		xattr_rpcstat;
++#endif /* CONFIG_NFS_XATTR */
++#ifdef CONFIG_NFS_SELINUX
++extern struct nfs_rpc_ops	nfs_v3se_clientops;
++extern struct rpc_version	selinux_nfs_version3;
++extern struct rpc_program	selinux_nfs_program;
++extern struct rpc_stat		selinux_rpcstat;
++#endif /* CONFIG_NFS_SELINUX */
+ #endif
+Index: nfs-2.6/include/linux/nfsd/export.h
+diff -u nfs-2.6/include/linux/nfsd/export.h:1.1.1.3 nfs-2.6/include/linux/nfsd/export.h:1.5
+--- nfs-2.6/include/linux/nfsd/export.h:1.1.1.3	Wed Jun 16 13:18:25 2004
++++ nfs-2.6/include/linux/nfsd/export.h	Fri Jun 18 09:43:42 2004
+@@ -40,7 +40,8 @@
+ #define NFSEXP_FSID		0x2000
+ #define	NFSEXP_CROSSMOUNT	0x4000
+ #define	NFSEXP_NOACL		0x8000	/* reserved for possible ACL related use */
+-#define NFSEXP_ALLFLAGS		0xFE3F
++#define NFSEXP_SELINUX		0x100000
++#define NFSEXP_ALLFLAGS		0x10FE3F
+ 
+ 
+ #ifdef __KERNEL__
+@@ -75,6 +76,7 @@
+ #define EX_RDONLY(exp)		((exp)->ex_flags & NFSEXP_READONLY)
+ #define EX_NOHIDE(exp)		((exp)->ex_flags & NFSEXP_NOHIDE)
+ #define EX_WGATHER(exp)		((exp)->ex_flags & NFSEXP_GATHERED_WRITES)
++#define EX_SELINUX(exp)		((exp)->ex_flags & NFSEXP_SELINUX)
+ 
+ 
+ /*
+Index: nfs-2.6/include/linux/nfsd/nfsd.h
+diff -u nfs-2.6/include/linux/nfsd/nfsd.h:1.1.1.7 nfs-2.6/include/linux/nfsd/nfsd.h:1.14
+--- nfs-2.6/include/linux/nfsd/nfsd.h:1.1.1.7	Thu Oct 21 11:47:59 2004
++++ nfs-2.6/include/linux/nfsd/nfsd.h	Wed Mar 30 11:04:20 2005
+@@ -60,6 +60,15 @@
+ extern struct svc_version	nfsd_version2, nfsd_version3,
+ 				nfsd_version4;
+ 
++#ifdef CONFIG_NFSD_XATTR
++extern struct svc_program	xattr_nfsd_program;
++extern struct svc_version	xattr_nfsd_version3;
++#endif
++#ifdef CONFIG_NFSD_SELINUX
++extern struct svc_program	selinux_nfsd_program;
++extern struct svc_version	selinux_nfsd_version3;
++#endif 
++
+ /*
+  * Function prototypes.
+  */
+@@ -123,6 +132,12 @@
+ 
+ int		nfsd_notify_change(struct inode *, struct iattr *);
+ int		nfsd_permission(struct svc_export *, struct dentry *, int);
++#ifdef CONFIG_NFSD_XATTR
++int		nfsd_getxattr(struct svc_rqst *, struct svc_fh *, char *, 
++			      u32, char *, int *, u32 *);
++int 		nfsd_setxattr(struct svc_rqst *, struct svc_fh *, char *, 
++			      char *, u32, int, u32 *);
++#endif
+ 
+ 
+ /* 
+@@ -167,12 +182,14 @@
+ #define	nfserr_nospc		__constant_htonl(NFSERR_NOSPC)
+ #define	nfserr_rofs		__constant_htonl(NFSERR_ROFS)
+ #define	nfserr_mlink		__constant_htonl(NFSERR_MLINK)
++#define	nfserr_erange		__constant_htonl(NFSERR_ERANGE)
+ #define	nfserr_opnotsupp	__constant_htonl(NFSERR_OPNOTSUPP)
+ #define	nfserr_nametoolong	__constant_htonl(NFSERR_NAMETOOLONG)
+ #define	nfserr_notempty		__constant_htonl(NFSERR_NOTEMPTY)
+ #define	nfserr_dquot		__constant_htonl(NFSERR_DQUOT)
+ #define	nfserr_stale		__constant_htonl(NFSERR_STALE)
+ #define	nfserr_remote		__constant_htonl(NFSERR_REMOTE)
++#define	nfserr_eopnotsupp	__constant_htonl(NFSERR_EOPNOTSUPP)
+ #define	nfserr_wflush		__constant_htonl(NFSERR_WFLUSH)
+ #define	nfserr_badhandle	__constant_htonl(NFSERR_BADHANDLE)
+ #define	nfserr_notsync		__constant_htonl(NFSERR_NOT_SYNC)
+Index: nfs-2.6/include/linux/nfsd/stats.h
+diff -u nfs-2.6/include/linux/nfsd/stats.h:1.1.1.1 nfs-2.6/include/linux/nfsd/stats.h:1.3
+--- nfs-2.6/include/linux/nfsd/stats.h:1.1.1.1	Mon Aug 18 12:47:57 2003
++++ nfs-2.6/include/linux/nfsd/stats.h	Wed Mar  3 15:53:35 2004
+@@ -36,6 +36,13 @@
+ 
+ extern struct nfsd_stats	nfsdstats;
+ extern struct svc_stat		nfsd_svcstats;
++#ifdef CONFIG_NFSD_XATTR
++extern struct svc_stat		xattr_nfsd_svcstats;
++#endif
++#ifdef CONFIG_NFSD_SELINUX
++extern struct svc_stat		selinux_nfsd_svcstats;
++#endif 
++	                        
+ 
+ void	nfsd_stat_init(void);
+ void	nfsd_stat_shutdown(void);
+Index: nfs-2.6/include/linux/nfsd/xdr3.h
+diff -u nfs-2.6/include/linux/nfsd/xdr3.h:1.1.1.3 nfs-2.6/include/linux/nfsd/xdr3.h:1.9
+--- nfs-2.6/include/linux/nfsd/xdr3.h:1.1.1.3	Tue Aug 17 13:52:34 2004
++++ nfs-2.6/include/linux/nfsd/xdr3.h	Wed Mar 30 11:04:20 2005
+@@ -10,6 +10,8 @@
+ #define _LINUX_NFSD_XDR3_H
+ 
+ #include <linux/nfsd/xdr.h>
++#include <linux/sunrpc/xattr.h>
++#include <linux/sunrpc/selinux.h>
+ 
+ struct nfsd3_sattrargs {
+ 	struct svc_fh		fh;
+@@ -110,6 +112,24 @@
+ 	__u32			count;
+ };
+ 
++#ifdef CONFIG_NFSD_XATTR
++struct nfsd3_getxattrargs {
++	struct svc_fh		fh;
++	char *			name;
++	__u32			namelen;
++	__u32			size;
++};
++
++struct nfsd3_setxattrargs {
++	struct svc_fh		fh;
++	char *			name;
++	__u32			namelen;
++	char *			value;			
++	__u32			size;
++	int			flags;
++};
++#endif /* CONFIG_NFSD_XATTR */
++
+ struct nfsd3_attrstat {
+ 	__u32			status;
+ 	struct svc_fh		fh;
+@@ -209,6 +229,24 @@
+ 	struct svc_fh		fh;
+ };
+ 
++#ifdef CONFIG_NFSD_XATTR
++struct nfsd3_getxattrres {
++	__u32			status;
++	struct svc_fh		fh;
++	int			xattrlen;
++	char 			buffer[NFS_XATTR_SIZE_MAX];
++	__u32			buflen;
++	__u32			sid;
++	
++};
++
++struct nfsd3_setxattrres {
++	__u32			status;
++	struct svc_fh		fh;
++	__u32			sid;
++};
++#endif /* CONFIG_NFSD_XATTR */
++
+ /* dummy type for release */
+ struct nfsd3_fhandle_pair {
+ 	__u32			dummy;
+@@ -245,6 +283,38 @@
+ 
+ #define NFS3_SVC_XDRSIZE		sizeof(union nfsd3_xdrstore)
+ 
++#ifdef CONFIG_NFSD_XATTR
++union nfsd3ea_xdrstore {
++	struct nfsd3_sattrargs		sattrargs;
++	struct nfsd3_diropargs		diropargs;
++	struct nfsd3_readargs		readargs;
++	struct nfsd3_writeargs		writeargs;
++	struct nfsd3_createargs		createargs;
++	struct nfsd3_renameargs		renameargs;
++	struct nfsd3_linkargs		linkargs;
++	struct nfsd3_symlinkargs	symlinkargs;
++	struct nfsd3_readdirargs	readdirargs;
++	struct nfsd3_getxattrargs	getxattrargs;
++	struct nfsd3_setxattrargs	setxattrargs;
++	struct nfsd3_diropres 		diropres;
++	struct nfsd3_accessres		accessres;
++	struct nfsd3_readlinkres	readlinkres;
++	struct nfsd3_readres		readres;
++	struct nfsd3_writeres		writeres;
++	struct nfsd3_renameres		renameres;
++	struct nfsd3_linkres		linkres;
++	struct nfsd3_readdirres		readdirres;
++	struct nfsd3_fsstatres		fsstatres;
++	struct nfsd3_fsinfores		fsinfores;
++	struct nfsd3_pathconfres	pathconfres;
++	struct nfsd3_commitres		commitres;
++	struct nfsd3_getxattrres	getxattrres;
++	struct nfsd3_setxattrres	setxattrres;
++};
++
++#define NFS3EA_SVC_XDRSIZE		sizeof(union nfsd3ea_xdrstore)
++#endif /* CONFIG_NFSD_XATTR */
++
+ int nfs3svc_decode_fhandle(struct svc_rqst *, u32 *, struct nfsd_fhandle *);
+ int nfs3svc_decode_sattrargs(struct svc_rqst *, u32 *,
+ 				struct nfsd3_sattrargs *);
+@@ -276,6 +346,12 @@
+ 				struct nfsd3_readdirargs *);
+ int nfs3svc_decode_commitargs(struct svc_rqst *, u32 *,
+ 				struct nfsd3_commitargs *);
++#ifdef CONFIG_NFSD_XATTR
++int nfs3svc_decode_getxattrargs(struct svc_rqst *, u32 *, 
++				struct nfsd3_getxattrargs *);
++int nfs3svc_decode_setxattrargs(struct svc_rqst *, u32 *, 
++				struct nfsd3_setxattrargs *);
++#endif
+ int nfs3svc_encode_voidres(struct svc_rqst *, u32 *, void *);
+ int nfs3svc_encode_attrstat(struct svc_rqst *, u32 *,
+ 				struct nfsd3_attrstat *);
+@@ -305,7 +381,12 @@
+ 				struct nfsd3_pathconfres *);
+ int nfs3svc_encode_commitres(struct svc_rqst *, u32 *,
+ 				struct nfsd3_commitres *);
+-
++#ifdef CONFIG_NFSD_XATTR
++int nfs3svc_encode_getxattrres(struct svc_rqst *, u32 *,
++			       struct nfsd3_getxattrres *);
++int nfs3svc_encode_setxattrres(struct svc_rqst *, u32 *,
++			       struct nfsd3_setxattrres *);
++#endif
+ int nfs3svc_release_fhandle(struct svc_rqst *, u32 *,
+ 				struct nfsd3_attrstat *);
+ int nfs3svc_release_fhandle2(struct svc_rqst *, u32 *,
+Index: nfs-2.6/include/linux/sunrpc/auth.h
+diff -u nfs-2.6/include/linux/sunrpc/auth.h:1.1.1.4 nfs-2.6/include/linux/sunrpc/auth.h:1.3
+--- nfs-2.6/include/linux/sunrpc/auth.h:1.1.1.4	Wed Mar  2 10:30:49 2005
++++ nfs-2.6/include/linux/sunrpc/auth.h	Wed Mar  2 11:00:49 2005
+@@ -46,6 +46,7 @@
+ #endif
+ 
+ 	uid_t			cr_uid;
++	u32			cr_sid;
+ 
+ 	/* per-flavor data */
+ };
+Index: nfs-2.6/include/linux/sunrpc/clnt.h
+diff -u nfs-2.6/include/linux/sunrpc/clnt.h:1.1.1.2 nfs-2.6/include/linux/sunrpc/clnt.h:1.3
+--- nfs-2.6/include/linux/sunrpc/clnt.h:1.1.1.2	Thu Feb 19 14:09:01 2004
++++ nfs-2.6/include/linux/sunrpc/clnt.h	Fri Feb 20 08:33:00 2004
+@@ -53,7 +53,8 @@
+ 				cl_autobind : 1,/* use getport() */
+ 				cl_droppriv : 1,/* enable NFS suid hack */
+ 				cl_oneshot  : 1,/* dispose after use */
+-				cl_dead     : 1;/* abandoned */
++				cl_dead     : 1,/* abandoned */
++				cl_selinux  : 1;/* Use SELinux */
+ 
+ 	struct rpc_rtt *	cl_rtt;		/* RTO estimator data */
+ 	struct rpc_portmap *	cl_pmap;	/* port mapping */
+Index: nfs-2.6/include/linux/sunrpc/selinux.h
+diff -u /dev/null nfs-2.6/include/linux/sunrpc/selinux.h:1.11
+--- /dev/null	Mon Jun 20 12:38:29 2005
++++ nfs-2.6/include/linux/sunrpc/selinux.h	Fri Mar 18 10:20:43 2005
+@@ -0,0 +1,61 @@
++/* -*- linux-c -*- */
++
++#ifndef _SELINUX_RPC_H_
++#define _SELINUX_RPC_H_
++
++
++#include <linux/types.h>
++#include <linux/xattr.h>
++
++#define SELINUX_NFS_PROGRAM 	100006
++
++#define SELINUX_RPC_MAXCONTEXTLEN 255
++/* Size is 4 for length + Max length of context + 1 for \0*/
++#define SELINUX_RPC_SZ	(SELINUX_RPC_MAXCONTEXTLEN + 5)
++#define SELINUX_RPC_WORDS ((SELINUX_RPC_SZ+3)>>2)
++
++#define XATTR_SELINUX_SUFFIX "selinux"
++#define XATTR_NAME_SELINUX XATTR_SECURITY_PREFIX XATTR_SELINUX_SUFFIX
++
++#ifdef CONFIG_SECURITY_SELINUX
++int security_sid_to_network_context(u32 sid, char *context,
++					   u32 *len);
++int security_network_context_to_sid(char *context, u32 len, 
++					   u32 *sid);
++u32 security_get_task_sid(void);
++u32 security_get_inode_sid(struct inode *inode);
++void security_set_fssid(u32 sid);
++void security_clear_fssid(void);
++int security_revalidate_inode(struct inode *inode);
++
++#else /* CONFIG_SECURITY_SELINUX not defined */
++static inline int security_sid_to_network_context(u32 sid, char *context, u32 *len)
++{
++	*len = 0;
++	return -EOPNOTSUPP;
++}
++static inline int security_network_context_to_sid(char *context, u32 len, u32 *sid)
++{
++	*sid = 0;
++	return -EOPNOTSUPP;
++}
++static inline u32 security_get_task_sid(void)
++{
++	return 0;
++}
++static inline u32 security_get_inode_sid(struct inode *inode)
++{
++	return 0;
++}
++static inline int security_set_fssid(u32 sid)
++{
++	return 0;
++}
++static inline void security_clear_fssid(void){}
++static inline int security_revalidate_inode(struct inode *inode)
++{
++	return 0;
++}
++#endif /* CONFIG_SECURITY_SELINUX */
++
++#endif
+Index: nfs-2.6/include/linux/sunrpc/svc.h
+diff -u nfs-2.6/include/linux/sunrpc/svc.h:1.1.1.5 nfs-2.6/include/linux/sunrpc/svc.h:1.8
+--- nfs-2.6/include/linux/sunrpc/svc.h:1.1.1.5	Thu Oct 21 11:47:58 2004
++++ nfs-2.6/include/linux/sunrpc/svc.h	Fri Oct 22 16:27:19 2004
+@@ -136,7 +136,8 @@
+ 	u32			rq_proc;	/* procedure number */
+ 	u32			rq_prot;	/* IP protocol */
+ 	unsigned short
+-				rq_secure  : 1;	/* secure port */
++				rq_secure  : 1,	/* secure port */
++				rq_selinux : 1; /* Use SELinux */
+ 
+ 
+ 	__u32			rq_daddr;	/* dest addr of request - reply from here */
+@@ -159,6 +160,7 @@
+ 						 * determine what device number
+ 						 * to report (real or virtual)
+ 						 */
++	u32			rq_sid;		/* SELinux SID */
+ 
+ 	wait_queue_head_t	rq_wait;	/* synchronization */
+ };
+@@ -243,6 +245,7 @@
+  * RPC program
+  */
+ struct svc_program {
++	struct svc_program *	pg_next;	/* other programs */
+ 	u32			pg_prog;	/* program number */
+ 	unsigned int		pg_lovers;	/* lowest version */
+ 	unsigned int		pg_hivers;	/* lowest version */
+Index: nfs-2.6/include/linux/sunrpc/xattr.h
+diff -u /dev/null nfs-2.6/include/linux/sunrpc/xattr.h:1.1
+--- /dev/null	Mon Jun 20 12:38:30 2005
++++ nfs-2.6/include/linux/sunrpc/xattr.h	Thu Jan 15 16:14:59 2004
+@@ -0,0 +1,10 @@
++/*
++  File: include/linux/sunrpc/xattr.h
++ 
++*/
++
++#define XATTR_NFS_PROGRAM 	100007
++#define NFS_XATTR_SIZE_MAX	1024
++
++extern int nfs_setxattr(struct dentry *, const char *, const void *, size_t, int);
++extern ssize_t nfs_getxattr(struct dentry *, const char *, void *, size_t);
+Index: nfs-2.6/net/sunrpc/auth.c
+diff -u nfs-2.6/net/sunrpc/auth.c:1.1.1.4 nfs-2.6/net/sunrpc/auth.c:1.5
+--- nfs-2.6/net/sunrpc/auth.c:1.1.1.4	Wed Mar  2 10:33:06 2005
++++ nfs-2.6/net/sunrpc/auth.c	Wed Mar 30 12:41:41 2005
+@@ -14,6 +14,7 @@
+ #include <linux/socket.h>
+ #include <linux/sunrpc/clnt.h>
+ #include <linux/spinlock.h>
++#include <linux/sunrpc/selinux.h>
+ 
+ #ifdef RPC_DEBUG
+ # define RPCDBG_FACILITY	RPCDBG_AUTH
+@@ -204,7 +205,11 @@
+ 	struct rpc_cred	*new = NULL,
+ 			*cred = NULL;
+ 	int		nr = 0;
++#ifdef CONFIG_NFS_SELINUX
++	u32		sid;
+ 
++	sid = security_get_task_sid();
++#endif
+ 	if (!(taskflags & RPC_TASK_ROOTCREDS))
+ 		nr = acred->uid & RPC_CREDCACHE_MASK;
+ retry:
+@@ -216,6 +221,10 @@
+ 	       	entry = list_entry(pos, struct rpc_cred, cr_hash);
+ 		if (rpcauth_prune_expired(entry, &free))
+ 			continue;
++#ifdef CONFIG_NFS_SELINUX
++		if (entry->cr_sid != sid)
++			continue;
++#endif
+ 		if (entry->cr_ops->crmatch(acred, entry, taskflags)) {
+ 			list_del(&entry->cr_hash);
+ 			cred = entry;
+@@ -243,6 +252,9 @@
+ #ifdef RPC_DEBUG
+ 			new->cr_magic = RPCAUTH_CRED_MAGIC;
+ #endif
++#ifdef CONFIG_NFS_SELINUX
++			new->cr_sid = sid;
++#endif
+ 			goto retry;
+ 		}
+ 	}
+Index: nfs-2.6/net/sunrpc/clnt.c
+diff -u nfs-2.6/net/sunrpc/clnt.c:1.1.1.8 nfs-2.6/net/sunrpc/clnt.c:1.22
+--- nfs-2.6/net/sunrpc/clnt.c:1.1.1.8	Wed Mar  2 10:33:06 2005
++++ nfs-2.6/net/sunrpc/clnt.c	Wed Mar 30 12:41:41 2005
+@@ -34,6 +34,7 @@
+ #include <linux/sunrpc/rpc_pipe_fs.h>
+ 
+ #include <linux/nfs.h>
++#include <linux/sunrpc/selinux.h>
+ 
+ 
+ #define RPC_SLACK_SPACE		(1024)	/* total overkill */
+@@ -948,6 +949,11 @@
+ 	struct rpc_xprt *xprt = clnt->cl_xprt;
+ 	struct rpc_rqst	*req = task->tk_rqstp;
+ 	u32		*p = req->rq_svec[0].iov_base;
++#ifdef CONFIG_NFS_SELINUX
++	u32 sid, len, quadlen;
++	char *context;
++	int rc;
++#endif
+ 
+ 	/* FIXME: check buffer size? */
+ 	if (xprt->stream)
+@@ -958,7 +964,20 @@
+ 	*p++ = htonl(clnt->cl_prog);	/* program number */
+ 	*p++ = htonl(clnt->cl_vers);	/* program version */
+ 	*p++ = htonl(task->tk_msg.rpc_proc->p_proc);	/* procedure */
+-	return rpcauth_marshcred(task, p);
++	p = rpcauth_marshcred(task, p);
++#ifdef CONFIG_NFS_SELINUX
++	if (clnt->cl_selinux) {
++		sid = security_get_task_sid();
++		context = (char *)(p+1);
++		rc = security_sid_to_network_context(sid, context, &len);
++		if (rc)
++			rpc_exit(task, rc);
++		quadlen = XDR_QUADLEN(len);
++		*p++ = htonl(len);
++		p += quadlen;
++	}
++#endif
++	return p;
+ }
+ 
+ /*
+Index: nfs-2.6/net/sunrpc/rpc_pipe.c
+diff -u nfs-2.6/net/sunrpc/rpc_pipe.c:1.1.1.7 nfs-2.6/net/sunrpc/rpc_pipe.c:1.13
+--- nfs-2.6/net/sunrpc/rpc_pipe.c:1.1.1.7	Wed Mar  2 10:33:05 2005
++++ nfs-2.6/net/sunrpc/rpc_pipe.c	Wed Mar  2 11:00:50 2005
+@@ -353,6 +353,12 @@
+ 	RPCAUTH_mount,
+ 	RPCAUTH_nfs,
+ 	RPCAUTH_portmap,
++#ifdef CONFIG_NFS_SELINUX
++	RPCAUTH_selinuxnfs,
++#endif
++#ifdef CONFIG_NFS_XATTR
++	RPCAUTH_xattrnfs,
++#endif
+ 	RPCAUTH_statd,
+ 	RPCAUTH_RootEOF
+ };
+@@ -383,6 +389,18 @@
+ 		.name = "portmap",
+ 		.mode = S_IFDIR | S_IRUGO | S_IXUGO,
+ 	},
++#ifdef CONFIG_NFS_SELINUX
++	[RPCAUTH_selinuxnfs] = {
++		.name = "selinuxnfs",
++		.mode = S_IFDIR | S_IRUGO | S_IXUGO,
++	},
++#endif
++#ifdef CONFIG_NFS_XATTR
++	[RPCAUTH_xattrnfs] = {
++		.name = "xattrnfs",
++		.mode = S_IFDIR | S_IRUGO | S_IXUGO,
++	},
++#endif
+ 	[RPCAUTH_statd] = {
+ 		.name = "statd",
+ 		.mode = S_IFDIR | S_IRUGO | S_IXUGO,
+Index: nfs-2.6/net/sunrpc/svc.c
+diff -u nfs-2.6/net/sunrpc/svc.c:1.1.1.4 nfs-2.6/net/sunrpc/svc.c:1.23
+--- nfs-2.6/net/sunrpc/svc.c:1.1.1.4	Thu Oct 21 11:45:22 2004
++++ nfs-2.6/net/sunrpc/svc.c	Wed Mar 30 12:41:42 2005
+@@ -18,6 +18,7 @@
+ #include <linux/sunrpc/stats.h>
+ #include <linux/sunrpc/svcsock.h>
+ #include <linux/sunrpc/clnt.h>
++#include <linux/sunrpc/selinux.h>
+ 
+ #define RPCDBG_FACILITY	RPCDBG_SVCDSP
+ #define RPC_PARANOIA 1
+@@ -29,6 +30,7 @@
+ svc_create(struct svc_program *prog, unsigned int bufsize)
+ {
+ 	struct svc_serv	*serv;
++	struct svc_program *progp;
+ 	int vers;
+ 	unsigned int xdrsize;
+ 
+@@ -41,14 +43,16 @@
+ 	serv->sv_bufsz	   = bufsize? bufsize : 4096;
+ 	prog->pg_lovers = prog->pg_nvers-1;
+ 	xdrsize = 0;
+-	for (vers=0; vers<prog->pg_nvers ; vers++)
+-		if (prog->pg_vers[vers]) {
+-			prog->pg_hivers = vers;
+-			if (prog->pg_lovers > vers)
+-				prog->pg_lovers = vers;
+-			if (prog->pg_vers[vers]->vs_xdrsize > xdrsize)
+-				xdrsize = prog->pg_vers[vers]->vs_xdrsize;
+-		}
++	for (progp = prog; progp; progp = progp->pg_next) {
++		for (vers=0; vers<progp->pg_nvers ; vers++)
++			if (progp->pg_vers[vers]) {
++				progp->pg_hivers = vers;
++				if (progp->pg_lovers > vers)
++					prog->pg_lovers = vers;
++				if (progp->pg_vers[vers]->vs_xdrsize > xdrsize)
++					xdrsize = progp->pg_vers[vers]->vs_xdrsize;
++			}
++	}
+ 	serv->sv_xdrsize   = xdrsize;
+ 	INIT_LIST_HEAD(&serv->sv_threads);
+ 	INIT_LIST_HEAD(&serv->sv_sockets);
+@@ -227,15 +231,17 @@
+ 	if (!port)
+ 		clear_thread_flag(TIF_SIGPENDING);
+ 
+-	for (i = 0; i < progp->pg_nvers; i++) {
+-		if (progp->pg_vers[i] == NULL)
+-			continue;
+-		error = rpc_register(progp->pg_prog, i, proto, port, &dummy);
+-		if (error < 0)
+-			break;
+-		if (port && !dummy) {
+-			error = -EACCES;
+-			break;
++	for (progp = serv->sv_program; progp; progp = progp->pg_next) {		
++		for (i = 0; i < progp->pg_nvers; i++) {
++			if (progp->pg_vers[i] == NULL)
++				continue;
++			error = rpc_register(progp->pg_prog, i, proto, port, &dummy);
++			if (error < 0)
++				break;
++			if (port && !dummy) {
++				error = -EACCES;
++				break;
++			}
+ 		}
+ 	}
+ 
+@@ -264,6 +270,10 @@
+ 	u32			dir, prog, vers, proc,
+ 				auth_stat, rpc_stat;
+ 	int			auth_res;
++#ifdef CONFIG_NFSD_SELINUX
++	u32			len, quadlen;
++	char *			context;
++#endif
+ 
+ 	rpc_stat = rpc_success;
+ 
+@@ -331,6 +341,26 @@
+ 	case SVC_COMPLETE:
+ 		goto sendit;
+ 	}
++
++#ifdef CONFIG_NFSD_SELINUX
++	if (prog == SELINUX_NFS_PROGRAM){
++		rqstp->rq_selinux = 1;
++		len = ntohl(svc_getu32(argv));
++		context = argv->iov_base;
++		quadlen = XDR_QUADLEN(len);
++		if (quadlen > argv->iov_len)
++			goto err_garbage;
++		argv->iov_base = (void*)((u32*)argv->iov_base + quadlen);
++		argv->iov_len -= quadlen*sizeof(u32);
++		if (security_network_context_to_sid(context, len, &rqstp->rq_sid))
++			goto err_garbage;
++	} else {
++		rqstp->rq_selinux = 0;
++	}
++#endif
++	for (progp = serv->sv_program; progp; progp = progp->pg_next)
++		if (prog == progp->pg_prog)
++			break;
+ 		
+ 	if (prog != progp->pg_prog)
+ 		goto err_bad_prog;
+@@ -365,6 +395,10 @@
+ 	if (procp->pc_xdrressize)
+ 		svc_reserve(rqstp, procp->pc_xdrressize<<2);
+ 
++#ifdef CONFIG_NFSD_SELINUX
++	if (rqstp->rq_selinux)
++		security_set_fssid(rqstp->rq_sid);
++#endif
+ 	/* Call the function that processes the request. */
+ 	if (!versp->vs_dispatch) {
+ 		/* Decode arguments */
+@@ -390,7 +424,10 @@
+ 			goto dropit;
+ 		}
+ 	}
+-
++#ifdef CONFIG_NFSD_SELINUX
++	if (rqstp->rq_selinux)
++		security_clear_fssid();
++#endif
+ 	/* Check RPC status result */
+ 	if (*statp != rpc_success)
+ 		resv->iov_len = ((void*)statp)  - resv->iov_base + 4;
+@@ -408,6 +445,10 @@
+ 	return svc_send(rqstp);
+ 
+  dropit:
++#ifdef CONFIG_NFSD_SELINUX
++	if (rqstp->rq_selinux)
++		security_clear_fssid();
++#endif
+ 	svc_authorise(rqstp);	/* doesn't hurt to call this twice */
+ 	dprintk("svc: svc_process dropit\n");
+ 	svc_drop(rqstp);
+@@ -445,9 +486,9 @@
+ 
+ err_bad_prog:
+ #ifdef RPC_PARANOIA
+-	if (prog != 100227 || progp->pg_prog != 100003)
+-		printk("svc: unknown program %d (me %d)\n", prog, progp->pg_prog);
+-	/* else it is just a Solaris client seeing if ACLs are supported */
++	if (prog != 100227 || serv->sv_program->pg_prog != 100003)
++		printk("svc: unknown program %d\n", prog);
++	/* else it is just a client seeing if ACLs are supported */
+ #endif
+ 	serv->sv_stats->rpcbadfmt++;
+ 	svc_putu32(resv, rpc_prog_unavail);
+@@ -475,6 +516,10 @@
+ #ifdef RPC_PARANOIA
+ 	printk("svc: failed to decode args\n");
+ #endif
++#ifdef CONFIG_NFSD_SELINUX
++	if (rqstp->rq_selinux)
++		security_clear_fssid();
++#endif
+ 	rpc_stat = rpc_garbage_args;
+ err_bad:
+ 	serv->sv_stats->rpcbadfmt++;
+Index: nfs-2.6/security/selinux/Makefile
+diff -u nfs-2.6/security/selinux/Makefile:1.1.1.3 nfs-2.6/security/selinux/Makefile:1.6
+--- nfs-2.6/security/selinux/Makefile:1.1.1.3	Tue Aug 17 13:54:20 2004
++++ nfs-2.6/security/selinux/Makefile	Wed Mar 16 13:17:02 2005
+@@ -6,6 +6,10 @@
+ 
+ selinux-y := avc.o hooks.o selinuxfs.o netlink.o nlmsgtab.o
+ 
++selinux-$(CONFIG_NFS_SELINUX) += selinux_nfs.o
++
++selinux-$(CONFIG_NFSD_SELINUX) += selinux_nfsd.o
++
+ selinux-$(CONFIG_SECURITY_NETWORK) += netif.o
+ 
+ EXTRA_CFLAGS += -Isecurity/selinux/include
+Index: nfs-2.6/security/selinux/hooks.c
+diff -u nfs-2.6/security/selinux/hooks.c:1.1.1.12 nfs-2.6/security/selinux/hooks.c:1.24
+--- nfs-2.6/security/selinux/hooks.c:1.1.1.12	Wed Mar  2 10:36:27 2005
++++ nfs-2.6/security/selinux/hooks.c	Wed Mar  2 11:00:51 2005
+@@ -125,7 +125,7 @@
+ 	memset(tsec, 0, sizeof(struct task_security_struct));
+ 	tsec->magic = SELINUX_MAGIC;
+ 	tsec->task = task;
+-	tsec->osid = tsec->sid = tsec->ptrace_sid = SECINITSID_UNLABELED;
++	tsec->fssid = tsec->osid = tsec->sid = tsec->ptrace_sid = SECINITSID_UNLABELED;
+ 	task->security = tsec;
+ 
+ 	return 0;
+@@ -159,7 +159,8 @@
+ 	isec->sid = SECINITSID_UNLABELED;
+ 	isec->sclass = SECCLASS_FILE;
+ 	if (tsec && tsec->magic == SELINUX_MAGIC)
+-		isec->task_sid = tsec->sid;
++		isec->task_sid = (tsec->fssid != SECINITSID_UNLABELED) ?
++			tsec->fssid : tsec->sid;
+ 	else
+ 		isec->task_sid = SECINITSID_UNLABELED;
+ 	inode->i_security = isec;
+@@ -197,8 +198,13 @@
+ 	fsec->magic = SELINUX_MAGIC;
+ 	fsec->file = file;
+ 	if (tsec && tsec->magic == SELINUX_MAGIC) {
+-		fsec->sid = tsec->sid;
+-		fsec->fown_sid = tsec->sid;
++		if (tsec->fssid != SECINITSID_UNLABELED) {
++			fsec->sid = tsec->fssid;
++			fsec->fown_sid = tsec->fssid;
++		} else {
++			fsec->sid = tsec->sid;
++			fsec->fown_sid = tsec->sid;
++		}
+ 	} else {
+ 		fsec->sid = SECINITSID_UNLABELED;
+ 		fsec->fown_sid = SECINITSID_UNLABELED;
+@@ -353,6 +359,8 @@
+ 				context = d->context;
+ 				seen |= Opt_context;
+ 			}
++			if (d->flags & NFS_MOUNT_SELINUX)
++				sbsec->behavior = SECURITY_FS_USE_XATTR;
+ 		} else
+ 			goto out;
+ 
+@@ -936,6 +944,7 @@
+ {
+ 	struct task_security_struct *tsec;
+ 	struct avc_audit_data ad;
++	u32 tsid;
+ 
+ 	tsec = tsk->security;
+ 
+@@ -943,7 +952,8 @@
+ 	ad.tsk = tsk;
+ 	ad.u.cap = cap;
+ 
+-	return avc_has_perm(tsec->sid, tsec->sid,
++	tsid = (tsec->fssid != SECINITSID_UNLABELED) ? tsec->fssid : tsec->sid;
++	return avc_has_perm(tsid, tsid,
+ 			    SECCLASS_CAPABILITY, CAP_TO_MASK(cap), &ad);
+ }
+ 
+@@ -970,6 +980,7 @@
+ 	struct task_security_struct *tsec;
+ 	struct inode_security_struct *isec;
+ 	struct avc_audit_data ad;
++	u32 tsid;
+ 
+ 	tsec = tsk->security;
+ 	isec = inode->i_security;
+@@ -980,7 +991,8 @@
+ 		ad.u.fs.inode = inode;
+ 	}
+ 
+-	return avc_has_perm(tsec->sid, isec->sid, isec->sclass, perms, adp);
++	tsid = (tsec->fssid != SECINITSID_UNLABELED) ? tsec->fssid : tsec->sid;
++	return avc_has_perm(tsid, isec->sid, isec->sclass, perms, adp);
+ }
+ 
+ /* Same as inode_has_perm, but pass explicit audit data containing
+@@ -1018,13 +1030,15 @@
+ 	struct inode *inode = dentry->d_inode;
+ 	struct avc_audit_data ad;
+ 	int rc;
++	u32 tsid;
+ 
+ 	AVC_AUDIT_DATA_INIT(&ad, FS);
+ 	ad.u.fs.mnt = mnt;
+ 	ad.u.fs.dentry = dentry;
+ 
+-	if (tsec->sid != fsec->sid) {
+-		rc = avc_has_perm(tsec->sid, fsec->sid,
++	tsid = (tsec->fssid != SECINITSID_UNLABELED) ? tsec->fssid : tsec->sid;
++	if (tsid != fsec->sid) {
++		rc = avc_has_perm(tsid, fsec->sid,
+ 				  SECCLASS_FD,
+ 				  FD__USE,
+ 				  &ad);
+@@ -1050,6 +1064,7 @@
+ 	u32 newsid;
+ 	struct avc_audit_data ad;
+ 	int rc;
++	u32 tsid;
+ 
+ 	tsec = current->security;
+ 	dsec = dir->i_security;
+@@ -1058,7 +1073,8 @@
+ 	AVC_AUDIT_DATA_INIT(&ad, FS);
+ 	ad.u.fs.dentry = dentry;
+ 
+-	rc = avc_has_perm(tsec->sid, dsec->sid, SECCLASS_DIR,
++	tsid = (tsec->fssid != SECINITSID_UNLABELED) ? tsec->fssid : tsec->sid;
++	rc = avc_has_perm(tsid, dsec->sid, SECCLASS_DIR,
+ 			  DIR__ADD_NAME | DIR__SEARCH,
+ 			  &ad);
+ 	if (rc)
+@@ -1067,13 +1083,13 @@
+ 	if (tsec->create_sid && sbsec->behavior != SECURITY_FS_USE_MNTPOINT) {
+ 		newsid = tsec->create_sid;
+ 	} else {
+-		rc = security_transition_sid(tsec->sid, dsec->sid, tclass,
++		rc = security_transition_sid(tsid, dsec->sid, tclass,
+ 					     &newsid);
+ 		if (rc)
+ 			return rc;
+ 	}
+ 
+-	rc = avc_has_perm(tsec->sid, newsid, tclass, FILE__CREATE, &ad);
++	rc = avc_has_perm(tsid, newsid, tclass, FILE__CREATE, &ad);
+ 	if (rc)
+ 		return rc;
+ 
+@@ -1095,7 +1111,7 @@
+ 	struct task_security_struct *tsec;
+ 	struct inode_security_struct *dsec, *isec;
+ 	struct avc_audit_data ad;
+-	u32 av;
++	u32 av, tsid;
+ 	int rc;
+ 
+ 	tsec = current->security;
+@@ -1105,9 +1121,10 @@
+ 	AVC_AUDIT_DATA_INIT(&ad, FS);
+ 	ad.u.fs.dentry = dentry;
+ 
++	tsid = (tsec->fssid != SECINITSID_UNLABELED) ? tsec->fssid : tsec->sid;
+ 	av = DIR__SEARCH;
+ 	av |= (kind ? DIR__REMOVE_NAME : DIR__ADD_NAME);
+-	rc = avc_has_perm(tsec->sid, dsec->sid, SECCLASS_DIR, av, &ad);
++	rc = avc_has_perm(tsid, dsec->sid, SECCLASS_DIR, av, &ad);
+ 	if (rc)
+ 		return rc;
+ 
+@@ -1126,7 +1143,7 @@
+ 		return 0;
+ 	}
+ 
+-	rc = avc_has_perm(tsec->sid, isec->sid, isec->sclass, av, &ad);
++	rc = avc_has_perm(tsid, isec->sid, isec->sclass, av, &ad);
+ 	return rc;
+ }
+ 
+@@ -1138,7 +1155,7 @@
+ 	struct task_security_struct *tsec;
+ 	struct inode_security_struct *old_dsec, *new_dsec, *old_isec, *new_isec;
+ 	struct avc_audit_data ad;
+-	u32 av;
++	u32 av, tsid;
+ 	int old_is_dir, new_is_dir;
+ 	int rc;
+ 
+@@ -1150,17 +1167,19 @@
+ 
+ 	AVC_AUDIT_DATA_INIT(&ad, FS);
+ 
++	tsid = (tsec->fssid != SECINITSID_UNLABELED) ? tsec->fssid : tsec->sid;
+ 	ad.u.fs.dentry = old_dentry;
+-	rc = avc_has_perm(tsec->sid, old_dsec->sid, SECCLASS_DIR,
++	rc = avc_has_perm(tsid, old_dsec->sid, SECCLASS_DIR,
+ 			  DIR__REMOVE_NAME | DIR__SEARCH, &ad);
+ 	if (rc)
+ 		return rc;
+-	rc = avc_has_perm(tsec->sid, old_isec->sid,
++
++	rc = avc_has_perm(tsid, old_isec->sid,
+ 			  old_isec->sclass, FILE__RENAME, &ad);
+ 	if (rc)
+ 		return rc;
+ 	if (old_is_dir && new_dir != old_dir) {
+-		rc = avc_has_perm(tsec->sid, old_isec->sid,
++		rc = avc_has_perm(tsid, old_isec->sid,
+ 				  old_isec->sclass, DIR__REPARENT, &ad);
+ 		if (rc)
+ 			return rc;
+@@ -1170,13 +1189,13 @@
+ 	av = DIR__ADD_NAME | DIR__SEARCH;
+ 	if (new_dentry->d_inode)
+ 		av |= DIR__REMOVE_NAME;
+-	rc = avc_has_perm(tsec->sid, new_dsec->sid, SECCLASS_DIR, av, &ad);
++	rc = avc_has_perm(tsid, new_dsec->sid, SECCLASS_DIR, av, &ad);
+ 	if (rc)
+ 		return rc;
+ 	if (new_dentry->d_inode) {
+ 		new_isec = new_dentry->d_inode->i_security;
+ 		new_is_dir = S_ISDIR(new_dentry->d_inode->i_mode);
+-		rc = avc_has_perm(tsec->sid, new_isec->sid,
++		rc = avc_has_perm(tsid, new_isec->sid,
+ 				  new_isec->sclass,
+ 				  (new_is_dir ? DIR__RMDIR : FILE__UNLINK), &ad);
+ 		if (rc)
+@@ -1194,10 +1213,12 @@
+ {
+ 	struct task_security_struct *tsec;
+ 	struct superblock_security_struct *sbsec;
++	u32 tsid;
+ 
+ 	tsec = tsk->security;
+ 	sbsec = sb->s_security;
+-	return avc_has_perm(tsec->sid, sbsec->sid, SECCLASS_FILESYSTEM,
++	tsid = (tsec->fssid != SECINITSID_UNLABELED) ? tsec->fssid : tsec->sid;
++	return avc_has_perm(tsid, sbsec->sid, SECCLASS_FILESYSTEM,
+ 			    perms, ad);
+ }
+ 
+@@ -1274,7 +1295,7 @@
+ 	struct inode *inode;
+ 	struct inode_security_struct *dsec;
+ 	struct superblock_security_struct *sbsec;
+-	u32 newsid;
++	u32 newsid, tsid;
+ 	char *context;
+ 	unsigned int len;
+ 	int rc;
+@@ -1296,7 +1317,8 @@
+ 	if (tsec->create_sid && sbsec->behavior != SECURITY_FS_USE_MNTPOINT) {
+ 		newsid = tsec->create_sid;
+ 	} else {
+-		rc = security_transition_sid(tsec->sid, dsec->sid,
++		tsid = (tsec->fssid != SECINITSID_UNLABELED) ? tsec->fssid : tsec->sid;
++		rc = security_transition_sid(tsid, dsec->sid,
+ 					     inode_mode_to_security_class(inode->i_mode),
+ 					     &newsid);
+ 		if (rc) {
+@@ -2162,7 +2184,7 @@
+ 	struct inode_security_struct *isec = inode->i_security;
+ 	struct superblock_security_struct *sbsec;
+ 	struct avc_audit_data ad;
+-	u32 newsid;
++	u32 newsid, tsid;
+ 	int rc = 0;
+ 
+ 	if (strcmp(name, XATTR_NAME_SELINUX)) {
+@@ -2189,7 +2211,8 @@
+ 	AVC_AUDIT_DATA_INIT(&ad,FS);
+ 	ad.u.fs.dentry = dentry;
+ 
+-	rc = avc_has_perm(tsec->sid, isec->sid, isec->sclass,
++	tsid = (tsec->fssid != SECINITSID_UNLABELED) ? tsec->fssid : tsec->sid;
++	rc = avc_has_perm(tsid, isec->sid, isec->sclass,
+ 			  FILE__RELABELFROM, &ad);
+ 	if (rc)
+ 		return rc;
+@@ -2198,7 +2221,7 @@
+ 	if (rc)
+ 		return rc;
+ 
+-	rc = avc_has_perm(tsec->sid, newsid, isec->sclass,
++	rc = avc_has_perm(tsid, newsid, isec->sclass,
+ 			  FILE__RELABELTO, &ad);
+ 	if (rc)
+ 		return rc;
+Index: nfs-2.6/security/selinux/selinux_nfs.c
+diff -u /dev/null nfs-2.6/security/selinux/selinux_nfs.c:1.13
+--- /dev/null	Mon Jun 20 12:38:59 2005
++++ nfs-2.6/security/selinux/selinux_nfs.c	Wed Mar 16 13:17:02 2005
+@@ -0,0 +1,93 @@
++/*
++ *  NSA Security-Enhanced Linux (SELinux) NFS Related Funtions
++ *
++ *  This file contains the SELinux Related Functions for NFS.
++ *
++ */
++#include <linux/config.h>
++#include <linux/module.h>
++
++#include <linux/slab.h>
++#include <objsec.h>
++#include <linux/sunrpc/selinux.h>
++#include <linux/sunrpc/xattr.h>
++
++int security_sid_to_network_context(u32 sid, char *context, u32 *len)
++{
++	int rc;
++	char *s = NULL;
++	*len = 0;
++	
++	rc = security_sid_to_context(sid, &s, len);
++	if (rc) 
++		return rc;
++	memcpy(context, s, *len);
++	kfree(s);
++	return rc;
++}
++
++__u32 security_get_task_sid(void)
++{
++	struct task_security_struct *tsec = current->security;
++
++	return tsec->sid;
++}
++	
++int security_revalidate_inode(struct inode *inode)
++{	
++	struct inode_security_struct *isec = inode->i_security;
++	u32 sid;
++	struct dentry *dentry;
++	char *context = NULL;
++	unsigned len = NFS_XATTR_SIZE_MAX;
++	int rc = 0;
++
++	if (!inode->i_op->getxattr) {
++		return 0;
++	}
++
++	dentry = d_find_alias(inode);
++	if (!dentry) {
++		printk(KERN_WARNING "%s:  no dentry for dev=%s "
++		       "ino=%ld\n", __FUNCTION__, inode->i_sb->s_id,
++		       inode->i_ino);
++		return 0;
++	}
++
++	context = kmalloc(len, GFP_KERNEL);
++	if (!context) {
++		dput(dentry);
++		return -ENOMEM;
++	}
++
++	rc = inode->i_op->getxattr(dentry, XATTR_NAME_SELINUX,
++				   context, len);
++	dput(dentry);
++	if (rc < 0) {
++		printk(KERN_WARNING "%s:  getxattr returned "
++		       "%d for dev=%s ino=%ld\n", __FUNCTION__,
++		       -rc, inode->i_sb->s_id, inode->i_ino);
++		kfree(context);
++		return rc;
++	}
++
++	rc = security_context_to_sid(context, rc, &sid);
++	if (rc) {
++		printk(KERN_WARNING "%s:  context_to_sid(%s) "
++		       "returned %d for dev=%s ino=%ld\n",
++		       __FUNCTION__, context, -rc,
++		       inode->i_sb->s_id, inode->i_ino);
++		kfree(context);
++		return rc;
++	}
++	kfree(context);
++	down(&isec->sem);
++	isec->sid = sid;
++	up(&isec->sem);
++	
++	return rc;
++}
++
++EXPORT_SYMBOL(security_sid_to_network_context);
++EXPORT_SYMBOL(security_get_task_sid);
++EXPORT_SYMBOL(security_revalidate_inode);
+Index: nfs-2.6/security/selinux/selinux_nfsd.c
+diff -u /dev/null nfs-2.6/security/selinux/selinux_nfsd.c:1.2
+--- /dev/null	Mon Jun 20 12:38:59 2005
++++ nfs-2.6/security/selinux/selinux_nfsd.c	Fri Mar 18 10:20:43 2005
+@@ -0,0 +1,42 @@
++/*
++ *  NSA Security-Enhanced Linux (SELinux) NFSD Related Funtions
++ *
++ *  This file contains the SELinux Related Functions for NFSD.
++ *
++ */
++#include <linux/config.h>
++#include <linux/module.h>
++#include <linux/fs.h>
++
++#include <objsec.h>
++
++int security_network_context_to_sid(char *context, u32 len, u32 *sid)
++{
++	return security_context_to_sid(context, len, sid);
++}
++
++void security_set_fssid(u32 sid)
++{
++	struct task_security_struct *tsec = current->security;
++	
++	tsec->fssid = sid;
++}
++
++void security_clear_fssid(void)
++{
++	struct task_security_struct *tsec = current->security;
++	
++	tsec->fssid = SECINITSID_UNLABELED;
++}
++
++__u32 security_get_inode_sid(struct inode *inode)
++{
++	struct inode_security_struct *isec = inode->i_security;
++
++	return isec->sid;
++}
++
++EXPORT_SYMBOL(security_network_context_to_sid);
++EXPORT_SYMBOL(security_set_fssid);
++EXPORT_SYMBOL(security_clear_fssid);
++EXPORT_SYMBOL(security_get_inode_sid);
+Index: nfs-2.6/security/selinux/include/objsec.h
+diff -u nfs-2.6/security/selinux/include/objsec.h:1.1.1.7 nfs-2.6/security/selinux/include/objsec.h:1.9
+--- nfs-2.6/security/selinux/include/objsec.h:1.1.1.7	Wed Mar  2 10:36:29 2005
++++ nfs-2.6/security/selinux/include/objsec.h	Wed Mar  2 11:00:51 2005
+@@ -34,6 +34,7 @@
+ 	u32 exec_sid;        /* exec SID */
+ 	u32 create_sid;      /* fscreate SID */
+ 	u32 ptrace_sid;      /* SID of ptrace parent */
++	u32 fssid;           /* nfs SID */
+ };
+ 
+ struct inode_security_struct {
