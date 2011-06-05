@@ -1,0 +1,67 @@
+--- linux-2.6/drivers/video/fbmem.c.orig	2006-12-04 13:42:43.000000000 +0100
++++ linux-2.6/drivers/video/fbmem.c	2006-12-04 00:40:26.000000000 +0100
+@@ -54,6 +54,7 @@
+ 
+ struct fb_info *registered_fb[FB_MAX];
+ int num_registered_fb;
++unsigned int num_logos = 0;
+ 
+ /*
+  * Helpers
+@@ -379,31 +380,34 @@ static void fb_rotate_logo(struct fb_inf
+ static void fb_do_show_logo(struct fb_info *info, struct fb_image *image,
+ 			    int rotate)
+ {
+-	int x;
++	unsigned int x, cpus = num_logos;
++
++	if (cpus == 0)
++		cpus = num_online_cpus();
+ 
+ 	if (rotate == FB_ROTATE_UR) {
+-		for (x = 0; x < num_online_cpus() &&
++		for (x = 0; x < cpus &&
+ 			     x * (fb_logo.logo->width + 8) <=
+ 			     info->var.xres - fb_logo.logo->width; x++) {
+ 			info->fbops->fb_imageblit(info, image);
+ 			image->dx += fb_logo.logo->width + 8;
+ 		}
+ 	} else if (rotate == FB_ROTATE_UD) {
+-		for (x = 0; x < num_online_cpus() &&
++		for (x = 0; x < cpus &&
+ 			     x * (fb_logo.logo->width + 8) <=
+ 			     info->var.xres - fb_logo.logo->width; x++) {
+ 			info->fbops->fb_imageblit(info, image);
+ 			image->dx -= fb_logo.logo->width + 8;
+ 		}
+ 	} else if (rotate == FB_ROTATE_CW) {
+-		for (x = 0; x < num_online_cpus() &&
++		for (x = 0; x < cpus &&
+ 			     x * (fb_logo.logo->width + 8) <=
+ 			     info->var.yres - fb_logo.logo->width; x++) {
+ 			info->fbops->fb_imageblit(info, image);
+ 			image->dy += fb_logo.logo->width + 8;
+ 		}
+ 	} else if (rotate == FB_ROTATE_CCW) {
+-		for (x = 0; x < num_online_cpus() &&
++		for (x = 0; x < cpus &&
+ 			     x * (fb_logo.logo->width + 8) <=
+ 			     info->var.yres - fb_logo.logo->width; x++) {
+ 			info->fbops->fb_imageblit(info, image);
+@@ -1548,6 +1552,16 @@ static int __init video_setup(char *opti
+ 	return 1;
+ }
+ __setup("video=", video_setup);
++
++static int __init logonum_setup(char *options)
++{
++	if (!options || !*options)
++		return 1;
++
++	num_logos = simple_strtoul(options, NULL, 10);
++	return 1;
++}
++__setup("logonum=", logonum_setup);
+ #endif
+ 
+     /*

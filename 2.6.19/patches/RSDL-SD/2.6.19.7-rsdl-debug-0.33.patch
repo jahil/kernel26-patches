@@ -1,0 +1,178 @@
+Only in linux-2.6.19.7-rsdl-0.33/Documentation/sysctl: kernel.txt.orig
+Only in linux-2.6.19.7-rsdl-0.33/include/linux: init_task.h.orig
+Only in linux-2.6.19.7-rsdl-0.33/include/linux: sched.h.orig
+diff -u -r linux-2.6.19.7-rsdl-0.33/kernel/sched.c linux-2.6.19.7-rsdl-debug-0.33/kernel/sched.c
+--- linux-2.6.19.7-rsdl-0.33/kernel/sched.c	2007-03-23 08:35:21.000000000 -0400
++++ linux-2.6.19.7-rsdl-debug-0.33/kernel/sched.c	2007-03-25 12:04:39.000000000 -0400
+@@ -615,6 +615,34 @@
+ 	p->time_slice = p->quota;
+ }
+ 
++static int debug_rqbitmap(struct rq *rq) {
++	struct list_head *queue;
++	int idx = 0, error = 0;
++	struct prio_array *array;
++
++	for (idx = 0; idx < MAX_PRIO; idx++) {
++		array = rq->active;
++		queue = array->queue + idx;
++		if (!list_empty(queue)) {
++			if (!test_bit(idx, rq->dyn_bitmap)) {
++				__set_bit(idx, rq->dyn_bitmap);
++				error = 1;
++				printk(KERN_ERR "MISSING DYNAMIC BIT %d\n", idx);
++			}
++		}
++		array = rq->expired;
++		queue = array->queue + idx;
++		if (!list_empty(queue)) {
++			if (!test_bit(idx, rq->exp_bitmap)) {
++				__set_bit(idx, rq->exp_bitmap);
++				error = 1;
++				printk(KERN_ERR "MISSING EXPIRED BIT %d\n", idx);
++			}
++		}
++	}
++	return error;
++}
++
+ /*
+  * There is no specific hard accounting. The dynamic bits can have
+  * false positives. rt_tasks can only be on the active queue.
+@@ -635,6 +663,7 @@
+ 	list_del_init(&p->run_list);
+ 	if (list_empty(p->array->queue + p->prio))
+ 		__clear_bit(p->prio, p->array->prio_bitmap);
++	WARN_ON(debug_rqbitmap(rq));
+ }
+ 
+ /*
+@@ -753,12 +782,14 @@
+ {
+ 	__enqueue_task(p, rq);
+ 	list_add_tail(&p->run_list, p->array->queue + p->prio);
++	WARN_ON(debug_rqbitmap(rq));
+ }
+ 
+ static inline void enqueue_task_head(struct task_struct *p, struct rq *rq)
+ {
+ 	__enqueue_task(p, rq);
+ 	list_add(&p->run_list, p->array->queue + p->prio);
++	WARN_ON(debug_rqbitmap(rq));
+ }
+ 
+ /*
+@@ -776,6 +807,7 @@
+ 			__clear_bit(old_prio, old_array->prio_bitmap);
+ 		set_dynamic_bit(p, rq);
+ 	}
++	WARN_ON(debug_rqbitmap(rq));
+ }
+ 
+ /*
+@@ -862,6 +894,7 @@
+ {
+ 	enqueue_task(p, rq);
+ 	inc_nr_running(p, rq);
++	WARN_ON(debug_rqbitmap(rq));
+ }
+ 
+ /*
+@@ -962,6 +995,7 @@
+ {
+ 	dec_nr_running(p, rq);
+ 	dequeue_task(p, rq);
++	WARN_ON(debug_rqbitmap(rq));
+ }
+ 
+ /*
+@@ -1651,9 +1685,11 @@
+ 		 * Parent and child are on different CPUs, now get the
+ 		 * parent runqueue to update the parent's ->flags:
+ 		 */
++		WARN_ON(debug_rqbitmap(rq));
+ 		task_rq_unlock(rq, &flags);
+ 		this_rq = task_rq_lock(current, &flags);
+ 	}
++	WARN_ON(debug_rqbitmap(this_rq));
+ 	task_rq_unlock(this_rq, &flags);
+ }
+ 
+@@ -2050,6 +2086,8 @@
+ 	enqueue_pulled_task(src_rq, this_rq, p);
+ 	p->timestamp = (p->timestamp - src_rq->timestamp_last_tick)
+ 				+ this_rq->timestamp_last_tick;
++	WARN_ON(debug_rqbitmap(src_rq));
++	WARN_ON(debug_rqbitmap(this_rq));
+ 	try_preempt(p, this_rq);
+ }
+ 
+@@ -3079,6 +3117,7 @@
+ 	rq->dyn_bitmap = rq->active->prio_bitmap;
+ 	rq->best_static_prio = MAX_PRIO - 1;
+ 	rq->prio_rotation++;
++	WARN_ON(debug_rqbitmap(rq));
+ }
+ 
+ /*
+@@ -3121,6 +3160,8 @@
+ 		}
+ 		memset(rq->prio_quota, 0, ARRAY_SIZE(rq->prio_quota));
+ 		major_prio_rotation(rq);
++		WARN_ON(debug_rqbitmap(rq));
++
+ 	} else {
+ 		/* Minor rotation */
+ 		new_prio_level = rq->prio_level + 1;
+@@ -3131,6 +3172,7 @@
+ 			__set_bit(new_prio_level, rq->dyn_bitmap);
+ 		}
+ 		rq_quota(rq, rq->prio_level) = 0;
++		WARN_ON(debug_rqbitmap(rq));
+ 	}
+ 	rq->prio_level = new_prio_level;
+ 	/*
+@@ -3153,6 +3195,10 @@
+ 		return;
+ 
+ 	spin_lock(&rq->lock);
++	if (!p->time_slice) {
++		printk(KERN_ERR "NO TIME_SLICE IN TRT \n");
++		p->time_slice++;
++	}
+ 	/*
+ 	 * Accounting is performed by both the task and the runqueue. This
+ 	 * allows frequently sleeping tasks to get their proper quota of
+@@ -3182,6 +3228,7 @@
+ 		set_tsk_need_resched(p);
+ 	}
+ out_unlock:
++	WARN_ON(debug_rqbitmap(rq));
+ 	spin_unlock(&rq->lock);
+ }
+ 
+@@ -3203,6 +3250,7 @@
+ 		wake_priority_sleeper(rq);
+ 	else
+ 		task_running_tick(rq, p, 1);
++	WARN_ON(debug_rqbitmap(rq));
+ #ifdef CONFIG_SMP
+ 	update_load(rq);
+ 	if (time_after_eq(jiffies, rq->next_balance))
+@@ -3407,6 +3455,7 @@
+ 	struct prio_array *array = rq->active;
+ 	int expirations = 0;
+ 
++	WARN_ON(debug_rqbitmap(rq));
+ retry:
+ 	if (idx >= MAX_PRIO) {
+ 		BUG_ON(++expirations > 1);
+@@ -3460,6 +3509,7 @@
+ 	if (next->static_prio < rq->best_static_prio &&
+ 	    next->policy != SCHED_BATCH)
+ 		rq->best_static_prio = next->static_prio;
++	WARN_ON(debug_rqbitmap(rq));
+ 	return next;
+ }
+ 
+Only in linux-2.6.19.7-rsdl-0.33/kernel: sysctl.c.orig

@@ -1,0 +1,129 @@
+---
+
+ drivers/usb/input/Kconfig    |   43 +++++++++++++++++++++++++++++++++++++++++++
+ drivers/usb/input/hid-core.c |    7 ++++++-
+ include/linux/sysctl.h       |    4 ++++
+ kernel/sysctl.c              |   16 ++++++++++++++++
+ 4 files changed, 69 insertions(+), 1 deletion(-)
+
+Index: linux-2.6.19/drivers/usb/input/Kconfig
+===================================================================
+--- linux-2.6.19.orig/drivers/usb/input/Kconfig
++++ linux-2.6.19/drivers/usb/input/Kconfig
+@@ -24,6 +24,49 @@ config USB_HID
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called usbhid.
+ 
++config USB_HID_MOUSE_POLLING
++	bool "USB HID Mouse Interrupt Polling"
++	default n
++	depends on USB_HID
++	help
++	 This option enables USB HID mouse polling instead of an event
++	 based system.  This option is only recommended for badly designed
++	 USB chipsets.
++
++	 If unsure, say N.
++
++config USB_HID_MOUSE_POLLING_INTERVAL
++	int "USB HID Mouse Interrupt Polling Interval"
++	default 10
++	depends on USB_HID_MOUSE_POLLING
++	help
++	  The "USB HID Mouse Interrupt Polling Interval" is the interval, at
++	  which your USB HID mouse is to be polled at. The interval is
++	  specified in milliseconds.
++
++	  Decreasing the interval will, of course, give you a much more
++	  precise mouse.
++
++	  Generally speaking, a polling interval of 2 ms should be more than
++	  enough for most people, and is great for gaming and other things
++	  that require high precision.
++
++	  An interval lower than 10ms is not guaranteed work on your
++	  specific piece of hardware. If you want to play it safe, don't
++	  change this value.
++
++	  Now, if you indeed want to feel the joy of a precise mouse, the
++	  following mice are known to work without problems, when the interval
++	  is set to at least 2 ms:
++
++	    * Logitech's MX-family
++	    * Logitech Mouse Man Dual Optical
++	    * Logitech iFeel
++	    * Microsoft Intellimouse Explorer
++	    * Microsoft Intellimouse Optical 1.1
++
++	  If unsure, keep it at 10 ms.
++
+ comment "Input core support is needed for USB HID input layer or HIDBP support"
+ 	depends on USB_HID && INPUT=n
+ 
+Index: linux-2.6.19/drivers/usb/input/hid-core.c
+===================================================================
+--- linux-2.6.19.orig/drivers/usb/input/hid-core.c
++++ linux-2.6.19/drivers/usb/input/hid-core.c
+@@ -50,7 +50,12 @@ static char *hid_types[] = {"Device", "P
+  * Module parameters.
+  */
+ 
+-static unsigned int hid_mousepoll_interval;
++#if defined(CONFIG_USB_HID_MOUSE_POLLING)
++int hid_mousepoll_interval __read_mostly = CONFIG_USB_HID_MOUSE_POLLING_INTERVAL;
++#else
++int hid_mousepoll_interval __read_mostly = 0;
++#endif
++
+ module_param_named(mousepoll, hid_mousepoll_interval, uint, 0644);
+ MODULE_PARM_DESC(mousepoll, "Polling interval of mice");
+ 
+Index: linux-2.6.19/include/linux/sysctl.h
+===================================================================
+--- linux-2.6.19.orig/include/linux/sysctl.h
++++ linux-2.6.19/include/linux/sysctl.h
+@@ -166,8 +166,9 @@ enum
+         KERN_ISO_CPU=80,        /* percent cpu SCHED_ISO tasks run SCHED_RR */
+         KERN_STRCS_RR_SLICE=81, /* alter value of min RR slice */
+         KERN_STRCS_RR_FACTOR=82, /* factor for default RR slice */
++        KERN_USB_POLLING=83,            /* USB polling rate */
+ #ifdef CONFIG_ALPHA_UAC_SYSCTL
+-	KERN_UAC_POLICY=83,	/* int: Alpha unaligned access control policy flags */
++	KERN_UAC_POLICY=84,	/* int: Alpha unaligned access control policy flags */
+ #endif /* CONFIG_ALPHA_UAC_SYSCTL */
+ };
+ 
+Index: linux-2.6.19/kernel/sysctl.c
+===================================================================
+--- linux-2.6.19.orig/kernel/sysctl.c
++++ linux-2.6.19/kernel/sysctl.c
+@@ -92,6 +92,11 @@ extern int readahead_hit_rate;
+ static int one = 1;
+ #endif
+ 
++/* USB Mouse Polling */
++#if defined(CONFIG_USB_HID)
++extern int hid_mousepoll_interval;
++#endif
++
+ /* this is needed for the proc_dointvec_minmax for [fs_]overflow UID and GID */
+ static int maxolduid = 65535;
+ static int minolduid;
+@@ -800,6 +805,17 @@ static ctl_table kern_table[] = {
+ 		.extra1		= &_s_minfactor,
+ 		.extra2		= &_s_maxfactor,
+ 	},
++#ifdef CONFIG_USB_HID
++        {
++                .ctl_name       = KERN_USB_POLLING,
++                .procname       = "hid_mousepoll_interval",
++                .data           = &hid_mousepoll_interval,
++                .maxlen         = sizeof (hid_mousepoll_interval),
++                .mode           = 0644,
++                .proc_handler   = &proc_dointvec_minmax,
++                .strategy       = &sysctl_intvec,
++        },
++#endif
+ #if defined(CONFIG_X86)
+ 	{
+ 		.ctl_name	= KERN_PANIC_ON_NMI,

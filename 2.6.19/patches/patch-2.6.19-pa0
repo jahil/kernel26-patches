@@ -1,0 +1,5415 @@
+diff --git a/arch/ia64/ia32/ia32_entry.S b/arch/ia64/ia32/ia32_entry.S
+index a32cd59..8d41c2c 100644
+--- a/arch/ia64/ia32/ia32_entry.S
++++ b/arch/ia64/ia32/ia32_entry.S
+@@ -388,7 +388,7 @@ ia32_syscall_table:
+ 	data8 sys32_rt_sigprocmask /* 175 */
+ 	data8 sys_rt_sigpending
+ 	data8 compat_sys_rt_sigtimedwait
+-	data8 sys32_rt_sigqueueinfo
++	data8 compat_sys_rt_sigqueueinfo
+ 	data8 sys32_rt_sigsuspend
+ 	data8 sys32_pread	  /* 180 */
+ 	data8 sys32_pwrite
+diff --git a/arch/ia64/ia32/ia32_signal.c b/arch/ia64/ia32/ia32_signal.c
+index b3355a9..00341ff 100644
+--- a/arch/ia64/ia32/ia32_signal.c
++++ b/arch/ia64/ia32/ia32_signal.c
+@@ -588,21 +588,6 @@ sys32_rt_sigprocmask (int how, compat_si
+ }
+ 
+ asmlinkage long
+-sys32_rt_sigqueueinfo (int pid, int sig, compat_siginfo_t __user *uinfo)
+-{
+-	mm_segment_t old_fs = get_fs();
+-	siginfo_t info;
+-	int ret;
+-
+-	if (copy_siginfo_from_user32(&info, uinfo))
+-		return -EFAULT;
+-	set_fs(KERNEL_DS);
+-	ret = sys_rt_sigqueueinfo(pid, sig, (siginfo_t __user *) &info);
+-	set_fs(old_fs);
+-	return ret;
+-}
+-
+-asmlinkage long
+ sys32_sigaction (int sig, struct old_sigaction32 __user *act, struct old_sigaction32 __user *oact)
+ {
+ 	struct k_sigaction new_ka, old_ka;
+diff --git a/arch/mips/kernel/scall64-n32.S b/arch/mips/kernel/scall64-n32.S
+index 0da5ca2..6bb9f91 100644
+--- a/arch/mips/kernel/scall64-n32.S
++++ b/arch/mips/kernel/scall64-n32.S
+@@ -247,7 +247,7 @@ EXPORT(sysn32_call_table)
+ 	PTR	sys_capset
+ 	PTR	sys32_rt_sigpending		/* 6125 */
+ 	PTR	compat_sys_rt_sigtimedwait
+-	PTR	sys32_rt_sigqueueinfo
++	PTR	compat_sys_rt_sigqueueinfo
+ 	PTR	sysn32_rt_sigsuspend
+ 	PTR	sys32_sigaltstack
+ 	PTR	compat_sys_utime		/* 6130 */
+diff --git a/arch/mips/kernel/scall64-o32.S b/arch/mips/kernel/scall64-o32.S
+index b9d00ca..28aa4fc 100644
+--- a/arch/mips/kernel/scall64-o32.S
++++ b/arch/mips/kernel/scall64-o32.S
+@@ -403,7 +403,7 @@ sys_call_table:
+ 	PTR	sys32_rt_sigprocmask 		/* 4195 */
+ 	PTR	sys32_rt_sigpending
+ 	PTR	compat_sys_rt_sigtimedwait
+-	PTR	sys32_rt_sigqueueinfo
++	PTR	compat_sys_rt_sigqueueinfo
+ 	PTR	sys32_rt_sigsuspend
+ 	PTR	sys32_pread			/* 4200 */
+ 	PTR	sys32_pwrite
+diff --git a/arch/mips/kernel/signal32.c b/arch/mips/kernel/signal32.c
+index c86a5dd..b680e7d 100644
+--- a/arch/mips/kernel/signal32.c
++++ b/arch/mips/kernel/signal32.c
+@@ -463,6 +463,22 @@ int copy_siginfo_to_user32(compat_siginf
+ 	return err;
+ }
+ 
++/* CAUTION: This is just a very minimalist implementation for the
++ *	    sake of compat_sys_rt_sigqueueinfo(), cribbed from sparc64.
++ */
++int copy_siginfo_from_user32(siginfo_t *to, compat_siginfo_t __user *from)
++{
++	if (!access_ok(VERIFY_WRITE, from, sizeof(compat_siginfo_t)))
++		return -EFAULT;
++
++	if (copy_from_user(to, from, 3*sizeof(int)) ||
++	    copy_from_user(to->_sifields._pad, from->_sifields._pad,
++			   SI_PAD_SIZE))
++		return -EFAULT;
++
++	return 0;
++}
++
+ save_static_function(sys32_sigreturn);
+ __attribute_used__ noinline static void
+ _sys32_sigreturn(nabi_no_regargs struct pt_regs regs)
+@@ -950,21 +966,6 @@ asmlinkage int sys32_rt_sigpending(compa
+ 	return ret;
+ }
+ 
+-asmlinkage int sys32_rt_sigqueueinfo(int pid, int sig, compat_siginfo_t __user *uinfo)
+-{
+-	siginfo_t info;
+-	int ret;
+-	mm_segment_t old_fs = get_fs();
+-
+-	if (copy_from_user (&info, uinfo, 3*sizeof(int)) ||
+-	    copy_from_user (info._sifields._pad, uinfo->_sifields._pad, SI_PAD_SIZE))
+-		return -EFAULT;
+-	set_fs (KERNEL_DS);
+-	ret = sys_rt_sigqueueinfo(pid, sig, (siginfo_t __user *)&info);
+-	set_fs (old_fs);
+-	return ret;
+-}
+-
+ asmlinkage long
+ sys32_waitid(int which, compat_pid_t pid,
+ 	     compat_siginfo_t __user *uinfo, int options,
+diff --git a/arch/parisc/configs/712_defconfig b/arch/parisc/configs/712_defconfig
+index 41fd069..b760e79 100644
+--- a/arch/parisc/configs/712_defconfig
++++ b/arch/parisc/configs/712_defconfig
+@@ -1,15 +1,19 @@
+ #
+ # Automatically generated make config: don't edit
+-# Linux kernel version: 2.6.16-pa6
+-# Sun Mar 26 19:59:51 2006
++# Linux kernel version: 2.6.18-rc1-pa1
++# Thu Jul 13 10:20:05 2006
+ #
+ CONFIG_PARISC=y
+ CONFIG_MMU=y
+ CONFIG_STACK_GROWSUP=y
+ CONFIG_RWSEM_GENERIC_SPINLOCK=y
++CONFIG_GENERIC_FIND_NEXT_BIT=y
++CONFIG_GENERIC_HWEIGHT=y
+ CONFIG_GENERIC_CALIBRATE_DELAY=y
+ CONFIG_GENERIC_HARDIRQS=y
+ CONFIG_GENERIC_IRQ_PROBE=y
++CONFIG_IRQ_PER_CPU=y
++CONFIG_DEFCONFIG_LIST="/lib/modules/$UNAME_RELEASE/.config"
+ 
+ #
+ # Code maturity level options
+@@ -22,7 +26,7 @@ #
+ # General setup
+ #
+ CONFIG_LOCALVERSION=""
+-# CONFIG_LOCALVERSION_AUTO is not set
++CONFIG_LOCALVERSION_AUTO=y
+ CONFIG_SWAP=y
+ CONFIG_SYSVIPC=y
+ CONFIG_POSIX_MQUEUE=y
+@@ -31,6 +35,7 @@ CONFIG_SYSCTL=y
+ # CONFIG_AUDIT is not set
+ CONFIG_IKCONFIG=y
+ CONFIG_IKCONFIG_PROC=y
++# CONFIG_RELAY is not set
+ CONFIG_INITRAMFS_SOURCE=""
+ CONFIG_CC_OPTIMIZE_FOR_SIZE=y
+ # CONFIG_EMBEDDED is not set
+@@ -42,14 +47,12 @@ CONFIG_PRINTK=y
+ CONFIG_BUG=y
+ CONFIG_ELF_CORE=y
+ CONFIG_BASE_FULL=y
++CONFIG_RT_MUTEXES=y
+ CONFIG_FUTEX=y
+ CONFIG_EPOLL=y
+ CONFIG_SHMEM=y
+-CONFIG_CC_ALIGN_FUNCTIONS=0
+-CONFIG_CC_ALIGN_LABELS=0
+-CONFIG_CC_ALIGN_LOOPS=0
+-CONFIG_CC_ALIGN_JUMPS=0
+ CONFIG_SLAB=y
++CONFIG_VM_EVENT_COUNTERS=y
+ # CONFIG_TINY_SHMEM is not set
+ CONFIG_BASE_SMALL=0
+ # CONFIG_SLOB is not set
+@@ -60,7 +63,6 @@ #
+ CONFIG_MODULES=y
+ CONFIG_MODULE_UNLOAD=y
+ CONFIG_MODULE_FORCE_UNLOAD=y
+-CONFIG_OBSOLETE_MODPARM=y
+ # CONFIG_MODVERSIONS is not set
+ # CONFIG_MODULE_SRCVERSION_ALL is not set
+ CONFIG_KMOD=y
+@@ -68,6 +70,7 @@ CONFIG_KMOD=y
+ #
+ # Block layer
+ #
++# CONFIG_BLK_DEV_IO_TRACE is not set
+ 
+ #
+ # IO Schedulers
+@@ -91,6 +94,9 @@ # CONFIG_PA7200 is not set
+ # CONFIG_PA7300LC is not set
+ # CONFIG_PA8X00 is not set
+ CONFIG_PA11=y
++CONFIG_PARISC_PAGE_SIZE_4KB=y
++# CONFIG_PARISC_PAGE_SIZE_16KB is not set
++# CONFIG_PARISC_PAGE_SIZE_64KB is not set
+ # CONFIG_SMP is not set
+ CONFIG_ARCH_FLATMEM_ENABLE=y
+ # CONFIG_PREEMPT_NONE is not set
+@@ -108,6 +114,7 @@ CONFIG_FLATMEM=y
+ CONFIG_FLAT_NODE_MEM_MAP=y
+ # CONFIG_SPARSEMEM_STATIC is not set
+ CONFIG_SPLIT_PTLOCK_CPUS=4096
++# CONFIG_RESOURCES_64BIT is not set
+ # CONFIG_HPUX is not set
+ 
+ #
+@@ -135,6 +142,7 @@ # PA-RISC specific drivers
+ #
+ CONFIG_CHASSIS_LCD_LED=y
+ # CONFIG_PDC_CHASSIS is not set
++CONFIG_PDC_CHASSIS_WARN=y
+ CONFIG_PDC_STABLE=y
+ 
+ #
+@@ -174,7 +182,10 @@ # CONFIG_SYN_COOKIES is not set
+ CONFIG_INET_AH=m
+ CONFIG_INET_ESP=m
+ # CONFIG_INET_IPCOMP is not set
+-CONFIG_INET_TUNNEL=m
++# CONFIG_INET_XFRM_TUNNEL is not set
++# CONFIG_INET_TUNNEL is not set
++# CONFIG_INET_XFRM_MODE_TRANSPORT is not set
++# CONFIG_INET_XFRM_MODE_TUNNEL is not set
+ CONFIG_INET_DIAG=m
+ CONFIG_INET_TCP_DIAG=m
+ # CONFIG_TCP_CONG_ADVANCED is not set
+@@ -185,6 +196,9 @@ # IP: Virtual Server Configuration
+ #
+ # CONFIG_IP_VS is not set
+ # CONFIG_IPV6 is not set
++# CONFIG_INET6_XFRM_TUNNEL is not set
++# CONFIG_INET6_TUNNEL is not set
++# CONFIG_NETWORK_SECMARK is not set
+ CONFIG_NETFILTER=y
+ # CONFIG_NETFILTER_DEBUG is not set
+ 
+@@ -208,6 +222,8 @@ # CONFIG_IP_NF_NETBIOS_NS is not set
+ CONFIG_IP_NF_TFTP=m
+ CONFIG_IP_NF_AMANDA=m
+ # CONFIG_IP_NF_PPTP is not set
++# CONFIG_IP_NF_H323 is not set
++# CONFIG_IP_NF_SIP is not set
+ CONFIG_IP_NF_QUEUE=m
+ 
+ #
+@@ -251,6 +267,7 @@ # CONFIG_HAMRADIO is not set
+ # CONFIG_IRDA is not set
+ # CONFIG_BT is not set
+ # CONFIG_IEEE80211 is not set
++CONFIG_WIRELESS_EXT=y
+ 
+ #
+ # Device Drivers
+@@ -263,6 +280,7 @@ # CONFIG_STANDALONE is not set
+ # CONFIG_PREVENT_FIRMWARE_BUILD is not set
+ CONFIG_FW_LOADER=y
+ # CONFIG_DEBUG_DRIVER is not set
++# CONFIG_SYS_HYPERVISOR is not set
+ 
+ #
+ # Connector - unified userspace <-> kernelspace linker
+@@ -283,6 +301,7 @@ # CONFIG_PARPORT_PC_FIFO is not set
+ # CONFIG_PARPORT_PC_SUPERIO is not set
+ CONFIG_PARPORT_NOT_PC=y
+ CONFIG_PARPORT_GSC=y
++# CONFIG_PARPORT_AX88796 is not set
+ # CONFIG_PARPORT_1284 is not set
+ 
+ #
+@@ -363,8 +382,8 @@ CONFIG_MD_LINEAR=m
+ CONFIG_MD_RAID0=m
+ CONFIG_MD_RAID1=m
+ # CONFIG_MD_RAID10 is not set
+-# CONFIG_MD_RAID5 is not set
+-# CONFIG_MD_RAID6 is not set
++CONFIG_MD_RAID456=m
++CONFIG_MD_RAID5_RESHAPE=y
+ # CONFIG_MD_MULTIPATH is not set
+ # CONFIG_MD_FAULTY is not set
+ # CONFIG_BLK_DEV_DM is not set
+@@ -420,12 +439,12 @@ #
+ # Wireless LAN (non-hamradio)
+ #
+ CONFIG_NET_RADIO=y
++# CONFIG_NET_WIRELESS_RTNETLINK is not set
+ 
+ #
+ # Obsolete Wireless cards support (pre-802.11)
+ #
+ # CONFIG_STRIP is not set
+-# CONFIG_ATMEL is not set
+ # CONFIG_HOSTAP is not set
+ 
+ #
+@@ -516,6 +535,7 @@ #
+ CONFIG_VT=y
+ CONFIG_VT_CONSOLE=y
+ CONFIG_HW_CONSOLE=y
++# CONFIG_VT_HW_CONSOLE_BINDING is not set
+ # CONFIG_SERIAL_NONSTANDARD is not set
+ 
+ #
+@@ -523,6 +543,7 @@ # Serial drivers
+ #
+ CONFIG_SERIAL_8250=y
+ CONFIG_SERIAL_8250_CONSOLE=y
++CONFIG_SERIAL_8250_GSC=y
+ CONFIG_SERIAL_8250_NR_UARTS=17
+ CONFIG_SERIAL_8250_RUNTIME_UARTS=4
+ CONFIG_SERIAL_8250_EXTENDED=y
+@@ -555,6 +576,7 @@ #
+ # Watchdog Cards
+ #
+ # CONFIG_WATCHDOG is not set
++# CONFIG_HW_RANDOM is not set
+ CONFIG_GEN_RTC=y
+ CONFIG_GEN_RTC_X=y
+ # CONFIG_DTLK is not set
+@@ -586,7 +608,6 @@ # CONFIG_SPI_MASTER is not set
+ #
+ # Dallas's 1-wire bus
+ #
+-# CONFIG_W1 is not set
+ 
+ #
+ # Hardware Monitoring support
+@@ -599,13 +620,10 @@ # Misc devices
+ #
+ 
+ #
+-# Multimedia Capabilities Port drivers
+-#
+-
+-#
+ # Multimedia devices
+ #
+ # CONFIG_VIDEO_DEV is not set
++CONFIG_VIDEO_V4L2=y
+ 
+ #
+ # Digital Video Broadcasting Devices
+@@ -615,11 +633,13 @@ # CONFIG_DVB is not set
+ #
+ # Graphics support
+ #
++# CONFIG_FIRMWARE_EDID is not set
+ CONFIG_FB=y
+ CONFIG_FB_CFB_FILLRECT=y
+ CONFIG_FB_CFB_COPYAREA=y
+ CONFIG_FB_CFB_IMAGEBLIT=y
+ # CONFIG_FB_MACMODES is not set
++# CONFIG_FB_BACKLIGHT is not set
+ CONFIG_FB_MODE_HELPERS=y
+ CONFIG_FB_TILEBLITTING=y
+ CONFIG_FB_STI=y
+@@ -673,9 +693,11 @@ # CONFIG_SND_SEQ_DUMMY is not set
+ CONFIG_SND_OSSEMUL=y
+ CONFIG_SND_MIXER_OSS=y
+ CONFIG_SND_PCM_OSS=y
++CONFIG_SND_PCM_OSS_PLUGINS=y
+ CONFIG_SND_SEQUENCER_OSS=y
+ # CONFIG_SND_DYNAMIC_MINORS is not set
+ CONFIG_SND_SUPPORT_OLD_API=y
++CONFIG_SND_VERBOSE_PROCFS=y
+ # CONFIG_SND_VERBOSE_PRINTK is not set
+ # CONFIG_SND_DEBUG is not set
+ 
+@@ -703,6 +725,7 @@ # USB support
+ #
+ # CONFIG_USB_ARCH_HAS_HCD is not set
+ # CONFIG_USB_ARCH_HAS_OHCI is not set
++# CONFIG_USB_ARCH_HAS_EHCI is not set
+ 
+ #
+ # NOTE: USB_STORAGE enables SCSI, and 'SCSI disk support'
+@@ -719,6 +742,19 @@ #
+ # CONFIG_MMC is not set
+ 
+ #
++# LED devices
++#
++# CONFIG_NEW_LEDS is not set
++
++#
++# LED drivers
++#
++
++#
++# LED Triggers
++#
++
++#
+ # InfiniBand support
+ #
+ 
+@@ -727,6 +763,24 @@ # EDAC - error detection and reporting (
+ #
+ 
+ #
++# Real Time Clock
++#
++# CONFIG_RTC_CLASS is not set
++
++#
++# DMA Engine support
++#
++# CONFIG_DMA_ENGINE is not set
++
++#
++# DMA Clients
++#
++
++#
++# DMA Devices
++#
++
++#
+ # File systems
+ #
+ CONFIG_EXT2_FS=y
+@@ -744,7 +798,6 @@ # CONFIG_JFS_DEBUG is not set
+ # CONFIG_JFS_STATISTICS is not set
+ CONFIG_FS_POSIX_ACL=y
+ CONFIG_XFS_FS=m
+-CONFIG_XFS_EXPORT=y
+ # CONFIG_XFS_QUOTA is not set
+ # CONFIG_XFS_SECURITY is not set
+ # CONFIG_XFS_POSIX_ACL is not set
+@@ -753,6 +806,7 @@ # CONFIG_OCFS2_FS is not set
+ # CONFIG_MINIX_FS is not set
+ # CONFIG_ROMFS_FS is not set
+ CONFIG_INOTIFY=y
++CONFIG_INOTIFY_USER=y
+ # CONFIG_QUOTA is not set
+ CONFIG_DNOTIFY=y
+ # CONFIG_AUTOFS_FS is not set
+@@ -787,7 +841,6 @@ CONFIG_SYSFS=y
+ CONFIG_TMPFS=y
+ # CONFIG_HUGETLB_PAGE is not set
+ CONFIG_RAMFS=y
+-# CONFIG_RELAYFS_FS is not set
+ # CONFIG_CONFIGFS_FS is not set
+ 
+ #
+@@ -806,6 +859,8 @@ # CONFIG_HPFS_FS is not set
+ # CONFIG_QNX4FS_FS is not set
+ # CONFIG_SYSV_FS is not set
+ CONFIG_UFS_FS=m
++# CONFIG_UFS_FS_WRITE is not set
++# CONFIG_UFS_DEBUG is not set
+ 
+ #
+ # Network File Systems
+@@ -834,7 +889,9 @@ CONFIG_SMB_NLS_DEFAULT=y
+ CONFIG_SMB_NLS_REMOTE="cp437"
+ CONFIG_CIFS=m
+ # CONFIG_CIFS_STATS is not set
++# CONFIG_CIFS_WEAK_PW_HASH is not set
+ # CONFIG_CIFS_XATTR is not set
++# CONFIG_CIFS_DEBUG2 is not set
+ # CONFIG_CIFS_EXPERIMENTAL is not set
+ # CONFIG_NCP_FS is not set
+ # CONFIG_CODA_FS is not set
+@@ -902,14 +959,19 @@ # Kernel hacking
+ #
+ # CONFIG_PRINTK_TIME is not set
+ CONFIG_MAGIC_SYSRQ=y
++# CONFIG_UNUSED_SYMBOLS is not set
+ CONFIG_DEBUG_KERNEL=y
+ CONFIG_LOG_BUF_SHIFT=16
+ CONFIG_DETECT_SOFTLOCKUP=y
+ # CONFIG_SCHEDSTATS is not set
+ # CONFIG_DEBUG_SLAB is not set
+-CONFIG_DEBUG_MUTEXES=y
++# CONFIG_DEBUG_RT_MUTEXES is not set
++# CONFIG_RT_MUTEX_TESTER is not set
+ # CONFIG_DEBUG_SPINLOCK is not set
++CONFIG_DEBUG_MUTEXES=y
++# CONFIG_DEBUG_RWSEMS is not set
+ # CONFIG_DEBUG_SPINLOCK_SLEEP is not set
++# CONFIG_DEBUG_LOCKING_API_SELFTESTS is not set
+ # CONFIG_DEBUG_KOBJECT is not set
+ # CONFIG_DEBUG_INFO is not set
+ # CONFIG_DEBUG_FS is not set
+@@ -967,3 +1029,6 @@ CONFIG_CRC32=y
+ CONFIG_LIBCRC32C=m
+ CONFIG_ZLIB_INFLATE=m
+ CONFIG_ZLIB_DEFLATE=m
++CONFIG_TEXTSEARCH=y
++CONFIG_TEXTSEARCH_KMP=m
++CONFIG_PLIST=y
+diff --git a/arch/parisc/configs/a500_defconfig b/arch/parisc/configs/a500_defconfig
+index f3b812f..96b3348 100644
+--- a/arch/parisc/configs/a500_defconfig
++++ b/arch/parisc/configs/a500_defconfig
+@@ -1,24 +1,25 @@
+ #
+ # Automatically generated make config: don't edit
+-# Linux kernel version: 2.6.14-rc5-pa1
+-# Fri Oct 21 23:04:54 2005
++# Linux kernel version: 2.6.18-rc1-pa1
++# Fri Jul  7 01:02:53 2006
+ #
+ CONFIG_PARISC=y
+ CONFIG_MMU=y
+ CONFIG_STACK_GROWSUP=y
+ CONFIG_RWSEM_GENERIC_SPINLOCK=y
++CONFIG_GENERIC_FIND_NEXT_BIT=y
++CONFIG_GENERIC_HWEIGHT=y
+ CONFIG_GENERIC_CALIBRATE_DELAY=y
++CONFIG_TIME_LOW_RES=y
+ CONFIG_GENERIC_HARDIRQS=y
+ CONFIG_GENERIC_IRQ_PROBE=y
+-CONFIG_ARCH_MAY_HAVE_PC_FDC=y
++CONFIG_IRQ_PER_CPU=y
++CONFIG_DEFCONFIG_LIST="/lib/modules/$UNAME_RELEASE/.config"
+ 
+ #
+ # Code maturity level options
+ #
+ CONFIG_EXPERIMENTAL=y
+-# CONFIG_CLEAN_COMPILE is not set
+-CONFIG_BROKEN=y
+-CONFIG_BROKEN_ON_SMP=y
+ CONFIG_LOCK_KERNEL=y
+ CONFIG_INIT_ENV_ARG_LIMIT=32
+ 
+@@ -26,36 +27,37 @@ #
+ # General setup
+ #
+ CONFIG_LOCALVERSION=""
+-# CONFIG_LOCALVERSION_AUTO is not set
++CONFIG_LOCALVERSION_AUTO=y
+ CONFIG_SWAP=y
+ CONFIG_SYSVIPC=y
+ CONFIG_POSIX_MQUEUE=y
+ # CONFIG_BSD_PROCESS_ACCT is not set
+ CONFIG_SYSCTL=y
+ # CONFIG_AUDIT is not set
+-CONFIG_HOTPLUG=y
+-CONFIG_KOBJECT_UEVENT=y
+ CONFIG_IKCONFIG=y
+ CONFIG_IKCONFIG_PROC=y
+ # CONFIG_CPUSETS is not set
++CONFIG_RELAY=y
+ CONFIG_INITRAMFS_SOURCE=""
+-CONFIG_EMBEDDED=y
++# CONFIG_CC_OPTIMIZE_FOR_SIZE is not set
++# CONFIG_EMBEDDED is not set
+ CONFIG_KALLSYMS=y
+ CONFIG_KALLSYMS_ALL=y
+ # CONFIG_KALLSYMS_EXTRA_PASS is not set
++CONFIG_HOTPLUG=y
+ CONFIG_PRINTK=y
+ CONFIG_BUG=y
++CONFIG_ELF_CORE=y
+ CONFIG_BASE_FULL=y
++CONFIG_RT_MUTEXES=y
+ CONFIG_FUTEX=y
+ CONFIG_EPOLL=y
+-# CONFIG_CC_OPTIMIZE_FOR_SIZE is not set
+ CONFIG_SHMEM=y
+-CONFIG_CC_ALIGN_FUNCTIONS=0
+-CONFIG_CC_ALIGN_LABELS=0
+-CONFIG_CC_ALIGN_LOOPS=0
+-CONFIG_CC_ALIGN_JUMPS=0
++CONFIG_SLAB=y
++CONFIG_VM_EVENT_COUNTERS=y
+ # CONFIG_TINY_SHMEM is not set
+ CONFIG_BASE_SMALL=0
++# CONFIG_SLOB is not set
+ 
+ #
+ # Loadable module support
+@@ -63,13 +65,30 @@ #
+ CONFIG_MODULES=y
+ CONFIG_MODULE_UNLOAD=y
+ CONFIG_MODULE_FORCE_UNLOAD=y
+-CONFIG_OBSOLETE_MODPARM=y
+ # CONFIG_MODVERSIONS is not set
+ # CONFIG_MODULE_SRCVERSION_ALL is not set
+ CONFIG_KMOD=y
+ CONFIG_STOP_MACHINE=y
+ 
+ #
++# Block layer
++#
++# CONFIG_BLK_DEV_IO_TRACE is not set
++
++#
++# IO Schedulers
++#
++CONFIG_IOSCHED_NOOP=y
++CONFIG_IOSCHED_AS=y
++CONFIG_IOSCHED_DEADLINE=y
++CONFIG_IOSCHED_CFQ=y
++# CONFIG_DEFAULT_AS is not set
++# CONFIG_DEFAULT_DEADLINE is not set
++CONFIG_DEFAULT_CFQ=y
++# CONFIG_DEFAULT_NOOP is not set
++CONFIG_DEFAULT_IOSCHED="cfq"
++
++#
+ # Processor type and features
+ #
+ # CONFIG_PA7000 is not set
+@@ -80,9 +99,20 @@ CONFIG_PA8X00=y
+ CONFIG_PA20=y
+ CONFIG_PREFETCH=y
+ CONFIG_64BIT=y
++CONFIG_PARISC_PAGE_SIZE_4KB=y
++# CONFIG_PARISC_PAGE_SIZE_16KB is not set
++# CONFIG_PARISC_PAGE_SIZE_64KB is not set
+ CONFIG_SMP=y
+ CONFIG_HOTPLUG_CPU=y
++CONFIG_ARCH_SELECT_MEMORY_MODEL=y
+ CONFIG_ARCH_DISCONTIGMEM_ENABLE=y
++CONFIG_ARCH_FLATMEM_ENABLE=y
++CONFIG_ARCH_DISCONTIGMEM_DEFAULT=y
++CONFIG_NODES_SHIFT=3
++CONFIG_PREEMPT_NONE=y
++# CONFIG_PREEMPT_VOLUNTARY is not set
++# CONFIG_PREEMPT is not set
++# CONFIG_PREEMPT_BKL is not set
+ # CONFIG_HZ_100 is not set
+ CONFIG_HZ_250=y
+ # CONFIG_HZ_1000 is not set
+@@ -95,7 +125,8 @@ CONFIG_DISCONTIGMEM=y
+ CONFIG_FLAT_NODE_MEM_MAP=y
+ CONFIG_NEED_MULTIPLE_NODES=y
+ # CONFIG_SPARSEMEM_STATIC is not set
+-# CONFIG_PREEMPT is not set
++CONFIG_SPLIT_PTLOCK_CPUS=4
++CONFIG_RESOURCES_64BIT=y
+ CONFIG_COMPAT=y
+ CONFIG_NR_CPUS=8
+ 
+@@ -104,7 +135,6 @@ # Bus options (PCI, PCMCIA, EISA, GSC, I
+ #
+ # CONFIG_GSC is not set
+ CONFIG_PCI=y
+-CONFIG_PCI_LEGACY_PROC=y
+ # CONFIG_PCI_DEBUG is not set
+ CONFIG_PCI_LBA=y
+ CONFIG_IOSAPIC=y
+@@ -124,6 +154,11 @@ #
+ # PC-card bridges
+ #
+ CONFIG_YENTA=m
++CONFIG_YENTA_O2=y
++CONFIG_YENTA_RICOH=y
++CONFIG_YENTA_TI=y
++CONFIG_YENTA_ENE_TUNE=y
++CONFIG_YENTA_TOSHIBA=y
+ CONFIG_PD6729=m
+ CONFIG_I82092=m
+ CONFIG_PCCARD_NONSTATIC=m
+@@ -139,6 +174,7 @@ #
+ # CONFIG_SUPERIO is not set
+ # CONFIG_CHASSIS_LCD_LED is not set
+ CONFIG_PDC_CHASSIS=y
++CONFIG_PDC_CHASSIS_WARN=y
+ CONFIG_PDC_STABLE=y
+ 
+ #
+@@ -155,6 +191,7 @@ CONFIG_NET=y
+ #
+ # Networking options
+ #
++# CONFIG_NETDEBUG is not set
+ CONFIG_PACKET=y
+ CONFIG_PACKET_MMAP=y
+ CONFIG_UNIX=y
+@@ -177,7 +214,10 @@ # CONFIG_SYN_COOKIES is not set
+ CONFIG_INET_AH=m
+ CONFIG_INET_ESP=m
+ # CONFIG_INET_IPCOMP is not set
+-CONFIG_INET_TUNNEL=m
++# CONFIG_INET_XFRM_TUNNEL is not set
++# CONFIG_INET_TUNNEL is not set
++CONFIG_INET_XFRM_MODE_TRANSPORT=m
++CONFIG_INET_XFRM_MODE_TUNNEL=m
+ CONFIG_INET_DIAG=y
+ CONFIG_INET_TCP_DIAG=y
+ # CONFIG_TCP_CONG_ADVANCED is not set
+@@ -189,14 +229,51 @@ #
+ # CONFIG_IP_VS is not set
+ CONFIG_IPV6=m
+ # CONFIG_IPV6_PRIVACY is not set
++# CONFIG_IPV6_ROUTER_PREF is not set
+ CONFIG_INET6_AH=m
+ CONFIG_INET6_ESP=m
+ CONFIG_INET6_IPCOMP=m
++CONFIG_INET6_XFRM_TUNNEL=m
+ CONFIG_INET6_TUNNEL=m
++CONFIG_INET6_XFRM_MODE_TRANSPORT=m
++CONFIG_INET6_XFRM_MODE_TUNNEL=m
+ CONFIG_IPV6_TUNNEL=m
++# CONFIG_NETWORK_SECMARK is not set
+ CONFIG_NETFILTER=y
+ # CONFIG_NETFILTER_DEBUG is not set
+-# CONFIG_NETFILTER_NETLINK is not set
++
++#
++# Core Netfilter Configuration
++#
++CONFIG_NETFILTER_NETLINK=m
++CONFIG_NETFILTER_NETLINK_QUEUE=m
++CONFIG_NETFILTER_NETLINK_LOG=m
++CONFIG_NETFILTER_XTABLES=m
++CONFIG_NETFILTER_XT_TARGET_CLASSIFY=m
++# CONFIG_NETFILTER_XT_TARGET_CONNMARK is not set
++CONFIG_NETFILTER_XT_TARGET_MARK=m
++CONFIG_NETFILTER_XT_TARGET_NFQUEUE=m
++# CONFIG_NETFILTER_XT_TARGET_NOTRACK is not set
++CONFIG_NETFILTER_XT_MATCH_COMMENT=m
++CONFIG_NETFILTER_XT_MATCH_CONNMARK=m
++CONFIG_NETFILTER_XT_MATCH_CONNTRACK=m
++CONFIG_NETFILTER_XT_MATCH_DCCP=m
++CONFIG_NETFILTER_XT_MATCH_ESP=m
++CONFIG_NETFILTER_XT_MATCH_HELPER=m
++CONFIG_NETFILTER_XT_MATCH_LENGTH=m
++CONFIG_NETFILTER_XT_MATCH_LIMIT=m
++CONFIG_NETFILTER_XT_MATCH_MAC=m
++CONFIG_NETFILTER_XT_MATCH_MARK=m
++CONFIG_NETFILTER_XT_MATCH_POLICY=m
++CONFIG_NETFILTER_XT_MATCH_MULTIPORT=m
++CONFIG_NETFILTER_XT_MATCH_PKTTYPE=m
++CONFIG_NETFILTER_XT_MATCH_QUOTA=m
++CONFIG_NETFILTER_XT_MATCH_REALM=m
++CONFIG_NETFILTER_XT_MATCH_SCTP=m
++CONFIG_NETFILTER_XT_MATCH_STATE=m
++CONFIG_NETFILTER_XT_MATCH_STATISTIC=m
++CONFIG_NETFILTER_XT_MATCH_STRING=m
++CONFIG_NETFILTER_XT_MATCH_TCPMSS=m
+ 
+ #
+ # IP: Netfilter Configuration
+@@ -205,47 +282,33 @@ CONFIG_IP_NF_CONNTRACK=m
+ # CONFIG_IP_NF_CT_ACCT is not set
+ CONFIG_IP_NF_CONNTRACK_MARK=y
+ # CONFIG_IP_NF_CONNTRACK_EVENTS is not set
++CONFIG_IP_NF_CONNTRACK_NETLINK=m
+ CONFIG_IP_NF_CT_PROTO_SCTP=m
+ CONFIG_IP_NF_FTP=m
+ CONFIG_IP_NF_IRC=m
+-# CONFIG_IP_NF_NETBIOS_NS is not set
++CONFIG_IP_NF_NETBIOS_NS=m
+ CONFIG_IP_NF_TFTP=m
+ CONFIG_IP_NF_AMANDA=m
+-# CONFIG_IP_NF_PPTP is not set
++CONFIG_IP_NF_PPTP=m
++CONFIG_IP_NF_H323=m
++CONFIG_IP_NF_SIP=m
+ CONFIG_IP_NF_QUEUE=m
+ CONFIG_IP_NF_IPTABLES=m
+-CONFIG_IP_NF_MATCH_LIMIT=m
+ CONFIG_IP_NF_MATCH_IPRANGE=m
+-CONFIG_IP_NF_MATCH_MAC=m
+-CONFIG_IP_NF_MATCH_PKTTYPE=m
+-CONFIG_IP_NF_MATCH_MARK=m
+-CONFIG_IP_NF_MATCH_MULTIPORT=m
+ CONFIG_IP_NF_MATCH_TOS=m
+ CONFIG_IP_NF_MATCH_RECENT=m
+ CONFIG_IP_NF_MATCH_ECN=m
+ CONFIG_IP_NF_MATCH_DSCP=m
+-CONFIG_IP_NF_MATCH_AH_ESP=m
+-CONFIG_IP_NF_MATCH_LENGTH=m
++CONFIG_IP_NF_MATCH_AH=m
+ CONFIG_IP_NF_MATCH_TTL=m
+-CONFIG_IP_NF_MATCH_TCPMSS=m
+-CONFIG_IP_NF_MATCH_HELPER=m
+-CONFIG_IP_NF_MATCH_STATE=m
+-CONFIG_IP_NF_MATCH_CONNTRACK=m
+ CONFIG_IP_NF_MATCH_OWNER=m
+-# CONFIG_IP_NF_MATCH_ADDRTYPE is not set
+-# CONFIG_IP_NF_MATCH_REALM is not set
+-CONFIG_IP_NF_MATCH_SCTP=m
+-# CONFIG_IP_NF_MATCH_DCCP is not set
+-CONFIG_IP_NF_MATCH_COMMENT=m
+-CONFIG_IP_NF_MATCH_CONNMARK=m
++CONFIG_IP_NF_MATCH_ADDRTYPE=m
+ CONFIG_IP_NF_MATCH_HASHLIMIT=m
+-# CONFIG_IP_NF_MATCH_STRING is not set
+ CONFIG_IP_NF_FILTER=m
+ CONFIG_IP_NF_TARGET_REJECT=m
+ CONFIG_IP_NF_TARGET_LOG=m
+ CONFIG_IP_NF_TARGET_ULOG=m
+ CONFIG_IP_NF_TARGET_TCPMSS=m
+-# CONFIG_IP_NF_TARGET_NFQUEUE is not set
+ CONFIG_IP_NF_NAT=m
+ CONFIG_IP_NF_NAT_NEEDED=y
+ CONFIG_IP_NF_TARGET_MASQUERADE=m
+@@ -257,17 +320,16 @@ CONFIG_IP_NF_NAT_IRC=m
+ CONFIG_IP_NF_NAT_FTP=m
+ CONFIG_IP_NF_NAT_TFTP=m
+ CONFIG_IP_NF_NAT_AMANDA=m
++CONFIG_IP_NF_NAT_PPTP=m
++CONFIG_IP_NF_NAT_H323=m
++CONFIG_IP_NF_NAT_SIP=m
+ CONFIG_IP_NF_MANGLE=m
+ CONFIG_IP_NF_TARGET_TOS=m
+ CONFIG_IP_NF_TARGET_ECN=m
+ CONFIG_IP_NF_TARGET_DSCP=m
+-CONFIG_IP_NF_TARGET_MARK=m
+-CONFIG_IP_NF_TARGET_CLASSIFY=m
+-# CONFIG_IP_NF_TARGET_TTL is not set
+-CONFIG_IP_NF_TARGET_CONNMARK=m
++CONFIG_IP_NF_TARGET_TTL=m
+ CONFIG_IP_NF_TARGET_CLUSTERIP=m
+ CONFIG_IP_NF_RAW=m
+-CONFIG_IP_NF_TARGET_NOTRACK=m
+ CONFIG_IP_NF_ARPTABLES=m
+ CONFIG_IP_NF_ARPFILTER=m
+ CONFIG_IP_NF_ARP_MANGLE=m
+@@ -275,28 +337,21 @@ CONFIG_IP_NF_ARP_MANGLE=m
+ #
+ # IPv6: Netfilter Configuration (EXPERIMENTAL)
+ #
+-# CONFIG_IP6_NF_QUEUE is not set
++CONFIG_IP6_NF_QUEUE=m
+ CONFIG_IP6_NF_IPTABLES=m
+-# CONFIG_IP6_NF_MATCH_LIMIT is not set
+-CONFIG_IP6_NF_MATCH_MAC=m
+ CONFIG_IP6_NF_MATCH_RT=m
+ CONFIG_IP6_NF_MATCH_OPTS=m
+ CONFIG_IP6_NF_MATCH_FRAG=m
+ CONFIG_IP6_NF_MATCH_HL=m
+-# CONFIG_IP6_NF_MATCH_MULTIPORT is not set
+-# CONFIG_IP6_NF_MATCH_OWNER is not set
+-# CONFIG_IP6_NF_MATCH_MARK is not set
++CONFIG_IP6_NF_MATCH_OWNER=m
+ CONFIG_IP6_NF_MATCH_IPV6HEADER=m
+-# CONFIG_IP6_NF_MATCH_AHESP is not set
+-# CONFIG_IP6_NF_MATCH_LENGTH is not set
+-# CONFIG_IP6_NF_MATCH_EUI64 is not set
++CONFIG_IP6_NF_MATCH_AH=m
++CONFIG_IP6_NF_MATCH_EUI64=m
+ CONFIG_IP6_NF_FILTER=m
+ CONFIG_IP6_NF_TARGET_LOG=m
+ CONFIG_IP6_NF_TARGET_REJECT=m
+-# CONFIG_IP6_NF_TARGET_NFQUEUE is not set
+ CONFIG_IP6_NF_MANGLE=m
+-# CONFIG_IP6_NF_TARGET_MARK is not set
+-# CONFIG_IP6_NF_TARGET_HL is not set
++CONFIG_IP6_NF_TARGET_HL=m
+ CONFIG_IP6_NF_RAW=m
+ 
+ #
+@@ -304,10 +359,12 @@ # DCCP Configuration (EXPERIMENTAL)
+ #
+ CONFIG_IP_DCCP=m
+ CONFIG_INET_DCCP_DIAG=m
++CONFIG_IP_DCCP_ACKVEC=y
+ 
+ #
+ # DCCP CCIDs Configuration (EXPERIMENTAL)
+ #
++CONFIG_IP_DCCP_CCID2=m
+ # CONFIG_IP_DCCP_CCID3 is not set
+ 
+ #
+@@ -319,6 +376,11 @@ #
+ # SCTP Configuration (EXPERIMENTAL)
+ #
+ # CONFIG_IP_SCTP is not set
++
++#
++# TIPC Configuration (EXPERIMENTAL)
++#
++# CONFIG_TIPC is not set
+ # CONFIG_ATM is not set
+ # CONFIG_BRIDGE is not set
+ # CONFIG_VLAN_8021Q is not set
+@@ -332,8 +394,12 @@ # CONFIG_LAPB is not set
+ # CONFIG_NET_DIVERT is not set
+ # CONFIG_ECONET is not set
+ # CONFIG_WAN_ROUTER is not set
++
++#
++# QoS and/or fair queueing
++#
+ # CONFIG_NET_SCHED is not set
+-# CONFIG_NET_CLS_ROUTE is not set
++CONFIG_NET_CLS_ROUTE=y
+ 
+ #
+ # Network testing
+@@ -343,6 +409,7 @@ # CONFIG_HAMRADIO is not set
+ # CONFIG_IRDA is not set
+ # CONFIG_BT is not set
+ # CONFIG_IEEE80211 is not set
++CONFIG_WIRELESS_EXT=y
+ 
+ #
+ # Device Drivers
+@@ -355,6 +422,7 @@ # CONFIG_STANDALONE is not set
+ # CONFIG_PREVENT_FIRMWARE_BUILD is not set
+ CONFIG_FW_LOADER=y
+ # CONFIG_DEBUG_DRIVER is not set
++# CONFIG_SYS_HYPERVISOR is not set
+ 
+ #
+ # Connector - unified userspace <-> kernelspace linker
+@@ -378,7 +446,6 @@ #
+ #
+ # Block devices
+ #
+-# CONFIG_BLK_DEV_FD is not set
+ # CONFIG_BLK_CPQ_DA is not set
+ # CONFIG_BLK_CPQ_CISS_DA is not set
+ # CONFIG_BLK_DEV_DAC960 is not set
+@@ -393,14 +460,6 @@ CONFIG_BLK_DEV_RAM_COUNT=16
+ CONFIG_BLK_DEV_RAM_SIZE=6144
+ CONFIG_BLK_DEV_INITRD=y
+ # CONFIG_CDROM_PKTCDVD is not set
+-
+-#
+-# IO Schedulers
+-#
+-CONFIG_IOSCHED_NOOP=y
+-CONFIG_IOSCHED_AS=y
+-CONFIG_IOSCHED_DEADLINE=y
+-CONFIG_IOSCHED_CFQ=y
+ # CONFIG_ATA_OVER_ETH is not set
+ 
+ #
+@@ -444,6 +503,7 @@ CONFIG_SCSI_SAS_ATTRS=m
+ #
+ # SCSI low-level drivers
+ #
++# CONFIG_ISCSI_TCP is not set
+ # CONFIG_BLK_DEV_3W_XXXX_RAID is not set
+ # CONFIG_SCSI_3W_9XXX is not set
+ # CONFIG_SCSI_ACARD is not set
+@@ -451,14 +511,12 @@ # CONFIG_SCSI_AACRAID is not set
+ # CONFIG_SCSI_AIC7XXX is not set
+ # CONFIG_SCSI_AIC7XXX_OLD is not set
+ # CONFIG_SCSI_AIC79XX is not set
+-# CONFIG_SCSI_ADVANSYS is not set
+ # CONFIG_MEGARAID_NEWGEN is not set
+ # CONFIG_MEGARAID_LEGACY is not set
+ # CONFIG_MEGARAID_SAS is not set
+ # CONFIG_SCSI_SATA is not set
+-# CONFIG_SCSI_CPQFCTS is not set
++# CONFIG_SCSI_HPTIOP is not set
+ # CONFIG_SCSI_DMX3191D is not set
+-# CONFIG_SCSI_EATA_PIO is not set
+ # CONFIG_SCSI_FUTURE_DOMAIN is not set
+ # CONFIG_SCSI_IPS is not set
+ # CONFIG_SCSI_INITIO is not set
+@@ -467,20 +525,10 @@ CONFIG_SCSI_SYM53C8XX_2=y
+ CONFIG_SCSI_SYM53C8XX_DMA_ADDRESSING_MODE=1
+ CONFIG_SCSI_SYM53C8XX_DEFAULT_TAGS=16
+ CONFIG_SCSI_SYM53C8XX_MAX_TAGS=64
+-# CONFIG_SCSI_SYM53C8XX_IOMAPPED is not set
++CONFIG_SCSI_SYM53C8XX_MMIO=y
+ # CONFIG_SCSI_IPR is not set
+-# CONFIG_SCSI_QLOGIC_ISP is not set
+-CONFIG_SCSI_QLOGIC_FC=m
+-# CONFIG_SCSI_QLOGIC_FC_FIRMWARE is not set
+ CONFIG_SCSI_QLOGIC_1280=m
+-# CONFIG_SCSI_QLOGIC_1280_1040 is not set
+-CONFIG_SCSI_QLA2XXX=y
+-# CONFIG_SCSI_QLA21XX is not set
+-# CONFIG_SCSI_QLA22XX is not set
+-CONFIG_SCSI_QLA2300=m
+-CONFIG_SCSI_QLA2322=m
+-# CONFIG_SCSI_QLA6312 is not set
+-# CONFIG_SCSI_QLA24XX is not set
++# CONFIG_SCSI_QLA_FC is not set
+ # CONFIG_SCSI_LPFC is not set
+ # CONFIG_SCSI_DC395x is not set
+ # CONFIG_SCSI_DC390T is not set
+@@ -502,8 +550,8 @@ CONFIG_MD_LINEAR=y
+ CONFIG_MD_RAID0=y
+ CONFIG_MD_RAID1=y
+ # CONFIG_MD_RAID10 is not set
+-# CONFIG_MD_RAID5 is not set
+-# CONFIG_MD_RAID6 is not set
++CONFIG_MD_RAID456=y
++# CONFIG_MD_RAID5_RESHAPE is not set
+ # CONFIG_MD_MULTIPATH is not set
+ # CONFIG_MD_FAULTY is not set
+ # CONFIG_BLK_DEV_DM is not set
+@@ -573,7 +621,6 @@ # CONFIG_WINBOND_840 is not set
+ # CONFIG_DM9102 is not set
+ # CONFIG_ULI526X is not set
+ CONFIG_PCMCIA_XIRCOM=m
+-# CONFIG_PCMCIA_XIRTULIP is not set
+ CONFIG_HP100=m
+ CONFIG_NET_PCI=y
+ CONFIG_PCNET32=m
+@@ -609,6 +656,7 @@ # CONFIG_YELLOWFIN is not set
+ # CONFIG_R8169 is not set
+ # CONFIG_SIS190 is not set
+ # CONFIG_SKGE is not set
++# CONFIG_SKY2 is not set
+ # CONFIG_SK98LIN is not set
+ # CONFIG_VIA_VELOCITY is not set
+ CONFIG_TIGON3=m
+@@ -620,6 +668,7 @@ #
+ # CONFIG_CHELSIO_T1 is not set
+ # CONFIG_IXGB is not set
+ # CONFIG_S2IO is not set
++# CONFIG_MYRI10GE is not set
+ 
+ #
+ # Token Ring devices
+@@ -630,6 +679,7 @@ #
+ # Wireless LAN (non-hamradio)
+ #
+ CONFIG_NET_RADIO=y
++# CONFIG_NET_WIRELESS_RTNETLINK is not set
+ 
+ #
+ # Obsolete Wireless cards support (pre-802.11)
+@@ -646,6 +696,8 @@ CONFIG_PCMCIA_RAYCS=m
+ #
+ # Wireless 802.11b ISA/PCI cards support
+ #
++# CONFIG_IPW2100 is not set
++# CONFIG_IPW2200 is not set
+ CONFIG_HERMES=m
+ CONFIG_PLX_HERMES=m
+ CONFIG_TMD_HERMES=m
+@@ -694,6 +746,7 @@ CONFIG_PPP_ASYNC=m
+ CONFIG_PPP_SYNC_TTY=m
+ CONFIG_PPP_DEFLATE=m
+ CONFIG_PPP_BSDCOMP=m
++# CONFIG_PPP_MPPE is not set
+ # CONFIG_PPPOE is not set
+ # CONFIG_SLIP is not set
+ # CONFIG_NET_FC is not set
+@@ -720,7 +773,10 @@ CONFIG_INPUT=y
+ #
+ # Userland interfaces
+ #
+-# CONFIG_INPUT_MOUSEDEV is not set
++CONFIG_INPUT_MOUSEDEV=y
++CONFIG_INPUT_MOUSEDEV_PSAUX=y
++CONFIG_INPUT_MOUSEDEV_SCREEN_X=1024
++CONFIG_INPUT_MOUSEDEV_SCREEN_Y=768
+ # CONFIG_INPUT_JOYDEV is not set
+ # CONFIG_INPUT_TSDEV is not set
+ # CONFIG_INPUT_EVDEV is not set
+@@ -747,6 +803,7 @@ #
+ CONFIG_VT=y
+ CONFIG_VT_CONSOLE=y
+ CONFIG_HW_CONSOLE=y
++# CONFIG_VT_HW_CONSOLE_BINDING is not set
+ # CONFIG_SERIAL_NONSTANDARD is not set
+ 
+ #
+@@ -754,8 +811,10 @@ # Serial drivers
+ #
+ CONFIG_SERIAL_8250=y
+ CONFIG_SERIAL_8250_CONSOLE=y
++CONFIG_SERIAL_8250_PCI=y
+ CONFIG_SERIAL_8250_CS=m
+ CONFIG_SERIAL_8250_NR_UARTS=17
++CONFIG_SERIAL_8250_RUNTIME_UARTS=4
+ CONFIG_SERIAL_8250_EXTENDED=y
+ CONFIG_SERIAL_8250_MANY_PORTS=y
+ CONFIG_SERIAL_8250_SHARE_IRQ=y
+@@ -765,7 +824,6 @@ # CONFIG_SERIAL_8250_RSA is not set
+ #
+ # Non-8250 serial port support
+ #
+-# CONFIG_SERIAL_MUX is not set
+ CONFIG_PDC_CONSOLE=y
+ CONFIG_SERIAL_CORE=y
+ CONFIG_SERIAL_CORE_CONSOLE=y
+@@ -782,6 +840,7 @@ #
+ # Watchdog Cards
+ #
+ # CONFIG_WATCHDOG is not set
++# CONFIG_HW_RANDOM is not set
+ CONFIG_GEN_RTC=y
+ CONFIG_GEN_RTC_X=y
+ # CONFIG_DTLK is not set
+@@ -797,6 +856,8 @@ #
+ # PCMCIA character devices
+ #
+ # CONFIG_SYNCLINK_CS is not set
++# CONFIG_CARDMAN_4000 is not set
++# CONFIG_CARDMAN_4040 is not set
+ CONFIG_RAW_DRIVER=y
+ CONFIG_MAX_RAW_DEVS=256
+ 
+@@ -804,6 +865,7 @@ #
+ # TPM devices
+ #
+ # CONFIG_TCG_TPM is not set
++# CONFIG_TELCLOCK is not set
+ 
+ #
+ # I2C support
+@@ -811,9 +873,14 @@ #
+ # CONFIG_I2C is not set
+ 
+ #
++# SPI support
++#
++# CONFIG_SPI is not set
++# CONFIG_SPI_MASTER is not set
++
++#
+ # Dallas's 1-wire bus
+ #
+-# CONFIG_W1 is not set
+ 
+ #
+ # Hardware Monitoring support
+@@ -826,13 +893,10 @@ # Misc devices
+ #
+ 
+ #
+-# Multimedia Capabilities Port drivers
+-#
+-
+-#
+ # Multimedia devices
+ #
+ # CONFIG_VIDEO_DEV is not set
++CONFIG_VIDEO_V4L2=y
+ 
+ #
+ # Digital Video Broadcasting Devices
+@@ -842,6 +906,7 @@ # CONFIG_DVB is not set
+ #
+ # Graphics support
+ #
++# CONFIG_FIRMWARE_EDID is not set
+ # CONFIG_FB is not set
+ 
+ #
+@@ -862,9 +927,14 @@ # USB support
+ #
+ CONFIG_USB_ARCH_HAS_HCD=y
+ CONFIG_USB_ARCH_HAS_OHCI=y
++CONFIG_USB_ARCH_HAS_EHCI=y
+ # CONFIG_USB is not set
+ 
+ #
++# NOTE: USB_STORAGE enables SCSI, and 'SCSI disk support'
++#
++
++#
+ # USB Gadget Support
+ #
+ # CONFIG_USB_GADGET is not set
+@@ -875,12 +945,43 @@ #
+ # CONFIG_MMC is not set
+ 
+ #
++# LED devices
++#
++# CONFIG_NEW_LEDS is not set
++
++#
++# LED drivers
++#
++
++#
++# LED Triggers
++#
++
++#
+ # InfiniBand support
+ #
+ # CONFIG_INFINIBAND is not set
+ 
+ #
+-# SN Devices
++# EDAC - error detection and reporting (RAS) (EXPERIMENTAL)
++#
++
++#
++# Real Time Clock
++#
++# CONFIG_RTC_CLASS is not set
++
++#
++# DMA Engine support
++#
++# CONFIG_DMA_ENGINE is not set
++
++#
++# DMA Clients
++#
++
++#
++# DMA Devices
+ #
+ 
+ #
+@@ -901,14 +1002,16 @@ # CONFIG_JFS_DEBUG is not set
+ # CONFIG_JFS_STATISTICS is not set
+ CONFIG_FS_POSIX_ACL=y
+ CONFIG_XFS_FS=m
+-CONFIG_XFS_EXPORT=y
+ # CONFIG_XFS_QUOTA is not set
+ # CONFIG_XFS_SECURITY is not set
+ # CONFIG_XFS_POSIX_ACL is not set
+ # CONFIG_XFS_RT is not set
++CONFIG_OCFS2_FS=m
++CONFIG_OCFS2_DEBUG_MASKLOG=y
+ # CONFIG_MINIX_FS is not set
+ # CONFIG_ROMFS_FS is not set
+ CONFIG_INOTIFY=y
++CONFIG_INOTIFY_USER=y
+ # CONFIG_QUOTA is not set
+ CONFIG_DNOTIFY=y
+ # CONFIG_AUTOFS_FS is not set
+@@ -941,10 +1044,9 @@ CONFIG_PROC_FS=y
+ CONFIG_PROC_KCORE=y
+ CONFIG_SYSFS=y
+ CONFIG_TMPFS=y
+-# CONFIG_HUGETLBFS is not set
+ # CONFIG_HUGETLB_PAGE is not set
+ CONFIG_RAMFS=y
+-# CONFIG_RELAYFS_FS is not set
++CONFIG_CONFIGFS_FS=m
+ 
+ #
+ # Miscellaneous filesystems
+@@ -963,6 +1065,7 @@ # CONFIG_QNX4FS_FS is not set
+ # CONFIG_SYSV_FS is not set
+ CONFIG_UFS_FS=m
+ # CONFIG_UFS_FS_WRITE is not set
++# CONFIG_UFS_DEBUG is not set
+ 
+ #
+ # Network File Systems
+@@ -990,7 +1093,9 @@ CONFIG_SMB_NLS_DEFAULT=y
+ CONFIG_SMB_NLS_REMOTE="cp437"
+ CONFIG_CIFS=m
+ # CONFIG_CIFS_STATS is not set
++# CONFIG_CIFS_WEAK_PW_HASH is not set
+ # CONFIG_CIFS_XATTR is not set
++# CONFIG_CIFS_DEBUG2 is not set
+ # CONFIG_CIFS_EXPERIMENTAL is not set
+ # CONFIG_NCP_FS is not set
+ # CONFIG_CODA_FS is not set
+@@ -1057,19 +1162,28 @@ #
+ # Kernel hacking
+ #
+ # CONFIG_PRINTK_TIME is not set
+-CONFIG_DEBUG_KERNEL=y
+ CONFIG_MAGIC_SYSRQ=y
++# CONFIG_UNUSED_SYMBOLS is not set
++CONFIG_DEBUG_KERNEL=y
+ CONFIG_LOG_BUF_SHIFT=16
+-CONFIG_DETECT_SOFTLOCKUP=y
++# CONFIG_DETECT_SOFTLOCKUP is not set
+ # CONFIG_SCHEDSTATS is not set
+ # CONFIG_DEBUG_SLAB is not set
++# CONFIG_DEBUG_RT_MUTEXES is not set
++# CONFIG_RT_MUTEX_TESTER is not set
+ # CONFIG_DEBUG_SPINLOCK is not set
++# CONFIG_DEBUG_MUTEXES is not set
++# CONFIG_DEBUG_RWSEMS is not set
+ # CONFIG_DEBUG_SPINLOCK_SLEEP is not set
++# CONFIG_DEBUG_LOCKING_API_SELFTESTS is not set
+ # CONFIG_DEBUG_KOBJECT is not set
+ # CONFIG_DEBUG_INFO is not set
+-# CONFIG_DEBUG_IOREMAP is not set
+ # CONFIG_DEBUG_FS is not set
++# CONFIG_DEBUG_VM is not set
++CONFIG_FORCED_INLINING=y
++# CONFIG_RCU_TORTURE_TEST is not set
+ # CONFIG_DEBUG_RWLOCK is not set
++# CONFIG_DEBUG_RODATA is not set
+ 
+ #
+ # Security options
+@@ -1096,7 +1210,7 @@ CONFIG_CRYPTO_BLOWFISH=m
+ # CONFIG_CRYPTO_TWOFISH is not set
+ # CONFIG_CRYPTO_SERPENT is not set
+ # CONFIG_CRYPTO_AES is not set
+-# CONFIG_CRYPTO_CAST5 is not set
++CONFIG_CRYPTO_CAST5=m
+ # CONFIG_CRYPTO_CAST6 is not set
+ # CONFIG_CRYPTO_TEA is not set
+ # CONFIG_CRYPTO_ARC4 is not set
+@@ -1120,3 +1234,8 @@ CONFIG_CRC32=y
+ CONFIG_LIBCRC32C=m
+ CONFIG_ZLIB_INFLATE=m
+ CONFIG_ZLIB_DEFLATE=m
++CONFIG_TEXTSEARCH=y
++CONFIG_TEXTSEARCH_KMP=m
++CONFIG_TEXTSEARCH_BM=m
++CONFIG_TEXTSEARCH_FSM=m
++CONFIG_PLIST=y
+diff --git a/arch/parisc/configs/b180_defconfig b/arch/parisc/configs/b180_defconfig
+index 3509361..0a295f7 100644
+--- a/arch/parisc/configs/b180_defconfig
++++ b/arch/parisc/configs/b180_defconfig
+@@ -1,21 +1,24 @@
+ #
+ # Automatically generated make config: don't edit
+-# Linux kernel version: 2.6.16-rc1-pa0
+-# Tue Jan 17 08:21:01 2006
++# Linux kernel version: 2.6.18-rc1-pa1
++# Thu Jul 13 10:21:41 2006
+ #
+ CONFIG_PARISC=y
+ CONFIG_MMU=y
+ CONFIG_STACK_GROWSUP=y
+ CONFIG_RWSEM_GENERIC_SPINLOCK=y
++CONFIG_GENERIC_FIND_NEXT_BIT=y
++CONFIG_GENERIC_HWEIGHT=y
+ CONFIG_GENERIC_CALIBRATE_DELAY=y
+ CONFIG_GENERIC_HARDIRQS=y
+ CONFIG_GENERIC_IRQ_PROBE=y
++CONFIG_IRQ_PER_CPU=y
++CONFIG_DEFCONFIG_LIST="/lib/modules/$UNAME_RELEASE/.config"
+ 
+ #
+ # Code maturity level options
+ #
+ # CONFIG_EXPERIMENTAL is not set
+-CONFIG_CLEAN_COMPILE=y
+ CONFIG_BROKEN_ON_SMP=y
+ CONFIG_INIT_ENV_ARG_LIMIT=32
+ 
+@@ -23,7 +26,7 @@ #
+ # General setup
+ #
+ CONFIG_LOCALVERSION=""
+-# CONFIG_LOCALVERSION_AUTO is not set
++CONFIG_LOCALVERSION_AUTO=y
+ CONFIG_SWAP=y
+ CONFIG_SYSVIPC=y
+ # CONFIG_BSD_PROCESS_ACCT is not set
+@@ -31,6 +34,7 @@ CONFIG_SYSCTL=y
+ # CONFIG_AUDIT is not set
+ CONFIG_IKCONFIG=y
+ CONFIG_IKCONFIG_PROC=y
++CONFIG_RELAY=y
+ CONFIG_INITRAMFS_SOURCE=""
+ # CONFIG_EMBEDDED is not set
+ CONFIG_KALLSYMS=y
+@@ -41,14 +45,12 @@ CONFIG_PRINTK=y
+ CONFIG_BUG=y
+ CONFIG_ELF_CORE=y
+ CONFIG_BASE_FULL=y
++CONFIG_RT_MUTEXES=y
+ CONFIG_FUTEX=y
+ CONFIG_EPOLL=y
+ CONFIG_SHMEM=y
+-CONFIG_CC_ALIGN_FUNCTIONS=0
+-CONFIG_CC_ALIGN_LABELS=0
+-CONFIG_CC_ALIGN_LOOPS=0
+-CONFIG_CC_ALIGN_JUMPS=0
+ CONFIG_SLAB=y
++CONFIG_VM_EVENT_COUNTERS=y
+ # CONFIG_TINY_SHMEM is not set
+ CONFIG_BASE_SMALL=0
+ # CONFIG_SLOB is not set
+@@ -58,7 +60,6 @@ # Loadable module support
+ #
+ CONFIG_MODULES=y
+ # CONFIG_MODULE_UNLOAD is not set
+-CONFIG_OBSOLETE_MODPARM=y
+ CONFIG_MODVERSIONS=y
+ # CONFIG_MODULE_SRCVERSION_ALL is not set
+ # CONFIG_KMOD is not set
+@@ -66,6 +67,7 @@ # CONFIG_KMOD is not set
+ #
+ # Block layer
+ #
++# CONFIG_BLK_DEV_IO_TRACE is not set
+ 
+ #
+ # IO Schedulers
+@@ -89,7 +91,14 @@ # CONFIG_PA7200 is not set
+ # CONFIG_PA7300LC is not set
+ # CONFIG_PA8X00 is not set
+ CONFIG_PA11=y
++CONFIG_PARISC_PAGE_SIZE_4KB=y
++# CONFIG_PARISC_PAGE_SIZE_16KB is not set
++# CONFIG_PARISC_PAGE_SIZE_64KB is not set
+ # CONFIG_SMP is not set
++CONFIG_ARCH_FLATMEM_ENABLE=y
++CONFIG_PREEMPT_NONE=y
++# CONFIG_PREEMPT_VOLUNTARY is not set
++# CONFIG_PREEMPT is not set
+ # CONFIG_HZ_100 is not set
+ CONFIG_HZ_250=y
+ # CONFIG_HZ_1000 is not set
+@@ -98,7 +107,7 @@ CONFIG_FLATMEM=y
+ CONFIG_FLAT_NODE_MEM_MAP=y
+ # CONFIG_SPARSEMEM_STATIC is not set
+ CONFIG_SPLIT_PTLOCK_CPUS=4096
+-# CONFIG_PREEMPT is not set
++# CONFIG_RESOURCES_64BIT is not set
+ # CONFIG_HPUX is not set
+ 
+ #
+@@ -113,7 +122,6 @@ CONFIG_EISA=y
+ CONFIG_EISA_NAMES=y
+ CONFIG_ISA=y
+ CONFIG_PCI=y
+-CONFIG_PCI_LEGACY_PROC=y
+ # CONFIG_PCI_DEBUG is not set
+ CONFIG_GSC_DINO=y
+ # CONFIG_PCI_LBA is not set
+@@ -132,6 +140,7 @@ # PA-RISC specific drivers
+ #
+ CONFIG_CHASSIS_LCD_LED=y
+ # CONFIG_PDC_CHASSIS is not set
++CONFIG_PDC_CHASSIS_WARN=y
+ CONFIG_PDC_STABLE=y
+ 
+ #
+@@ -148,6 +157,7 @@ CONFIG_NET=y
+ #
+ # Networking options
+ #
++# CONFIG_NETDEBUG is not set
+ CONFIG_PACKET=y
+ CONFIG_PACKET_MMAP=y
+ CONFIG_UNIX=y
+@@ -167,18 +177,26 @@ # CONFIG_SYN_COOKIES is not set
+ # CONFIG_INET_AH is not set
+ # CONFIG_INET_ESP is not set
+ # CONFIG_INET_IPCOMP is not set
++# CONFIG_INET_XFRM_TUNNEL is not set
+ # CONFIG_INET_TUNNEL is not set
++# CONFIG_INET_XFRM_MODE_TRANSPORT is not set
++# CONFIG_INET_XFRM_MODE_TUNNEL is not set
+ CONFIG_INET_DIAG=y
+ CONFIG_INET_TCP_DIAG=y
+ # CONFIG_TCP_CONG_ADVANCED is not set
+ CONFIG_TCP_CONG_BIC=y
+ CONFIG_IPV6=y
+ # CONFIG_IPV6_PRIVACY is not set
++# CONFIG_IPV6_ROUTER_PREF is not set
+ # CONFIG_INET6_AH is not set
+ # CONFIG_INET6_ESP is not set
+ # CONFIG_INET6_IPCOMP is not set
++# CONFIG_INET6_XFRM_TUNNEL is not set
+ # CONFIG_INET6_TUNNEL is not set
++# CONFIG_INET6_XFRM_MODE_TRANSPORT is not set
++# CONFIG_INET6_XFRM_MODE_TUNNEL is not set
+ # CONFIG_IPV6_TUNNEL is not set
++# CONFIG_NETWORK_SECMARK is not set
+ # CONFIG_NETFILTER is not set
+ # CONFIG_BRIDGE is not set
+ # CONFIG_VLAN_8021Q is not set
+@@ -200,6 +218,7 @@ # CONFIG_HAMRADIO is not set
+ # CONFIG_IRDA is not set
+ # CONFIG_BT is not set
+ # CONFIG_IEEE80211 is not set
++CONFIG_WIRELESS_EXT=y
+ 
+ #
+ # Device Drivers
+@@ -212,6 +231,7 @@ CONFIG_STANDALONE=y
+ # CONFIG_PREVENT_FIRMWARE_BUILD is not set
+ # CONFIG_FW_LOADER is not set
+ # CONFIG_DEBUG_DRIVER is not set
++# CONFIG_SYS_HYPERVISOR is not set
+ 
+ #
+ # Connector - unified userspace <-> kernelspace linker
+@@ -231,6 +251,7 @@ CONFIG_PARPORT_PC=y
+ # CONFIG_PARPORT_SERIAL is not set
+ CONFIG_PARPORT_NOT_PC=y
+ CONFIG_PARPORT_GSC=y
++# CONFIG_PARPORT_AX88796 is not set
+ # CONFIG_PARPORT_1284 is not set
+ 
+ #
+@@ -251,10 +272,9 @@ CONFIG_BLK_DEV_CRYPTOLOOP=y
+ # CONFIG_BLK_DEV_NBD is not set
+ # CONFIG_BLK_DEV_SX8 is not set
+ # CONFIG_BLK_DEV_RAM is not set
+-CONFIG_BLK_DEV_RAM_COUNT=16
++# CONFIG_BLK_DEV_INITRD is not set
+ CONFIG_CDROM_PKTCDVD=m
+ CONFIG_CDROM_PKTCDVD_BUFFERS=8
+-# CONFIG_CDROM_PKTCDVD_WCACHE is not set
+ CONFIG_ATA_OVER_ETH=y
+ 
+ #
+@@ -314,6 +334,7 @@ # CONFIG_MEGARAID_NEWGEN is not set
+ # CONFIG_MEGARAID_LEGACY is not set
+ # CONFIG_MEGARAID_SAS is not set
+ # CONFIG_SCSI_SATA is not set
++# CONFIG_SCSI_HPTIOP is not set
+ # CONFIG_SCSI_DMX3191D is not set
+ # CONFIG_SCSI_DTC3280 is not set
+ # CONFIG_SCSI_FUTURE_DOMAIN is not set
+@@ -341,7 +362,6 @@ # CONFIG_SCSI_NCR53C8XX_PROFILE is not s
+ # CONFIG_SCSI_PAS16 is not set
+ # CONFIG_SCSI_PSI240I is not set
+ # CONFIG_SCSI_QLOGIC_FAS is not set
+-# CONFIG_SCSI_QLOGIC_FC is not set
+ # CONFIG_SCSI_QLOGIC_1280 is not set
+ # CONFIG_SCSI_QLA_FC is not set
+ # CONFIG_SCSI_LPFC is not set
+@@ -365,8 +385,7 @@ CONFIG_BLK_DEV_MD=y
+ CONFIG_MD_LINEAR=y
+ CONFIG_MD_RAID0=y
+ CONFIG_MD_RAID1=y
+-CONFIG_MD_RAID5=y
+-CONFIG_MD_RAID6=y
++CONFIG_MD_RAID456=y
+ # CONFIG_MD_MULTIPATH is not set
+ # CONFIG_MD_FAULTY is not set
+ # CONFIG_BLK_DEV_DM is not set
+@@ -448,6 +467,7 @@ # CONFIG_NS83820 is not set
+ # CONFIG_HAMACHI is not set
+ # CONFIG_R8169 is not set
+ # CONFIG_SIS190 is not set
++# CONFIG_SKGE is not set
+ # CONFIG_SK98LIN is not set
+ # CONFIG_TIGON3 is not set
+ # CONFIG_BNX2 is not set
+@@ -458,6 +478,7 @@ #
+ # CONFIG_CHELSIO_T1 is not set
+ # CONFIG_IXGB is not set
+ # CONFIG_S2IO is not set
++# CONFIG_MYRI10GE is not set
+ 
+ #
+ # Token Ring devices
+@@ -468,6 +489,7 @@ #
+ # Wireless LAN (non-hamradio)
+ #
+ CONFIG_NET_RADIO=y
++# CONFIG_NET_WIRELESS_RTNETLINK is not set
+ 
+ #
+ # Obsolete Wireless cards support (pre-802.11)
+@@ -479,6 +501,8 @@ # CONFIG_WAVELAN is not set
+ #
+ # Wireless 802.11b ISA/PCI cards support
+ #
++# CONFIG_IPW2100 is not set
++# CONFIG_IPW2200 is not set
+ # CONFIG_HERMES is not set
+ # CONFIG_ATMEL is not set
+ 
+@@ -579,6 +603,7 @@ #
+ CONFIG_VT=y
+ CONFIG_VT_CONSOLE=y
+ CONFIG_HW_CONSOLE=y
++# CONFIG_VT_HW_CONSOLE_BINDING is not set
+ # CONFIG_SERIAL_NONSTANDARD is not set
+ 
+ #
+@@ -586,6 +611,8 @@ # Serial drivers
+ #
+ CONFIG_SERIAL_8250=y
+ CONFIG_SERIAL_8250_CONSOLE=y
++CONFIG_SERIAL_8250_GSC=y
++CONFIG_SERIAL_8250_PCI=y
+ CONFIG_SERIAL_8250_NR_UARTS=13
+ CONFIG_SERIAL_8250_RUNTIME_UARTS=4
+ CONFIG_SERIAL_8250_EXTENDED=y
+@@ -605,6 +632,7 @@ CONFIG_SERIAL_MUX=y
+ CONFIG_SERIAL_MUX_CONSOLE=y
+ CONFIG_SERIAL_CORE=y
+ CONFIG_SERIAL_CORE_CONSOLE=y
++# CONFIG_SERIAL_JSM is not set
+ CONFIG_UNIX98_PTYS=y
+ CONFIG_LEGACY_PTYS=y
+ CONFIG_LEGACY_PTY_COUNT=256
+@@ -622,6 +650,7 @@ #
+ # Watchdog Cards
+ #
+ # CONFIG_WATCHDOG is not set
++# CONFIG_HW_RANDOM is not set
+ CONFIG_GEN_RTC=y
+ # CONFIG_GEN_RTC_X is not set
+ # CONFIG_DTLK is not set
+@@ -652,7 +681,6 @@ # CONFIG_SPI_MASTER is not set
+ #
+ # Dallas's 1-wire bus
+ #
+-# CONFIG_W1 is not set
+ 
+ #
+ # Hardware Monitoring support
+@@ -665,13 +693,10 @@ # Misc devices
+ #
+ 
+ #
+-# Multimedia Capabilities Port drivers
+-#
+-
+-#
+ # Multimedia devices
+ #
+ # CONFIG_VIDEO_DEV is not set
++CONFIG_VIDEO_V4L2=y
+ 
+ #
+ # Digital Video Broadcasting Devices
+@@ -681,11 +706,13 @@ # CONFIG_DVB is not set
+ #
+ # Graphics support
+ #
++# CONFIG_FIRMWARE_EDID is not set
+ CONFIG_FB=y
+ CONFIG_FB_CFB_FILLRECT=y
+ CONFIG_FB_CFB_COPYAREA=y
+ CONFIG_FB_CFB_IMAGEBLIT=y
+ # CONFIG_FB_MACMODES is not set
++# CONFIG_FB_BACKLIGHT is not set
+ # CONFIG_FB_MODE_HELPERS is not set
+ # CONFIG_FB_TILEBLITTING is not set
+ # CONFIG_FB_CIRRUS is not set
+@@ -698,7 +725,6 @@ # CONFIG_FB_S1D13XXX is not set
+ # CONFIG_FB_NVIDIA is not set
+ # CONFIG_FB_RIVA is not set
+ # CONFIG_FB_MATROX is not set
+-# CONFIG_FB_RADEON_OLD is not set
+ # CONFIG_FB_RADEON is not set
+ # CONFIG_FB_ATY128 is not set
+ # CONFIG_FB_ATY is not set
+@@ -749,8 +775,11 @@ # CONFIG_SND_SEQ_DUMMY is not set
+ CONFIG_SND_OSSEMUL=y
+ CONFIG_SND_MIXER_OSS=y
+ CONFIG_SND_PCM_OSS=y
++CONFIG_SND_PCM_OSS_PLUGINS=y
+ CONFIG_SND_SEQUENCER_OSS=y
++# CONFIG_SND_DYNAMIC_MINORS is not set
+ CONFIG_SND_SUPPORT_OLD_API=y
++CONFIG_SND_VERBOSE_PROCFS=y
+ # CONFIG_SND_VERBOSE_PRINTK is not set
+ # CONFIG_SND_DEBUG is not set
+ 
+@@ -767,6 +796,7 @@ #
+ # PCI devices
+ #
+ # CONFIG_SND_AD1889 is not set
++# CONFIG_SND_ALS300 is not set
+ # CONFIG_SND_ALI5451 is not set
+ # CONFIG_SND_ATIIXP is not set
+ # CONFIG_SND_ATIIXP_MODEM is not set
+@@ -791,6 +821,7 @@ # CONFIG_SND_HDSPM is not set
+ # CONFIG_SND_ICE1712 is not set
+ # CONFIG_SND_ICE1724 is not set
+ # CONFIG_SND_INTEL8X0 is not set
++# CONFIG_SND_INTEL8X0M is not set
+ # CONFIG_SND_KORG1212 is not set
+ # CONFIG_SND_MAESTRO3 is not set
+ # CONFIG_SND_MIXART is not set
+@@ -821,6 +852,7 @@ # USB support
+ #
+ CONFIG_USB_ARCH_HAS_HCD=y
+ CONFIG_USB_ARCH_HAS_OHCI=y
++CONFIG_USB_ARCH_HAS_EHCI=y
+ # CONFIG_USB is not set
+ 
+ #
+@@ -838,12 +870,42 @@ #
+ # CONFIG_MMC is not set
+ 
+ #
++# LED devices
++#
++# CONFIG_NEW_LEDS is not set
++
++#
++# LED drivers
++#
++
++#
++# LED Triggers
++#
++
++#
+ # InfiniBand support
+ #
+ # CONFIG_INFINIBAND is not set
+ 
+ #
+-# SN Devices
++# EDAC - error detection and reporting (RAS) (EXPERIMENTAL)
++#
++
++#
++# Real Time Clock
++#
++
++#
++# DMA Engine support
++#
++# CONFIG_DMA_ENGINE is not set
++
++#
++# DMA Clients
++#
++
++#
++# DMA Devices
+ #
+ 
+ #
+@@ -863,6 +925,7 @@ # CONFIG_XFS_FS is not set
+ # CONFIG_MINIX_FS is not set
+ # CONFIG_ROMFS_FS is not set
+ CONFIG_INOTIFY=y
++CONFIG_INOTIFY_USER=y
+ # CONFIG_QUOTA is not set
+ CONFIG_DNOTIFY=y
+ # CONFIG_AUTOFS_FS is not set
+@@ -893,7 +956,6 @@ CONFIG_SYSFS=y
+ CONFIG_TMPFS=y
+ # CONFIG_HUGETLB_PAGE is not set
+ CONFIG_RAMFS=y
+-# CONFIG_RELAYFS_FS is not set
+ 
+ #
+ # Miscellaneous filesystems
+@@ -925,6 +987,7 @@ CONFIG_SUNRPC=y
+ CONFIG_SMB_FS=y
+ # CONFIG_SMB_NLS_DEFAULT is not set
+ # CONFIG_CIFS is not set
++# CONFIG_CIFS_DEBUG2 is not set
+ # CONFIG_NCP_FS is not set
+ # CONFIG_CODA_FS is not set
+ 
+@@ -983,17 +1046,21 @@ # Kernel hacking
+ #
+ # CONFIG_PRINTK_TIME is not set
+ CONFIG_MAGIC_SYSRQ=y
++# CONFIG_UNUSED_SYMBOLS is not set
+ CONFIG_DEBUG_KERNEL=y
+ CONFIG_LOG_BUF_SHIFT=16
+ CONFIG_DETECT_SOFTLOCKUP=y
+ # CONFIG_SCHEDSTATS is not set
+ # CONFIG_DEBUG_SLAB is not set
+-# CONFIG_DEBUG_MUTEXES is not set
++# CONFIG_DEBUG_RT_MUTEXES is not set
++# CONFIG_RT_MUTEX_TESTER is not set
+ # CONFIG_DEBUG_SPINLOCK is not set
++# CONFIG_DEBUG_MUTEXES is not set
++# CONFIG_DEBUG_RWSEMS is not set
+ # CONFIG_DEBUG_SPINLOCK_SLEEP is not set
++# CONFIG_DEBUG_LOCKING_API_SELFTESTS is not set
+ # CONFIG_DEBUG_KOBJECT is not set
+ # CONFIG_DEBUG_INFO is not set
+-# CONFIG_DEBUG_IOREMAP is not set
+ # CONFIG_DEBUG_FS is not set
+ # CONFIG_DEBUG_VM is not set
+ CONFIG_FORCED_INLINING=y
+@@ -1008,7 +1075,6 @@ CONFIG_SECURITY=y
+ # CONFIG_SECURITY_NETWORK is not set
+ CONFIG_SECURITY_CAPABILITIES=y
+ # CONFIG_SECURITY_SECLVL is not set
+-# CONFIG_SECURITY_SELINUX is not set
+ 
+ #
+ # Cryptographic options
+@@ -1050,3 +1116,4 @@ # CONFIG_CRC_CCITT is not set
+ # CONFIG_CRC16 is not set
+ CONFIG_CRC32=y
+ # CONFIG_LIBCRC32C is not set
++CONFIG_PLIST=y
+diff --git a/arch/parisc/configs/c3000_defconfig b/arch/parisc/configs/c3000_defconfig
+index 782906b..035a04b 100644
+--- a/arch/parisc/configs/c3000_defconfig
++++ b/arch/parisc/configs/c3000_defconfig
+@@ -1,15 +1,19 @@
+ #
+ # Automatically generated make config: don't edit
+-# Linux kernel version: 2.6.16-pa6
+-# Sun Mar 26 20:03:29 2006
++# Linux kernel version: 2.6.18-rc1-pa1
++# Thu Jul 13 10:18:04 2006
+ #
+ CONFIG_PARISC=y
+ CONFIG_MMU=y
+ CONFIG_STACK_GROWSUP=y
+ CONFIG_RWSEM_GENERIC_SPINLOCK=y
++CONFIG_GENERIC_FIND_NEXT_BIT=y
++CONFIG_GENERIC_HWEIGHT=y
+ CONFIG_GENERIC_CALIBRATE_DELAY=y
+ CONFIG_GENERIC_HARDIRQS=y
+ CONFIG_GENERIC_IRQ_PROBE=y
++CONFIG_IRQ_PER_CPU=y
++CONFIG_DEFCONFIG_LIST="/lib/modules/$UNAME_RELEASE/.config"
+ 
+ #
+ # Code maturity level options
+@@ -22,7 +26,7 @@ #
+ # General setup
+ #
+ CONFIG_LOCALVERSION=""
+-# CONFIG_LOCALVERSION_AUTO is not set
++CONFIG_LOCALVERSION_AUTO=y
+ CONFIG_SWAP=y
+ CONFIG_SYSVIPC=y
+ # CONFIG_POSIX_MQUEUE is not set
+@@ -31,6 +35,7 @@ CONFIG_SYSCTL=y
+ # CONFIG_AUDIT is not set
+ CONFIG_IKCONFIG=y
+ CONFIG_IKCONFIG_PROC=y
++CONFIG_RELAY=y
+ CONFIG_INITRAMFS_SOURCE=""
+ # CONFIG_CC_OPTIMIZE_FOR_SIZE is not set
+ CONFIG_EMBEDDED=y
+@@ -42,14 +47,12 @@ CONFIG_PRINTK=y
+ CONFIG_BUG=y
+ CONFIG_ELF_CORE=y
+ CONFIG_BASE_FULL=y
++CONFIG_RT_MUTEXES=y
+ CONFIG_FUTEX=y
+ CONFIG_EPOLL=y
+ CONFIG_SHMEM=y
+-CONFIG_CC_ALIGN_FUNCTIONS=0
+-CONFIG_CC_ALIGN_LABELS=0
+-CONFIG_CC_ALIGN_LOOPS=0
+-CONFIG_CC_ALIGN_JUMPS=0
+ CONFIG_SLAB=y
++CONFIG_VM_EVENT_COUNTERS=y
+ # CONFIG_TINY_SHMEM is not set
+ CONFIG_BASE_SMALL=0
+ # CONFIG_SLOB is not set
+@@ -60,7 +63,6 @@ #
+ CONFIG_MODULES=y
+ CONFIG_MODULE_UNLOAD=y
+ CONFIG_MODULE_FORCE_UNLOAD=y
+-CONFIG_OBSOLETE_MODPARM=y
+ # CONFIG_MODVERSIONS is not set
+ # CONFIG_MODULE_SRCVERSION_ALL is not set
+ CONFIG_KMOD=y
+@@ -68,6 +70,7 @@ CONFIG_KMOD=y
+ #
+ # Block layer
+ #
++# CONFIG_BLK_DEV_IO_TRACE is not set
+ 
+ #
+ # IO Schedulers
+@@ -93,6 +96,9 @@ CONFIG_PA8X00=y
+ CONFIG_PA20=y
+ CONFIG_PREFETCH=y
+ # CONFIG_64BIT is not set
++CONFIG_PARISC_PAGE_SIZE_4KB=y
++# CONFIG_PARISC_PAGE_SIZE_16KB is not set
++# CONFIG_PARISC_PAGE_SIZE_64KB is not set
+ # CONFIG_SMP is not set
+ CONFIG_ARCH_FLATMEM_ENABLE=y
+ # CONFIG_PREEMPT_NONE is not set
+@@ -110,6 +116,7 @@ CONFIG_FLATMEM=y
+ CONFIG_FLAT_NODE_MEM_MAP=y
+ # CONFIG_SPARSEMEM_STATIC is not set
+ CONFIG_SPLIT_PTLOCK_CPUS=4
++# CONFIG_RESOURCES_64BIT is not set
+ # CONFIG_HPUX is not set
+ 
+ #
+@@ -117,7 +124,6 @@ # Bus options (PCI, PCMCIA, EISA, GSC, I
+ #
+ # CONFIG_GSC is not set
+ CONFIG_PCI=y
+-CONFIG_PCI_LEGACY_PROC=y
+ # CONFIG_PCI_DEBUG is not set
+ CONFIG_PCI_LBA=y
+ CONFIG_IOSAPIC=y
+@@ -139,6 +145,7 @@ #
+ CONFIG_SUPERIO=y
+ CONFIG_CHASSIS_LCD_LED=y
+ # CONFIG_PDC_CHASSIS is not set
++CONFIG_PDC_CHASSIS_WARN=y
+ CONFIG_PDC_STABLE=y
+ 
+ #
+@@ -178,7 +185,10 @@ # CONFIG_SYN_COOKIES is not set
+ # CONFIG_INET_AH is not set
+ # CONFIG_INET_ESP is not set
+ # CONFIG_INET_IPCOMP is not set
++# CONFIG_INET_XFRM_TUNNEL is not set
+ # CONFIG_INET_TUNNEL is not set
++# CONFIG_INET_XFRM_MODE_TRANSPORT is not set
++# CONFIG_INET_XFRM_MODE_TUNNEL is not set
+ # CONFIG_INET_DIAG is not set
+ # CONFIG_TCP_CONG_ADVANCED is not set
+ CONFIG_TCP_CONG_BIC=y
+@@ -189,11 +199,16 @@ #
+ # CONFIG_IP_VS is not set
+ CONFIG_IPV6=m
+ # CONFIG_IPV6_PRIVACY is not set
++# CONFIG_IPV6_ROUTER_PREF is not set
+ # CONFIG_INET6_AH is not set
+ # CONFIG_INET6_ESP is not set
+ CONFIG_INET6_IPCOMP=m
++CONFIG_INET6_XFRM_TUNNEL=m
+ CONFIG_INET6_TUNNEL=m
++CONFIG_INET6_XFRM_MODE_TRANSPORT=m
++CONFIG_INET6_XFRM_MODE_TUNNEL=m
+ CONFIG_IPV6_TUNNEL=m
++# CONFIG_NETWORK_SECMARK is not set
+ CONFIG_NETFILTER=y
+ CONFIG_NETFILTER_DEBUG=y
+ 
+@@ -217,6 +232,8 @@ # CONFIG_IP_NF_NETBIOS_NS is not set
+ CONFIG_IP_NF_TFTP=m
+ CONFIG_IP_NF_AMANDA=m
+ # CONFIG_IP_NF_PPTP is not set
++# CONFIG_IP_NF_H323 is not set
++CONFIG_IP_NF_SIP=m
+ CONFIG_IP_NF_QUEUE=m
+ 
+ #
+@@ -276,6 +293,7 @@ # CONFIG_STANDALONE is not set
+ # CONFIG_PREVENT_FIRMWARE_BUILD is not set
+ CONFIG_FW_LOADER=y
+ # CONFIG_DEBUG_DRIVER is not set
++# CONFIG_SYS_HYPERVISOR is not set
+ 
+ #
+ # Connector - unified userspace <-> kernelspace linker
+@@ -310,7 +328,7 @@ # CONFIG_BLK_DEV_NBD is not set
+ # CONFIG_BLK_DEV_SX8 is not set
+ # CONFIG_BLK_DEV_UB is not set
+ # CONFIG_BLK_DEV_RAM is not set
+-CONFIG_BLK_DEV_RAM_COUNT=16
++CONFIG_BLK_DEV_INITRD=y
+ # CONFIG_CDROM_PKTCDVD is not set
+ # CONFIG_ATA_OVER_ETH is not set
+ 
+@@ -426,6 +444,7 @@ CONFIG_SCSI_ATA_PIIX=m
+ # CONFIG_SCSI_SATA_MV is not set
+ # CONFIG_SCSI_SATA_NV is not set
+ # CONFIG_SCSI_PDC_ADMA is not set
++# CONFIG_SCSI_HPTIOP is not set
+ # CONFIG_SCSI_SATA_QSTOR is not set
+ CONFIG_SCSI_SATA_PROMISE=m
+ # CONFIG_SCSI_SATA_SX4 is not set
+@@ -447,7 +466,6 @@ CONFIG_SCSI_SYM53C8XX_DEFAULT_TAGS=16
+ CONFIG_SCSI_SYM53C8XX_MAX_TAGS=64
+ CONFIG_SCSI_SYM53C8XX_MMIO=y
+ # CONFIG_SCSI_IPR is not set
+-# CONFIG_SCSI_QLOGIC_FC is not set
+ # CONFIG_SCSI_QLOGIC_1280 is not set
+ # CONFIG_SCSI_QLA_FC is not set
+ # CONFIG_SCSI_LPFC is not set
+@@ -465,8 +483,7 @@ CONFIG_MD_LINEAR=y
+ CONFIG_MD_RAID0=y
+ CONFIG_MD_RAID1=y
+ # CONFIG_MD_RAID10 is not set
+-# CONFIG_MD_RAID5 is not set
+-# CONFIG_MD_RAID6 is not set
++# CONFIG_MD_RAID456 is not set
+ # CONFIG_MD_MULTIPATH is not set
+ # CONFIG_MD_FAULTY is not set
+ CONFIG_BLK_DEV_DM=m
+@@ -587,6 +604,7 @@ #
+ # CONFIG_CHELSIO_T1 is not set
+ # CONFIG_IXGB is not set
+ # CONFIG_S2IO is not set
++# CONFIG_MYRI10GE is not set
+ 
+ #
+ # Token Ring devices
+@@ -680,6 +698,7 @@ #
+ CONFIG_VT=y
+ CONFIG_VT_CONSOLE=y
+ CONFIG_HW_CONSOLE=y
++# CONFIG_VT_HW_CONSOLE_BINDING is not set
+ # CONFIG_SERIAL_NONSTANDARD is not set
+ 
+ #
+@@ -687,6 +706,7 @@ # Serial drivers
+ #
+ CONFIG_SERIAL_8250=y
+ CONFIG_SERIAL_8250_CONSOLE=y
++CONFIG_SERIAL_8250_PCI=y
+ CONFIG_SERIAL_8250_NR_UARTS=13
+ CONFIG_SERIAL_8250_RUNTIME_UARTS=4
+ CONFIG_SERIAL_8250_EXTENDED=y
+@@ -715,6 +735,7 @@ #
+ # Watchdog Cards
+ #
+ # CONFIG_WATCHDOG is not set
++# CONFIG_HW_RANDOM is not set
+ CONFIG_GEN_RTC=y
+ CONFIG_GEN_RTC_X=y
+ # CONFIG_DTLK is not set
+@@ -748,7 +769,6 @@ # CONFIG_SPI_MASTER is not set
+ #
+ # Dallas's 1-wire bus
+ #
+-# CONFIG_W1 is not set
+ 
+ #
+ # Hardware Monitoring support
+@@ -761,27 +781,27 @@ # Misc devices
+ #
+ 
+ #
+-# Multimedia Capabilities Port drivers
+-#
+-
+-#
+ # Multimedia devices
+ #
+ # CONFIG_VIDEO_DEV is not set
++CONFIG_VIDEO_V4L2=y
+ 
+ #
+ # Digital Video Broadcasting Devices
+ #
+ # CONFIG_DVB is not set
++# CONFIG_USB_DABUSB is not set
+ 
+ #
+ # Graphics support
+ #
++# CONFIG_FIRMWARE_EDID is not set
+ CONFIG_FB=y
+ CONFIG_FB_CFB_FILLRECT=y
+ CONFIG_FB_CFB_COPYAREA=y
+ CONFIG_FB_CFB_IMAGEBLIT=y
+ # CONFIG_FB_MACMODES is not set
++# CONFIG_FB_BACKLIGHT is not set
+ # CONFIG_FB_MODE_HELPERS is not set
+ # CONFIG_FB_TILEBLITTING is not set
+ # CONFIG_FB_CIRRUS is not set
+@@ -794,7 +814,6 @@ # CONFIG_FB_S1D13XXX is not set
+ # CONFIG_FB_NVIDIA is not set
+ # CONFIG_FB_RIVA is not set
+ # CONFIG_FB_MATROX is not set
+-# CONFIG_FB_RADEON_OLD is not set
+ # CONFIG_FB_RADEON is not set
+ # CONFIG_FB_ATY128 is not set
+ # CONFIG_FB_ATY is not set
+@@ -846,9 +865,11 @@ # CONFIG_SND_SEQ_DUMMY is not set
+ CONFIG_SND_OSSEMUL=y
+ CONFIG_SND_MIXER_OSS=y
+ CONFIG_SND_PCM_OSS=y
++CONFIG_SND_PCM_OSS_PLUGINS=y
+ CONFIG_SND_SEQUENCER_OSS=y
+ # CONFIG_SND_DYNAMIC_MINORS is not set
+ CONFIG_SND_SUPPORT_OLD_API=y
++CONFIG_SND_VERBOSE_PROCFS=y
+ # CONFIG_SND_VERBOSE_PRINTK is not set
+ # CONFIG_SND_DEBUG is not set
+ 
+@@ -867,7 +888,7 @@ #
+ # PCI devices
+ #
+ CONFIG_SND_AD1889=y
+-# CONFIG_SND_AD1889_OPL3 is not set
++# CONFIG_SND_ALS300 is not set
+ # CONFIG_SND_ALI5451 is not set
+ # CONFIG_SND_ATIIXP is not set
+ # CONFIG_SND_ATIIXP_MODEM is not set
+@@ -880,6 +901,18 @@ # CONFIG_SND_CA0106 is not set
+ # CONFIG_SND_CMIPCI is not set
+ # CONFIG_SND_CS4281 is not set
+ # CONFIG_SND_CS46XX is not set
++# CONFIG_SND_DARLA20 is not set
++# CONFIG_SND_GINA20 is not set
++# CONFIG_SND_LAYLA20 is not set
++# CONFIG_SND_DARLA24 is not set
++# CONFIG_SND_GINA24 is not set
++# CONFIG_SND_LAYLA24 is not set
++# CONFIG_SND_MONA is not set
++# CONFIG_SND_MIA is not set
++# CONFIG_SND_ECHO3G is not set
++# CONFIG_SND_INDIGO is not set
++# CONFIG_SND_INDIGOIO is not set
++# CONFIG_SND_INDIGODJ is not set
+ # CONFIG_SND_EMU10K1 is not set
+ # CONFIG_SND_EMU10K1X is not set
+ # CONFIG_SND_ENS1370 is not set
+@@ -899,6 +932,7 @@ # CONFIG_SND_MAESTRO3 is not set
+ # CONFIG_SND_MIXART is not set
+ # CONFIG_SND_NM256 is not set
+ # CONFIG_SND_PCXHR is not set
++# CONFIG_SND_RIPTIDE is not set
+ # CONFIG_SND_RME32 is not set
+ # CONFIG_SND_RME96 is not set
+ # CONFIG_SND_RME9652 is not set
+@@ -924,6 +958,7 @@ # USB support
+ #
+ CONFIG_USB_ARCH_HAS_HCD=y
+ CONFIG_USB_ARCH_HAS_OHCI=y
++CONFIG_USB_ARCH_HAS_EHCI=y
+ CONFIG_USB=y
+ CONFIG_USB_DEBUG=y
+ 
+@@ -949,7 +984,6 @@ # CONFIG_USB_SL811_HCD is not set
+ #
+ # USB Device Class drivers
+ #
+-# CONFIG_OBSOLETE_OSS_USB_DRIVER is not set
+ # CONFIG_USB_ACM is not set
+ CONFIG_USB_PRINTER=m
+ 
+@@ -986,9 +1020,7 @@ # CONFIG_USB_WACOM is not set
+ # CONFIG_USB_ACECAD is not set
+ # CONFIG_USB_KBTAB is not set
+ # CONFIG_USB_POWERMATE is not set
+-# CONFIG_USB_MTOUCH is not set
+-# CONFIG_USB_ITMTOUCH is not set
+-# CONFIG_USB_EGALAX is not set
++# CONFIG_USB_TOUCHSCREEN is not set
+ # CONFIG_USB_YEALINK is not set
+ # CONFIG_USB_XPAD is not set
+ # CONFIG_USB_ATI_REMOTE is not set
+@@ -1003,15 +1035,6 @@ CONFIG_USB_MDC800=m
+ CONFIG_USB_MICROTEK=m
+ 
+ #
+-# USB Multimedia devices
+-#
+-# CONFIG_USB_DABUSB is not set
+-
+-#
+-# Video4Linux support is needed for USB Multimedia device support
+-#
+-
+-#
+ # USB Network Adapters
+ #
+ # CONFIG_USB_CATC is not set
+@@ -1040,10 +1063,12 @@ # CONFIG_USB_RIO500 is not set
+ CONFIG_USB_LEGOTOWER=m
+ # CONFIG_USB_LCD is not set
+ # CONFIG_USB_LED is not set
++# CONFIG_USB_CY7C63 is not set
+ # CONFIG_USB_CYTHERM is not set
+ # CONFIG_USB_PHIDGETKIT is not set
+ # CONFIG_USB_PHIDGETSERVO is not set
+ # CONFIG_USB_IDMOUSE is not set
++# CONFIG_USB_APPLEDISPLAY is not set
+ # CONFIG_USB_LD is not set
+ # CONFIG_USB_TEST is not set
+ 
+@@ -1062,6 +1087,19 @@ #
+ # CONFIG_MMC is not set
+ 
+ #
++# LED devices
++#
++# CONFIG_NEW_LEDS is not set
++
++#
++# LED drivers
++#
++
++#
++# LED Triggers
++#
++
++#
+ # InfiniBand support
+ #
+ # CONFIG_INFINIBAND is not set
+@@ -1071,6 +1109,24 @@ # EDAC - error detection and reporting (
+ #
+ 
+ #
++# Real Time Clock
++#
++# CONFIG_RTC_CLASS is not set
++
++#
++# DMA Engine support
++#
++# CONFIG_DMA_ENGINE is not set
++
++#
++# DMA Clients
++#
++
++#
++# DMA Devices
++#
++
++#
+ # File systems
+ #
+ CONFIG_EXT2_FS=y
+@@ -1084,7 +1140,6 @@ # CONFIG_REISERFS_FS is not set
+ # CONFIG_JFS_FS is not set
+ # CONFIG_FS_POSIX_ACL is not set
+ CONFIG_XFS_FS=m
+-CONFIG_XFS_EXPORT=y
+ # CONFIG_XFS_QUOTA is not set
+ # CONFIG_XFS_SECURITY is not set
+ # CONFIG_XFS_POSIX_ACL is not set
+@@ -1093,6 +1148,7 @@ # CONFIG_OCFS2_FS is not set
+ # CONFIG_MINIX_FS is not set
+ # CONFIG_ROMFS_FS is not set
+ CONFIG_INOTIFY=y
++CONFIG_INOTIFY_USER=y
+ # CONFIG_QUOTA is not set
+ CONFIG_DNOTIFY=y
+ # CONFIG_AUTOFS_FS is not set
+@@ -1126,7 +1182,6 @@ CONFIG_SYSFS=y
+ CONFIG_TMPFS=y
+ # CONFIG_HUGETLB_PAGE is not set
+ CONFIG_RAMFS=y
+-# CONFIG_RELAYFS_FS is not set
+ # CONFIG_CONFIGFS_FS is not set
+ 
+ #
+@@ -1169,6 +1224,7 @@ # CONFIG_RPCSEC_GSS_KRB5 is not set
+ # CONFIG_RPCSEC_GSS_SPKM3 is not set
+ # CONFIG_SMB_FS is not set
+ # CONFIG_CIFS is not set
++# CONFIG_CIFS_DEBUG2 is not set
+ # CONFIG_NCP_FS is not set
+ # CONFIG_CODA_FS is not set
+ # CONFIG_AFS_FS is not set
+@@ -1235,14 +1291,19 @@ # Kernel hacking
+ #
+ # CONFIG_PRINTK_TIME is not set
+ CONFIG_MAGIC_SYSRQ=y
++# CONFIG_UNUSED_SYMBOLS is not set
+ CONFIG_DEBUG_KERNEL=y
+ CONFIG_LOG_BUF_SHIFT=16
+ CONFIG_DETECT_SOFTLOCKUP=y
+ # CONFIG_SCHEDSTATS is not set
+ # CONFIG_DEBUG_SLAB is not set
+-CONFIG_DEBUG_MUTEXES=y
++# CONFIG_DEBUG_RT_MUTEXES is not set
++# CONFIG_RT_MUTEX_TESTER is not set
+ # CONFIG_DEBUG_SPINLOCK is not set
++CONFIG_DEBUG_MUTEXES=y
++# CONFIG_DEBUG_RWSEMS is not set
+ # CONFIG_DEBUG_SPINLOCK_SLEEP is not set
++# CONFIG_DEBUG_LOCKING_API_SELFTESTS is not set
+ # CONFIG_DEBUG_KOBJECT is not set
+ # CONFIG_DEBUG_INFO is not set
+ # CONFIG_DEBUG_FS is not set
+@@ -1299,3 +1360,6 @@ CONFIG_CRC32=y
+ CONFIG_LIBCRC32C=m
+ CONFIG_ZLIB_INFLATE=m
+ CONFIG_ZLIB_DEFLATE=m
++CONFIG_TEXTSEARCH=y
++CONFIG_TEXTSEARCH_KMP=m
++CONFIG_PLIST=y
+diff --git a/arch/parisc/defconfig b/arch/parisc/defconfig
+index b38b58e..df53005 100644
+--- a/arch/parisc/defconfig
++++ b/arch/parisc/defconfig
+@@ -1,15 +1,19 @@
+ #
+ # Automatically generated make config: don't edit
+-# Linux kernel version: 2.6.16-pa10
+-# Sun Apr  2 15:26:38 2006
++# Linux kernel version: 2.6.18-rc1-pa1
++# Thu Jul 13 10:23:14 2006
+ #
+ CONFIG_PARISC=y
+ CONFIG_MMU=y
+ CONFIG_STACK_GROWSUP=y
+ CONFIG_RWSEM_GENERIC_SPINLOCK=y
++CONFIG_GENERIC_FIND_NEXT_BIT=y
++CONFIG_GENERIC_HWEIGHT=y
+ CONFIG_GENERIC_CALIBRATE_DELAY=y
+ CONFIG_GENERIC_HARDIRQS=y
+ CONFIG_GENERIC_IRQ_PROBE=y
++CONFIG_IRQ_PER_CPU=y
++CONFIG_DEFCONFIG_LIST="/lib/modules/$UNAME_RELEASE/.config"
+ 
+ #
+ # Code maturity level options
+@@ -22,7 +26,7 @@ #
+ # General setup
+ #
+ CONFIG_LOCALVERSION=""
+-# CONFIG_LOCALVERSION_AUTO is not set
++CONFIG_LOCALVERSION_AUTO=y
+ CONFIG_SWAP=y
+ CONFIG_SYSVIPC=y
+ CONFIG_POSIX_MQUEUE=y
+@@ -31,6 +35,7 @@ CONFIG_SYSCTL=y
+ # CONFIG_AUDIT is not set
+ CONFIG_IKCONFIG=y
+ CONFIG_IKCONFIG_PROC=y
++CONFIG_RELAY=y
+ CONFIG_INITRAMFS_SOURCE=""
+ CONFIG_CC_OPTIMIZE_FOR_SIZE=y
+ # CONFIG_EMBEDDED is not set
+@@ -42,14 +47,12 @@ CONFIG_PRINTK=y
+ CONFIG_BUG=y
+ CONFIG_ELF_CORE=y
+ CONFIG_BASE_FULL=y
++CONFIG_RT_MUTEXES=y
+ CONFIG_FUTEX=y
+ CONFIG_EPOLL=y
+ CONFIG_SHMEM=y
+-CONFIG_CC_ALIGN_FUNCTIONS=0
+-CONFIG_CC_ALIGN_LABELS=0
+-CONFIG_CC_ALIGN_LOOPS=0
+-CONFIG_CC_ALIGN_JUMPS=0
+ CONFIG_SLAB=y
++CONFIG_VM_EVENT_COUNTERS=y
+ # CONFIG_TINY_SHMEM is not set
+ CONFIG_BASE_SMALL=0
+ # CONFIG_SLOB is not set
+@@ -60,7 +63,6 @@ #
+ CONFIG_MODULES=y
+ CONFIG_MODULE_UNLOAD=y
+ CONFIG_MODULE_FORCE_UNLOAD=y
+-CONFIG_OBSOLETE_MODPARM=y
+ # CONFIG_MODVERSIONS is not set
+ # CONFIG_MODULE_SRCVERSION_ALL is not set
+ CONFIG_KMOD=y
+@@ -68,6 +70,7 @@ CONFIG_KMOD=y
+ #
+ # Block layer
+ #
++# CONFIG_BLK_DEV_IO_TRACE is not set
+ 
+ #
+ # IO Schedulers
+@@ -111,6 +114,7 @@ CONFIG_FLATMEM=y
+ CONFIG_FLAT_NODE_MEM_MAP=y
+ # CONFIG_SPARSEMEM_STATIC is not set
+ CONFIG_SPLIT_PTLOCK_CPUS=4096
++# CONFIG_RESOURCES_64BIT is not set
+ # CONFIG_HPUX is not set
+ 
+ #
+@@ -125,7 +129,6 @@ CONFIG_EISA=y
+ CONFIG_EISA_NAMES=y
+ # CONFIG_ISA is not set
+ CONFIG_PCI=y
+-CONFIG_PCI_LEGACY_PROC=y
+ # CONFIG_PCI_DEBUG is not set
+ CONFIG_GSC_DINO=y
+ CONFIG_PCI_LBA=y
+@@ -166,6 +169,7 @@ #
+ CONFIG_SUPERIO=y
+ CONFIG_CHASSIS_LCD_LED=y
+ CONFIG_PDC_CHASSIS=y
++CONFIG_PDC_CHASSIS_WARN=y
+ CONFIG_PDC_STABLE=y
+ 
+ #
+@@ -205,18 +209,26 @@ # CONFIG_SYN_COOKIES is not set
+ CONFIG_INET_AH=m
+ CONFIG_INET_ESP=m
+ # CONFIG_INET_IPCOMP is not set
+-CONFIG_INET_TUNNEL=m
++# CONFIG_INET_XFRM_TUNNEL is not set
++# CONFIG_INET_TUNNEL is not set
++CONFIG_INET_XFRM_MODE_TRANSPORT=m
++CONFIG_INET_XFRM_MODE_TUNNEL=m
+ CONFIG_INET_DIAG=m
+ CONFIG_INET_TCP_DIAG=m
+ # CONFIG_TCP_CONG_ADVANCED is not set
+ CONFIG_TCP_CONG_BIC=y
+ CONFIG_IPV6=y
+ # CONFIG_IPV6_PRIVACY is not set
++# CONFIG_IPV6_ROUTER_PREF is not set
+ CONFIG_INET6_AH=y
+ CONFIG_INET6_ESP=y
+ CONFIG_INET6_IPCOMP=y
++CONFIG_INET6_XFRM_TUNNEL=y
+ CONFIG_INET6_TUNNEL=y
++CONFIG_INET6_XFRM_MODE_TRANSPORT=y
++CONFIG_INET6_XFRM_MODE_TUNNEL=y
+ # CONFIG_IPV6_TUNNEL is not set
++# CONFIG_NETWORK_SECMARK is not set
+ # CONFIG_NETFILTER is not set
+ 
+ #
+@@ -260,6 +272,7 @@ # CONFIG_HAMRADIO is not set
+ # CONFIG_IRDA is not set
+ # CONFIG_BT is not set
+ # CONFIG_IEEE80211 is not set
++CONFIG_WIRELESS_EXT=y
+ 
+ #
+ # Device Drivers
+@@ -272,6 +285,7 @@ # CONFIG_STANDALONE is not set
+ # CONFIG_PREVENT_FIRMWARE_BUILD is not set
+ CONFIG_FW_LOADER=y
+ # CONFIG_DEBUG_DRIVER is not set
++# CONFIG_SYS_HYPERVISOR is not set
+ 
+ #
+ # Connector - unified userspace <-> kernelspace linker
+@@ -294,6 +308,7 @@ # CONFIG_PARPORT_PC_SUPERIO is not set
+ CONFIG_PARPORT_PC_PCMCIA=m
+ CONFIG_PARPORT_NOT_PC=y
+ CONFIG_PARPORT_GSC=y
++# CONFIG_PARPORT_AX88796 is not set
+ CONFIG_PARPORT_1284=y
+ 
+ #
+@@ -429,6 +444,7 @@ # CONFIG_MEGARAID_NEWGEN is not set
+ # CONFIG_MEGARAID_LEGACY is not set
+ # CONFIG_MEGARAID_SAS is not set
+ # CONFIG_SCSI_SATA is not set
++# CONFIG_SCSI_HPTIOP is not set
+ # CONFIG_SCSI_DMX3191D is not set
+ # CONFIG_SCSI_FUTURE_DOMAIN is not set
+ # CONFIG_SCSI_IPS is not set
+@@ -449,7 +465,6 @@ CONFIG_SCSI_NCR53C8XX_DEFAULT_TAGS=8
+ CONFIG_SCSI_NCR53C8XX_MAX_TAGS=32
+ CONFIG_SCSI_NCR53C8XX_SYNC=20
+ # CONFIG_SCSI_NCR53C8XX_PROFILE is not set
+-# CONFIG_SCSI_QLOGIC_FC is not set
+ # CONFIG_SCSI_QLOGIC_1280 is not set
+ # CONFIG_SCSI_QLA_FC is not set
+ # CONFIG_SCSI_LPFC is not set
+@@ -477,8 +492,8 @@ CONFIG_MD_LINEAR=y
+ CONFIG_MD_RAID0=y
+ CONFIG_MD_RAID1=y
+ CONFIG_MD_RAID10=y
+-CONFIG_MD_RAID5=y
+-CONFIG_MD_RAID6=y
++CONFIG_MD_RAID456=y
++CONFIG_MD_RAID5_RESHAPE=y
+ # CONFIG_MD_MULTIPATH is not set
+ # CONFIG_MD_FAULTY is not set
+ CONFIG_BLK_DEV_DM=y
+@@ -604,6 +619,7 @@ #
+ # CONFIG_CHELSIO_T1 is not set
+ # CONFIG_IXGB is not set
+ # CONFIG_S2IO is not set
++# CONFIG_MYRI10GE is not set
+ 
+ #
+ # Token Ring devices
+@@ -614,6 +630,7 @@ #
+ # Wireless LAN (non-hamradio)
+ #
+ CONFIG_NET_RADIO=y
++# CONFIG_NET_WIRELESS_RTNETLINK is not set
+ 
+ #
+ # Obsolete Wireless cards support (pre-802.11)
+@@ -630,6 +647,8 @@ # CONFIG_PCMCIA_RAYCS is not set
+ #
+ # Wireless 802.11b ISA/PCI cards support
+ #
++# CONFIG_IPW2100 is not set
++# CONFIG_IPW2200 is not set
+ CONFIG_HERMES=y
+ # CONFIG_PLX_HERMES is not set
+ # CONFIG_TMD_HERMES is not set
+@@ -649,6 +668,7 @@ #
+ # Prism GT/Duette 802.11(a/b/g) PCI/Cardbus support
+ #
+ # CONFIG_PRISM54 is not set
++# CONFIG_USB_ZD1201 is not set
+ # CONFIG_HOSTAP is not set
+ CONFIG_NET_WIRELESS=y
+ 
+@@ -757,6 +777,7 @@ #
+ CONFIG_VT=y
+ CONFIG_VT_CONSOLE=y
+ CONFIG_HW_CONSOLE=y
++# CONFIG_VT_HW_CONSOLE_BINDING is not set
+ # CONFIG_SERIAL_NONSTANDARD is not set
+ 
+ #
+@@ -764,6 +785,8 @@ # Serial drivers
+ #
+ CONFIG_SERIAL_8250=y
+ CONFIG_SERIAL_8250_CONSOLE=y
++CONFIG_SERIAL_8250_GSC=y
++CONFIG_SERIAL_8250_PCI=y
+ CONFIG_SERIAL_8250_CS=y
+ CONFIG_SERIAL_8250_NR_UARTS=17
+ CONFIG_SERIAL_8250_RUNTIME_UARTS=4
+@@ -798,6 +821,7 @@ #
+ # Watchdog Cards
+ #
+ # CONFIG_WATCHDOG is not set
++# CONFIG_HW_RANDOM is not set
+ CONFIG_GEN_RTC=y
+ CONFIG_GEN_RTC_X=y
+ # CONFIG_DTLK is not set
+@@ -837,7 +861,6 @@ # CONFIG_SPI_MASTER is not set
+ #
+ # Dallas's 1-wire bus
+ #
+-# CONFIG_W1 is not set
+ 
+ #
+ # Hardware Monitoring support
+@@ -850,27 +873,27 @@ # Misc devices
+ #
+ 
+ #
+-# Multimedia Capabilities Port drivers
+-#
+-
+-#
+ # Multimedia devices
+ #
+ # CONFIG_VIDEO_DEV is not set
++CONFIG_VIDEO_V4L2=y
+ 
+ #
+ # Digital Video Broadcasting Devices
+ #
+ # CONFIG_DVB is not set
++# CONFIG_USB_DABUSB is not set
+ 
+ #
+ # Graphics support
+ #
++# CONFIG_FIRMWARE_EDID is not set
+ CONFIG_FB=y
+ CONFIG_FB_CFB_FILLRECT=y
+ CONFIG_FB_CFB_COPYAREA=y
+ CONFIG_FB_CFB_IMAGEBLIT=y
+ # CONFIG_FB_MACMODES is not set
++# CONFIG_FB_BACKLIGHT is not set
+ CONFIG_FB_MODE_HELPERS=y
+ CONFIG_FB_TILEBLITTING=y
+ # CONFIG_FB_CIRRUS is not set
+@@ -883,7 +906,6 @@ # CONFIG_FB_S1D13XXX is not set
+ # CONFIG_FB_NVIDIA is not set
+ # CONFIG_FB_RIVA is not set
+ # CONFIG_FB_MATROX is not set
+-# CONFIG_FB_RADEON_OLD is not set
+ # CONFIG_FB_RADEON is not set
+ # CONFIG_FB_ATY128 is not set
+ # CONFIG_FB_ATY is not set
+@@ -938,22 +960,22 @@ #
+ CONFIG_SND=y
+ CONFIG_SND_TIMER=y
+ CONFIG_SND_PCM=y
+-CONFIG_SND_HWDEP=y
+ CONFIG_SND_SEQUENCER=y
+ # CONFIG_SND_SEQ_DUMMY is not set
+ CONFIG_SND_OSSEMUL=y
+ CONFIG_SND_MIXER_OSS=y
+ CONFIG_SND_PCM_OSS=y
++CONFIG_SND_PCM_OSS_PLUGINS=y
+ CONFIG_SND_SEQUENCER_OSS=y
+ CONFIG_SND_DYNAMIC_MINORS=y
+ CONFIG_SND_SUPPORT_OLD_API=y
++CONFIG_SND_VERBOSE_PROCFS=y
+ # CONFIG_SND_VERBOSE_PRINTK is not set
+ # CONFIG_SND_DEBUG is not set
+ 
+ #
+ # Generic devices
+ #
+-CONFIG_SND_OPL3_LIB=y
+ CONFIG_SND_AC97_CODEC=y
+ CONFIG_SND_AC97_BUS=y
+ # CONFIG_SND_DUMMY is not set
+@@ -966,7 +988,7 @@ #
+ # PCI devices
+ #
+ CONFIG_SND_AD1889=y
+-CONFIG_SND_AD1889_OPL3=y
++# CONFIG_SND_ALS300 is not set
+ # CONFIG_SND_ALI5451 is not set
+ # CONFIG_SND_ATIIXP is not set
+ # CONFIG_SND_ATIIXP_MODEM is not set
+@@ -979,6 +1001,18 @@ # CONFIG_SND_CA0106 is not set
+ # CONFIG_SND_CMIPCI is not set
+ # CONFIG_SND_CS4281 is not set
+ # CONFIG_SND_CS46XX is not set
++# CONFIG_SND_DARLA20 is not set
++# CONFIG_SND_GINA20 is not set
++# CONFIG_SND_LAYLA20 is not set
++# CONFIG_SND_DARLA24 is not set
++# CONFIG_SND_GINA24 is not set
++# CONFIG_SND_LAYLA24 is not set
++# CONFIG_SND_MONA is not set
++# CONFIG_SND_MIA is not set
++# CONFIG_SND_ECHO3G is not set
++# CONFIG_SND_INDIGO is not set
++# CONFIG_SND_INDIGOIO is not set
++# CONFIG_SND_INDIGODJ is not set
+ # CONFIG_SND_EMU10K1 is not set
+ # CONFIG_SND_EMU10K1X is not set
+ # CONFIG_SND_ENS1370 is not set
+@@ -998,6 +1032,7 @@ # CONFIG_SND_MAESTRO3 is not set
+ # CONFIG_SND_MIXART is not set
+ # CONFIG_SND_NM256 is not set
+ # CONFIG_SND_PCXHR is not set
++# CONFIG_SND_RIPTIDE is not set
+ # CONFIG_SND_RME32 is not set
+ # CONFIG_SND_RME96 is not set
+ # CONFIG_SND_RME9652 is not set
+@@ -1016,6 +1051,8 @@ # CONFIG_SND_USB_AUDIO is not set
+ #
+ # PCMCIA devices
+ #
++# CONFIG_SND_VXPOCKET is not set
++# CONFIG_SND_PDAUDIOCF is not set
+ 
+ #
+ # GSC devices
+@@ -1032,6 +1069,7 @@ # USB support
+ #
+ CONFIG_USB_ARCH_HAS_HCD=y
+ CONFIG_USB_ARCH_HAS_OHCI=y
++CONFIG_USB_ARCH_HAS_EHCI=y
+ CONFIG_USB=y
+ # CONFIG_USB_DEBUG is not set
+ 
+@@ -1057,7 +1095,6 @@ # CONFIG_USB_SL811_HCD is not set
+ #
+ # USB Device Class drivers
+ #
+-# CONFIG_OBSOLETE_OSS_USB_DRIVER is not set
+ # CONFIG_USB_ACM is not set
+ # CONFIG_USB_PRINTER is not set
+ 
+@@ -1084,9 +1121,7 @@ # CONFIG_USB_WACOM is not set
+ # CONFIG_USB_ACECAD is not set
+ # CONFIG_USB_KBTAB is not set
+ # CONFIG_USB_POWERMATE is not set
+-# CONFIG_USB_MTOUCH is not set
+-# CONFIG_USB_ITMTOUCH is not set
+-# CONFIG_USB_EGALAX is not set
++# CONFIG_USB_TOUCHSCREEN is not set
+ # CONFIG_USB_YEALINK is not set
+ # CONFIG_USB_XPAD is not set
+ # CONFIG_USB_ATI_REMOTE is not set
+@@ -1101,15 +1136,6 @@ # CONFIG_USB_MDC800 is not set
+ # CONFIG_USB_MICROTEK is not set
+ 
+ #
+-# USB Multimedia devices
+-#
+-# CONFIG_USB_DABUSB is not set
+-
+-#
+-# Video4Linux support is needed for USB Multimedia device support
+-#
+-
+-#
+ # USB Network Adapters
+ #
+ # CONFIG_USB_CATC is not set
+@@ -1117,7 +1143,6 @@ # CONFIG_USB_KAWETH is not set
+ # CONFIG_USB_PEGASUS is not set
+ # CONFIG_USB_RTL8150 is not set
+ # CONFIG_USB_USBNET is not set
+-# CONFIG_USB_ZD1201 is not set
+ CONFIG_USB_MON=y
+ 
+ #
+@@ -1140,10 +1165,12 @@ # CONFIG_USB_RIO500 is not set
+ # CONFIG_USB_LEGOTOWER is not set
+ # CONFIG_USB_LCD is not set
+ # CONFIG_USB_LED is not set
++# CONFIG_USB_CY7C63 is not set
+ # CONFIG_USB_CYTHERM is not set
+ # CONFIG_USB_PHIDGETKIT is not set
+ # CONFIG_USB_PHIDGETSERVO is not set
+ # CONFIG_USB_IDMOUSE is not set
++# CONFIG_USB_APPLEDISPLAY is not set
+ # CONFIG_USB_LD is not set
+ # CONFIG_USB_TEST is not set
+ 
+@@ -1162,6 +1189,19 @@ #
+ # CONFIG_MMC is not set
+ 
+ #
++# LED devices
++#
++# CONFIG_NEW_LEDS is not set
++
++#
++# LED drivers
++#
++
++#
++# LED Triggers
++#
++
++#
+ # InfiniBand support
+ #
+ # CONFIG_INFINIBAND is not set
+@@ -1171,6 +1211,24 @@ # EDAC - error detection and reporting (
+ #
+ 
+ #
++# Real Time Clock
++#
++# CONFIG_RTC_CLASS is not set
++
++#
++# DMA Engine support
++#
++# CONFIG_DMA_ENGINE is not set
++
++#
++# DMA Clients
++#
++
++#
++# DMA Devices
++#
++
++#
+ # File systems
+ #
+ CONFIG_EXT2_FS=y
+@@ -1188,6 +1246,7 @@ # CONFIG_OCFS2_FS is not set
+ # CONFIG_MINIX_FS is not set
+ # CONFIG_ROMFS_FS is not set
+ CONFIG_INOTIFY=y
++CONFIG_INOTIFY_USER=y
+ # CONFIG_QUOTA is not set
+ CONFIG_DNOTIFY=y
+ CONFIG_AUTOFS_FS=y
+@@ -1221,7 +1280,6 @@ CONFIG_SYSFS=y
+ CONFIG_TMPFS=y
+ # CONFIG_HUGETLB_PAGE is not set
+ CONFIG_RAMFS=y
+-# CONFIG_RELAYFS_FS is not set
+ # CONFIG_CONFIGFS_FS is not set
+ 
+ #
+@@ -1268,7 +1326,9 @@ CONFIG_SMB_NLS_DEFAULT=y
+ CONFIG_SMB_NLS_REMOTE="cp437"
+ CONFIG_CIFS=m
+ # CONFIG_CIFS_STATS is not set
++# CONFIG_CIFS_WEAK_PW_HASH is not set
+ # CONFIG_CIFS_XATTR is not set
++# CONFIG_CIFS_DEBUG2 is not set
+ # CONFIG_CIFS_EXPERIMENTAL is not set
+ # CONFIG_NCP_FS is not set
+ # CONFIG_CODA_FS is not set
+@@ -1336,14 +1396,19 @@ # Kernel hacking
+ #
+ # CONFIG_PRINTK_TIME is not set
+ CONFIG_MAGIC_SYSRQ=y
++# CONFIG_UNUSED_SYMBOLS is not set
+ CONFIG_DEBUG_KERNEL=y
+ CONFIG_LOG_BUF_SHIFT=16
+ CONFIG_DETECT_SOFTLOCKUP=y
+ # CONFIG_SCHEDSTATS is not set
+ # CONFIG_DEBUG_SLAB is not set
+-CONFIG_DEBUG_MUTEXES=y
++# CONFIG_DEBUG_RT_MUTEXES is not set
++# CONFIG_RT_MUTEX_TESTER is not set
+ # CONFIG_DEBUG_SPINLOCK is not set
++CONFIG_DEBUG_MUTEXES=y
++# CONFIG_DEBUG_RWSEMS is not set
+ # CONFIG_DEBUG_SPINLOCK_SLEEP is not set
++# CONFIG_DEBUG_LOCKING_API_SELFTESTS is not set
+ # CONFIG_DEBUG_KOBJECT is not set
+ # CONFIG_DEBUG_INFO is not set
+ # CONFIG_DEBUG_FS is not set
+@@ -1401,3 +1466,4 @@ CONFIG_CRC32=y
+ CONFIG_LIBCRC32C=m
+ CONFIG_ZLIB_INFLATE=y
+ CONFIG_ZLIB_DEFLATE=y
++CONFIG_PLIST=y
+diff --git a/arch/parisc/hpux/fs.c b/arch/parisc/hpux/fs.c
+index 4204cd1..c7a81a2 100644
+--- a/arch/parisc/hpux/fs.c
++++ b/arch/parisc/hpux/fs.c
+@@ -35,13 +35,13 @@ int hpux_execve(struct pt_regs *regs)
+ 	int error;
+ 	char *filename;
+ 
+-	filename = getname((char *) regs->gr[26]);
++	filename = getname((char __user *) regs->gr[26]);
+ 	error = PTR_ERR(filename);
+ 	if (IS_ERR(filename))
+ 		goto out;
+ 
+-	error = do_execve(filename, (char **) regs->gr[25],
+-		(char **)regs->gr[24], regs);
++	error = do_execve(filename, (char __user * __user *) regs->gr[25],
++		(char __user * __user *) regs->gr[24], regs);
+ 
+ 	if (error == 0) {
+ 		task_lock(current);
+@@ -63,19 +63,19 @@ struct hpux_dirent {
+ };
+ 
+ struct getdents_callback {
+-	struct hpux_dirent *current_dir;
+-	struct hpux_dirent *previous;
++	struct hpux_dirent __user *current_dir;
++	struct hpux_dirent __user *previous;
+ 	int count;
+ 	int error;
+ };
+ 
+-#define NAME_OFFSET(de) ((int) ((de)->d_name - (char *) (de)))
++#define NAME_OFFSET(de) ((int) ((de)->d_name - (char __user *) (de)))
+ #define ROUND_UP(x) (((x)+sizeof(long)-1) & ~(sizeof(long)-1))
+ 
+ static int filldir(void * __buf, const char * name, int namlen, loff_t offset,
+ 		u64 ino, unsigned d_type)
+ {
+-	struct hpux_dirent * dirent;
++	struct hpux_dirent __user * dirent;
+ 	struct getdents_callback * buf = (struct getdents_callback *) __buf;
+ 	ino_t d_ino;
+ 	int reclen = ROUND_UP(NAME_OFFSET(dirent) + namlen + 1);
+@@ -105,10 +105,10 @@ static int filldir(void * __buf, const c
+ #undef NAME_OFFSET
+ #undef ROUND_UP
+ 
+-int hpux_getdents(unsigned int fd, struct hpux_dirent *dirent, unsigned int count)
++int hpux_getdents(unsigned int fd, struct hpux_dirent __user *dirent, unsigned int count)
+ {
+ 	struct file * file;
+-	struct hpux_dirent * lastdirent;
++	struct hpux_dirent __user * lastdirent;
+ 	struct getdents_callback buf;
+ 	int error = -EBADF;
+ 
+@@ -143,7 +143,7 @@ int hpux_mount(const char *fs, const cha
+ 	return -ENOSYS;
+ }
+ 
+-static int cp_hpux_stat(struct kstat *stat, struct hpux_stat64 *statbuf)
++static int cp_hpux_stat(struct kstat *stat, struct hpux_stat64 __user *statbuf)
+ {
+ 	struct hpux_stat64 tmp;
+ 
+@@ -169,7 +169,7 @@ static int cp_hpux_stat(struct kstat *st
+ 	return copy_to_user(statbuf,&tmp,sizeof(tmp)) ? -EFAULT : 0;
+ }
+ 
+-long hpux_stat64(char *filename, struct hpux_stat64 *statbuf)
++long hpux_stat64(char __user *filename, struct hpux_stat64 __user *statbuf)
+ {
+ 	struct kstat stat;
+ 	int error = vfs_stat(filename, &stat);
+@@ -180,7 +180,7 @@ long hpux_stat64(char *filename, struct 
+ 	return error;
+ }
+ 
+-long hpux_fstat64(unsigned int fd, struct hpux_stat64 *statbuf)
++long hpux_fstat64(unsigned int fd, struct hpux_stat64 __user *statbuf)
+ {
+ 	struct kstat stat;
+ 	int error = vfs_fstat(fd, &stat);
+@@ -191,7 +191,7 @@ long hpux_fstat64(unsigned int fd, struc
+ 	return error;
+ }
+ 
+-long hpux_lstat64(char *filename, struct hpux_stat64 *statbuf)
++long hpux_lstat64(char __user *filename, struct hpux_stat64 __user *statbuf)
+ {
+ 	struct kstat stat;
+ 	int error = vfs_lstat(filename, &stat);
+diff --git a/arch/parisc/hpux/sys_hpux.c b/arch/parisc/hpux/sys_hpux.c
+index 2e2dc4f..372edb0 100644
+--- a/arch/parisc/hpux/sys_hpux.c
++++ b/arch/parisc/hpux/sys_hpux.c
+@@ -61,7 +61,7 @@ int hpux_ptrace(void)
+ 	return -ENOSYS;
+ }
+ 
+-int hpux_wait(int *stat_loc)
++int hpux_wait(int __user *stat_loc)
+ {
+ 	return sys_waitpid(-1, stat_loc, 0);
+ }
+@@ -255,7 +255,7 @@ asmlinkage long hpux_fstatfs(unsigned in
+ /*  TODO: Are these put_user calls OK?  Should they pass an int?
+  *        (I copied it from sys_i386.c like this.)
+  */
+-static int hpux_uname(struct hpux_utsname *name)
++static int hpux_uname(struct hpux_utsname __user *name)
+ {
+ 	int error;
+ 
+@@ -300,14 +300,14 @@ #endif
+ /*  Note: HP-UX just uses the old suser() function to check perms
+  *  in this system call.  We'll use capable(CAP_SYS_ADMIN).
+  */
+-int hpux_utssys(char *ubuf, int n, int type)
++int hpux_utssys(char __user *ubuf, int n, int type)
+ {
+ 	int len;
+ 	int error;
+ 	switch( type ) {
+ 	case 0:
+ 		/*  uname():  */
+-		return( hpux_uname( (struct hpux_utsname *)ubuf ) );
++		return hpux_uname((struct hpux_utsname __user *)ubuf);
+ 		break ;
+ 	case 1:
+ 		/*  Obsolete (used to be umask().)  */
+@@ -315,8 +315,9 @@ int hpux_utssys(char *ubuf, int n, int t
+ 		break ;
+ 	case 2:
+ 		/*  ustat():  */
+-		return( hpux_ustat(new_decode_dev(n), (struct hpux_ustat *)ubuf) );
+-		break ;
++		return hpux_ustat(new_decode_dev(n),
++				  (struct hpux_ustat __user *)ubuf);
++		break;
+ 	case 3:
+ 		/*  setuname():
+ 		 *
+@@ -332,7 +333,7 @@ int hpux_utssys(char *ubuf, int n, int t
+ 			return -EINVAL ;
+ 		/*  Unlike Linux, HP-UX truncates it if n is too big:  */
+ 		len = (n <= __NEW_UTS_LEN) ? n : __NEW_UTS_LEN ;
+-		return( sys_sethostname(ubuf, len) );
++		return sys_sethostname(ubuf, len);
+ 		break ;
+ 	case 4:
+ 		/*  sethostname():
+@@ -346,7 +347,7 @@ int hpux_utssys(char *ubuf, int n, int t
+ 			return -EINVAL ;
+ 		/*  Unlike Linux, HP-UX truncates it if n is too big:  */
+ 		len = (n <= __NEW_UTS_LEN) ? n : __NEW_UTS_LEN ;
+-		return( sys_sethostname(ubuf, len) );
++		return sys_sethostname(ubuf, len);
+ 		break ;
+ 	case 5:
+ 		/*  gethostname():
+@@ -356,7 +357,7 @@ int hpux_utssys(char *ubuf, int n, int t
+ 		/*  Unlike Linux, HP-UX returns an error if n==0:  */
+ 		if ( n <= 0 )
+ 			return -EINVAL ;
+-		return( sys_gethostname(ubuf, n) );
++		return sys_gethostname(ubuf, n);
+ 		break ;
+ 	case 6:
+ 		/*  Supposedly called from setuname() in libc.
+@@ -420,7 +421,7 @@ int hpux_utssys(char *ubuf, int n, int t
+ 	}
+ }
+ 
+-int hpux_getdomainname(char *name, int len)
++int hpux_getdomainname(char __user *name, int len)
+ {
+  	int nlen;
+  	int err = -EFAULT;
+@@ -471,17 +472,18 @@ int hpux_sysfs(int opcode, unsigned long
+ 	printk(KERN_DEBUG "hpux_sysfs called with arg1='%lx'\n", arg1);
+ 
+ 	if ( opcode == 1 ) { /* GETFSIND */	
+-		len = strlen_user((char *)arg1);
++		char __user *user_fsname = (char __user *)arg1;
++		len = strlen_user(user_fsname);
+ 		printk(KERN_DEBUG "len of arg1 = %d\n", len);
+ 		if (len == 0)
+ 			return 0;
+-		fsname = (char *) kmalloc(len, GFP_KERNEL);
+-		if ( !fsname ) {
++		fsname = kmalloc(len, GFP_KERNEL);
++		if (!fsname) {
+ 			printk(KERN_DEBUG "failed to kmalloc fsname\n");
+ 			return 0;
+ 		}
+ 
+-		if ( copy_from_user(fsname, (char *)arg1, len) ) {
++		if (copy_from_user(fsname, user_fsname, len)) {
+ 			printk(KERN_DEBUG "failed to copy_from_user fsname\n");
+ 			kfree(fsname);
+ 			return 0;
+@@ -495,7 +497,7 @@ int hpux_sysfs(int opcode, unsigned long
+ 			fstype = 0;
+ 		} else {
+ 			fstype = 0;
+-		};
++		}
+ 
+ 		kfree(fsname);
+ 
+diff --git a/arch/parisc/kernel/drivers.c b/arch/parisc/kernel/drivers.c
+index d6c486e..6274cd2 100644
+--- a/arch/parisc/kernel/drivers.c
++++ b/arch/parisc/kernel/drivers.c
+@@ -689,7 +689,9 @@ parse_tree_node(struct device *parent, i
+ 		.fn	= check_parent,
+ 	};
+ 
+-	device_for_each_child(parent, &recurse_data, descend_children);
++	if (device_for_each_child(parent, &recurse_data, descend_children))
++		/* nothing */;
++
+ 	return d.dev;
+ }
+ 
+@@ -835,8 +837,8 @@ static void print_parisc_device(struct p
+ 	static int count;
+ 
+ 	print_pa_hwpath(dev, hw_path);
+-	printk(KERN_INFO "%d. %s at 0x%lx [%s] { %d, 0x%x, 0x%.3x, 0x%.5x }",
+-		++count, dev->name, dev->hpa.start, hw_path, dev->id.hw_type,
++	printk(KERN_INFO "%d. %s at 0x%p [%s] { %d, 0x%x, 0x%.3x, 0x%.5x }",
++		++count, dev->name, (void*) dev->hpa.start, hw_path, dev->id.hw_type,
+ 		dev->id.hversion_rev, dev->id.hversion, dev->id.sversion);
+ 
+ 	if (dev->num_addrs) {
+diff --git a/arch/parisc/kernel/irq.c b/arch/parisc/kernel/irq.c
+index b39c5b9..2a929a2 100644
+--- a/arch/parisc/kernel/irq.c
++++ b/arch/parisc/kernel/irq.c
+@@ -35,9 +35,6 @@ #include <asm/smp.h>
+ 
+ #undef PARISC_IRQ_CR16_COUNTS
+ 
+-extern irqreturn_t timer_interrupt(int, void *);
+-extern irqreturn_t ipi_interrupt(int, void *);
+-
+ #define EIEM_MASK(irq)       (1UL<<(CPU_IRQ_MAX - irq))
+ 
+ /* Bits in EIEM correlate with cpu_irq_action[].
+@@ -88,7 +85,7 @@ static unsigned int cpu_startup_irq(unsi
+ void no_ack_irq(unsigned int irq) { }
+ void no_end_irq(unsigned int irq) { }
+ 
+-void cpu_ack_irq(unsigned int irq)
++void cpu_ack_irq(struct irq_desc *dummy, unsigned int irq)
+ {
+ 	unsigned long mask = EIEM_MASK(irq);
+ 	int cpu = smp_processor_id();
+@@ -105,7 +102,7 @@ void cpu_ack_irq(unsigned int irq)
+ 	mtctl(mask, 23);
+ }
+ 
+-void cpu_end_irq(unsigned int irq)
++void cpu_end_irq(struct irq_desc *dummy, unsigned int irq)
+ {
+ 	unsigned long mask = EIEM_MASK(irq);
+ 	int cpu = smp_processor_id();
+@@ -155,8 +152,6 @@ static struct hw_interrupt_type cpu_inte
+ 	.shutdown	= cpu_disable_irq,
+ 	.enable		= cpu_enable_irq,
+ 	.disable	= cpu_disable_irq,
+-	.ack		= cpu_ack_irq,
+-	.end		= cpu_end_irq,
+ #ifdef CONFIG_SMP
+ 	.set_affinity	= cpu_set_affinity_irq,
+ #endif
+@@ -253,8 +248,8 @@ int cpu_claim_irq(unsigned int irq, stru
+ 		return -EBUSY;
+ 
+ 	if (type) {
+-		irq_desc[irq].chip = type;
+-		irq_desc[irq].chip_data = data;
++		set_irq_chip(irq, type);
++		set_irq_chip_data(irq, data);
+ 		cpu_interrupt_type.enable(irq);
+ 	}
+ 	return 0;
+@@ -377,7 +372,7 @@ #ifdef CONFIG_SMP
+ 		goto set_out;
+ 	}
+ #endif
+-	__do_IRQ(irq);
++	generic_handle_irq(irq);
+ 
+  out:
+ 	irq_exit();
+@@ -406,15 +401,17 @@ #endif
+ static void claim_cpu_irqs(void)
+ {
+ 	int i;
+-	for (i = CPU_IRQ_BASE; i <= CPU_IRQ_MAX; i++) {
+-		irq_desc[i].chip = &cpu_interrupt_type;
+-	}
++	for (i = CPU_IRQ_BASE; i <= CPU_IRQ_MAX; i++)
++		set_irq_chip_and_handler(i, &cpu_interrupt_type,
++					 handle_level_irq_chip);
+ 
+ 	irq_desc[TIMER_IRQ].action = &timer_action;
+ 	irq_desc[TIMER_IRQ].status |= IRQ_PER_CPU;
++	set_irq_handler(TIMER_IRQ, handle_specific_irq_timer);
+ #ifdef CONFIG_SMP
+ 	irq_desc[IPI_IRQ].action = &ipi_action;
+ 	irq_desc[IPI_IRQ].status = IRQ_PER_CPU;
++	set_irq_handler(IPI_IRQ, handle_specific_irq_ipi);
+ #endif
+ }
+ 
+diff --git a/arch/parisc/kernel/module.c b/arch/parisc/kernel/module.c
+index f50b982..47ea4e4 100644
+--- a/arch/parisc/kernel/module.c
++++ b/arch/parisc/kernel/module.c
+@@ -822,7 +822,8 @@ #endif
+ 	       me->name, strtab, symhdr);
+ 
+ 	if(me->arch.got_count > MAX_GOTS) {
+-		printk(KERN_ERR "%s: Global Offset Table overflow (used %ld, allowed %d\n", me->name, me->arch.got_count, MAX_GOTS);
++		printk(KERN_ERR "%s: Global Offset Table overflow (used %ld, allowed %d)\n",
++				me->name, me->arch.got_count, MAX_GOTS);
+ 		return -EINVAL;
+ 	}
+ 	
+diff --git a/arch/parisc/kernel/pci-dma.c b/arch/parisc/kernel/pci-dma.c
+index a6caf10..0c3aecb 100644
+--- a/arch/parisc/kernel/pci-dma.c
++++ b/arch/parisc/kernel/pci-dma.c
+@@ -342,7 +342,7 @@ pcxl_dma_init(void)
+ 	pcxl_res_map = (char *)__get_free_pages(GFP_KERNEL,
+ 					    get_order(pcxl_res_size));
+ 	memset(pcxl_res_map, 0, pcxl_res_size);
+-	proc_gsc_root = proc_mkdir("gsc", 0);
++	proc_gsc_root = proc_mkdir("gsc", NULL);
+ 	if (!proc_gsc_root)
+     		printk(KERN_WARNING
+ 			"pcxl_dma_init: Unable to create gsc /proc dir entry\n");
+diff --git a/arch/parisc/kernel/pci.c b/arch/parisc/kernel/pci.c
+index 199887a..563df00 100644
+--- a/arch/parisc/kernel/pci.c
++++ b/arch/parisc/kernel/pci.c
+@@ -200,8 +200,8 @@ static void
+ pcibios_link_hba_resources( struct resource *hba_res, struct resource *r)
+ {
+ 	if (!r->parent) {
+-		printk(KERN_EMERG "PCI: resource not parented! [%lx-%lx]\n",
+-				r->start, r->end);
++		printk(KERN_EMERG "PCI: resource not parented! [%p-%p]\n",
++				(void*) r->start, (void*) r->end);
+ 		r->parent = hba_res;
+ 
+ 		/* reverse link is harder *sigh*  */
+diff --git a/arch/parisc/kernel/process.c b/arch/parisc/kernel/process.c
+index 2f9f9df..dfca014 100644
+--- a/arch/parisc/kernel/process.c
++++ b/arch/parisc/kernel/process.c
+@@ -355,8 +355,8 @@ asmlinkage int sys_execve(struct pt_regs
+ 	error = PTR_ERR(filename);
+ 	if (IS_ERR(filename))
+ 		goto out;
+-	error = do_execve(filename, (char __user **) regs->gr[25],
+-		(char __user **) regs->gr[24], regs);
++	error = do_execve(filename, (char __user * __user *) regs->gr[25],
++		(char __user * __user *) regs->gr[24], regs);
+ 	if (error == 0) {
+ 		task_lock(current);
+ 		current->ptrace &= ~PT_DTRACE;
+diff --git a/arch/parisc/kernel/syscall_table.S b/arch/parisc/kernel/syscall_table.S
+index 701d66a..c91605b 100644
+--- a/arch/parisc/kernel/syscall_table.S
++++ b/arch/parisc/kernel/syscall_table.S
+@@ -282,7 +282,7 @@ #endif
+ 	 * to worry about faulting trying to copy in a larger 64-bit
+ 	 * struct from a 32-bit user-space app.
+ 	 */
+-	ENTRY_SAME(rt_sigqueueinfo)
++	ENTRY_COMP(rt_sigqueueinfo)
+ 	ENTRY_SAME(rt_sigsuspend_wrapper) /* not really SAME -- see the code */
+ 	ENTRY_SAME(chown)		/* 180 */
+ 	/* setsockopt() used by iptables: SO_SET_REPLACE/SO_SET_ADD_COUNTERS */
+diff --git a/arch/parisc/mm/init.c b/arch/parisc/mm/init.c
+index 0667f2b..0e449f9 100644
+--- a/arch/parisc/mm/init.c
++++ b/arch/parisc/mm/init.c
+@@ -24,6 +24,7 @@ #include <linux/nodemask.h>	/* for node_
+ #include <linux/pagemap.h>	/* for release_pages and page_cache_release */
+ 
+ #include <asm/pgalloc.h>
++#include <asm/pgtable.h>
+ #include <asm/tlb.h>
+ #include <asm/pdc_chassis.h>
+ #include <asm/mmzone.h>
+@@ -453,6 +454,8 @@ #endif
+ 
+ void __init mem_init(void)
+ {
++	int codesize, reservedpages, datasize, initsize;
++
+ 	high_memory = __va((max_pfn << PAGE_SHIFT));
+ 
+ #ifndef CONFIG_DISCONTIGMEM
+@@ -467,7 +470,32 @@ #else
+ 	}
+ #endif
+ 
+-	printk(KERN_INFO "Memory: %luk available\n", num_physpages << (PAGE_SHIFT-10));
++	codesize = (unsigned long)_etext - (unsigned long)_text;
++	datasize = (unsigned long)_edata - (unsigned long)_etext;
++	initsize = (unsigned long)__init_end - (unsigned long)__init_begin;
++
++	reservedpages = 0;
++{	
++	unsigned long pfn;
++#ifdef CONFIG_DISCONTIGMEM
++	int i;
++
++	for (i = 0; i < npmem_ranges; i++) {
++		for (pfn = node_start_pfn(i); pfn < node_end_pfn(i); pfn++) {
++			if (PageReserved(pfn_to_page(pfn)))
++				reservedpages++;
++		}
++	}
++#else /* !CONFIG_DISCONTIGMEM */
++	for (pfn = 0; pfn < max_pfn; pfn++) {
++		/*
++		 * Only count reserved RAM pages
++		 */
++		if (PageReserved(pfn_to_page(pfn)))
++			reservedpages++;
++	}
++#endif
++}
+ 
+ #ifdef CONFIG_PA11
+ 	if (hppa_dma_ops == &pcxl_dma_ops) {
+@@ -481,6 +509,38 @@ #else
+ 	vmalloc_start = SET_MAP_OFFSET(MAP_START);
+ #endif
+ 
++	printk(KERN_INFO "Memory: %luk/%luk available (%dk kernel code, %dk reserved, %dk data, %dk init)\n",
++		(unsigned long)nr_free_pages() << (PAGE_SHIFT-10),
++		num_physpages << (PAGE_SHIFT-10),
++		codesize >> 10,
++		reservedpages << (PAGE_SHIFT-10),
++		datasize >> 10,
++		initsize >> 10
++	);
++
++#ifdef CONFIG_DEBUG_KERNEL /* double-sanity-check paranoia */
++	printk("virtual kernel memory layout:\n"
++	       "    vmalloc : 0x%p - 0x%p   (%4ld MB)\n"
++	       "    memory  : 0x%p - 0x%p   (%4ld MB)\n"
++	       "      .init : 0x%p - 0x%p   (%4ld kB)\n"
++	       "      .data : 0x%p - 0x%p   (%4ld kB)\n"
++	       "      .text : 0x%p - 0x%p   (%4ld kB)\n",
++
++	       (void*)VMALLOC_START, (void*)VMALLOC_END,
++	       (VMALLOC_END - VMALLOC_START) >> 20,
++
++	       __va(0), high_memory,
++	       ((unsigned long)high_memory - (unsigned long)__va(0)) >> 20,
++
++	       __init_begin, __init_end,
++	       ((unsigned long)__init_end - (unsigned long)__init_begin) >> 10,
++
++	       _etext, _edata,
++	       ((unsigned long)_edata - (unsigned long)_etext) >> 10,
++
++	       _text, _etext,
++	       ((unsigned long)_etext - (unsigned long)_text) >> 10);
++#endif
+ }
+ 
+ unsigned long *empty_zero_page __read_mostly;
+@@ -548,7 +608,7 @@ #ifdef CONFIG_DISCONTIGMEM
+ 
+ 				printk("Zone list for zone %d on node %d: ", j, i);
+ 				for (k = 0; zl->zones[k] != NULL; k++) 
+-					printk("[%d/%s] ", zone_to_nid(zl->zones[k]), zl->zones[k]->name);
++					printk("[%ld/%s] ", zone_to_nid(zl->zones[k]), zl->zones[k]->name);
+ 				printk("\n");
+ 			}
+ 		}
+diff --git a/arch/parisc/mm/ioremap.c b/arch/parisc/mm/ioremap.c
+index 47a1d2a..6c61023 100644
+--- a/arch/parisc/mm/ioremap.c
++++ b/arch/parisc/mm/ioremap.c
+@@ -128,7 +128,7 @@ remap_area_pages(unsigned long address, 
+  */
+ void __iomem * __ioremap(unsigned long phys_addr, unsigned long size, unsigned long flags)
+ {
+-	void *addr;
++	void __iomem *addr;
+ 	struct vm_struct *area;
+ 	unsigned long offset, last_addr;
+ 
+@@ -178,13 +178,13 @@ #endif
+ 	if (!area)
+ 		return NULL;
+ 
+-	addr = area->addr;
++	addr = (void __iomem *) area->addr;
+ 	if (remap_area_pages((unsigned long) addr, phys_addr, size, flags)) {
+ 		vfree(addr);
+ 		return NULL;
+ 	}
+ 
+-	return (void __iomem *) (offset + (char *)addr);
++	return (void __iomem *) (offset + (char __iomem *)addr);
+ }
+ EXPORT_SYMBOL(__ioremap);
+ 
+diff --git a/arch/parisc/mm/kmap.c b/arch/parisc/mm/kmap.c
+deleted file mode 100644
+index 1b1acd5..0000000
+--- a/arch/parisc/mm/kmap.c
++++ /dev/null
+@@ -1,166 +0,0 @@
+-/* 
+- *    kmap/page table map and unmap support routines
+- *
+- *    Copyright 1999,2000 Hewlett-Packard Company
+- *    Copyright 2000 John Marvin <jsm at hp.com>
+- *    Copyright 2000 Grant Grundler <grundler at parisc-linux.org>
+- *    Copyright 2000 Philipp Rumpf <prumpf@tux.org>
+- *
+- *
+- *    This program is free software; you can redistribute it and/or modify
+- *    it under the terms of the GNU General Public License as published by
+- *    the Free Software Foundation; either version 2 of the License, or
+- *    (at your option) any later version.
+- *
+- *    This program is distributed in the hope that it will be useful,
+- *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *    GNU General Public License for more details.
+- *
+- *    You should have received a copy of the GNU General Public License
+- *    along with this program; if not, write to the Free Software
+- *    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+- */
+-/*
+-** Stolen mostly from arch/parisc/kernel/pci-dma.c
+-*/
+-
+-#include <linux/types.h>
+-#include <linux/mm.h>
+-#include <linux/string.h>
+-#include <linux/pci.h>
+-
+-#include <linux/slab.h>
+-#include <linux/vmalloc.h>
+-
+-#include <asm/uaccess.h>
+-#include <asm/pgalloc.h>
+-
+-#include <asm/io.h>
+-#include <asm/page.h>		/* get_order */
+-
+-#undef flush_cache_all
+-#define flush_cache_all flush_all_caches
+-
+-typedef void (*pte_iterator_t) (pte_t * pte, unsigned long arg);
+-
+-#if 0
+-/* XXX This routine could be used with iterate_page() to replace
+- * unmap_uncached_page() and save a little code space but I didn't
+- * do that since I'm not certain whether this is the right path. -PB
+- */
+-static void unmap_cached_pte(pte_t * pte, unsigned long addr, unsigned long arg)
+-{
+-	pte_t page = *pte;
+-	pte_clear(&init_mm, addr, pte);
+-	if (!pte_none(page)) {
+-		if (pte_present(page)) {
+-			unsigned long map_nr = pte_pagenr(page);
+-			if (map_nr < max_mapnr)
+-				__free_page(mem_map + map_nr);
+-		} else {
+-			printk(KERN_CRIT
+-			       "Whee.. Swapped out page in kernel page table\n");
+-		}
+-	}
+-}
+-#endif
+-
+-/* These two routines should probably check a few things... */
+-static void set_uncached(pte_t * pte, unsigned long arg)
+-{
+-	pte_val(*pte) |= _PAGE_NO_CACHE;
+-}
+-
+-static void set_cached(pte_t * pte, unsigned long arg)
+-{
+-	pte_val(*pte) &= ~_PAGE_NO_CACHE;
+-}
+-
+-static inline void iterate_pte(pmd_t * pmd, unsigned long address,
+-			       unsigned long size, pte_iterator_t op,
+-			       unsigned long arg)
+-{
+-	pte_t *pte;
+-	unsigned long end;
+-
+-	if (pmd_none(*pmd))
+-		return;
+-	if (pmd_bad(*pmd)) {
+-		pmd_ERROR(*pmd);
+-		pmd_clear(pmd);
+-		return;
+-	}
+-	pte = pte_offset(pmd, address);
+-	address &= ~PMD_MASK;
+-	end = address + size;
+-	if (end > PMD_SIZE)
+-		end = PMD_SIZE;
+-	do {
+-		op(pte, arg);
+-		address += PAGE_SIZE;
+-		pte++;
+-	} while (address < end);
+-}
+-
+-static inline void iterate_pmd(pgd_t * dir, unsigned long address,
+-			       unsigned long size, pte_iterator_t op,
+-			       unsigned long arg)
+-{
+-	pmd_t *pmd;
+-	unsigned long end;
+-
+-	if (pgd_none(*dir))
+-		return;
+-	if (pgd_bad(*dir)) {
+-		pgd_ERROR(*dir);
+-		pgd_clear(dir);
+-		return;
+-	}
+-	pmd = pmd_offset(dir, address);
+-	address &= ~PGDIR_MASK;
+-	end = address + size;
+-	if (end > PGDIR_SIZE)
+-		end = PGDIR_SIZE;
+-	do {
+-		iterate_pte(pmd, address, end - address, op, arg);
+-		address = (address + PMD_SIZE) & PMD_MASK;
+-		pmd++;
+-	} while (address < end);
+-}
+-
+-static void iterate_pages(unsigned long address, unsigned long size,
+-			  pte_iterator_t op, unsigned long arg)
+-{
+-	pgd_t *dir;
+-	unsigned long end = address + size;
+-
+-	dir = pgd_offset_k(address);
+-	flush_cache_all();
+-	do {
+-		iterate_pmd(dir, address, end - address, op, arg);
+-		address = (address + PGDIR_SIZE) & PGDIR_MASK;
+-		dir++;
+-	} while (address && (address < end));
+-	flush_tlb_all();
+-}
+-
+-void
+-kernel_set_cachemode(unsigned long vaddr, unsigned long size, int what)
+-{
+-	switch (what) {
+-	case IOMAP_FULL_CACHING:
+-		iterate_pages(vaddr, size, set_cached, 0);
+-		flush_tlb_range(NULL, vaddr, size);
+-		break;
+-	case IOMAP_NOCACHE_SER:
+-		iterate_pages(vaddr, size, set_uncached, 0);
+-		flush_tlb_range(NULL, vaddr, size);
+-		break;
+-	default:
+-		printk(KERN_CRIT
+-		       "kernel_set_cachemode mode %d not understood\n",
+-		       what);
+-		break;
+-	}
+-}
+diff --git a/arch/parisc/oprofile/init.c b/arch/parisc/oprofile/init.c
+index a5b898c..113f513 100644
+--- a/arch/parisc/oprofile/init.c
++++ b/arch/parisc/oprofile/init.c
+@@ -18,6 +18,6 @@ int __init oprofile_arch_init(struct opr
+ }
+ 
+ 
+-void oprofile_arch_exit()
++void oprofile_arch_exit(void)
+ {
+ }
+diff --git a/arch/powerpc/kernel/signal_32.c b/arch/powerpc/kernel/signal_32.c
+index 320353f..6bdc1a4 100644
+--- a/arch/powerpc/kernel/signal_32.c
++++ b/arch/powerpc/kernel/signal_32.c
+@@ -573,7 +573,6 @@ long compat_sys_rt_sigpending(compat_sig
+ 	return ret;
+ }
+ 
+-
+ int copy_siginfo_to_user32(struct compat_siginfo __user *d, siginfo_t *s)
+ {
+ 	int err;
+@@ -629,30 +628,24 @@ int copy_siginfo_to_user32(struct compat
+ 	return err;
+ }
+ 
+-#define copy_siginfo_to_user	copy_siginfo_to_user32
+-
+-/*
+- * Note: it is necessary to treat pid and sig as unsigned ints, with the
+- * corresponding cast to a signed int to insure that the proper conversion
+- * (sign extension) between the register representation of a signed int
+- * (msr in 32-bit mode) and the register representation of a signed int
+- * (msr in 64-bit mode) is performed.
++/* CAUTION: This is just a very minimalist implementation for the
++ *	    sake of compat_sys_rt_sigqueueinfo(), cribbed from sparc64.
+  */
+-long compat_sys_rt_sigqueueinfo(u32 pid, u32 sig, compat_siginfo_t __user *uinfo)
++int copy_siginfo_from_user32(siginfo_t *to, compat_siginfo_t __user *from)
+ {
+-	siginfo_t info;
+-	int ret;
+-	mm_segment_t old_fs = get_fs();
++	if (!access_ok(VERIFY_WRITE, from, sizeof(compat_siginfo_t)))
++		return -EFAULT;
+ 
+-	if (copy_from_user (&info, uinfo, 3*sizeof(int)) ||
+-	    copy_from_user (info._sifields._pad, uinfo->_sifields._pad, SI_PAD_SIZE32))
++	if (copy_from_user(to, from, 3*sizeof(int)) ||
++	    copy_from_user(to->_sifields._pad, from->_sifields._pad,
++			   SI_PAD_SIZE))
+ 		return -EFAULT;
+-	set_fs (KERNEL_DS);
+-	/* The __user pointer cast is valid becasuse of the set_fs() */
+-	ret = sys_rt_sigqueueinfo((int)pid, (int)sig, (siginfo_t __user *) &info);
+-	set_fs (old_fs);
+-	return ret;
++
++	return 0;
+ }
++
++#define copy_siginfo_to_user	copy_siginfo_to_user32
++
+ /*
+  *  Start Alternate signal stack support
+  *
+diff --git a/arch/s390/kernel/compat_linux.c b/arch/s390/kernel/compat_linux.c
+index 5b33f82..295d2bb 100644
+--- a/arch/s390/kernel/compat_linux.c
++++ b/arch/s390/kernel/compat_linux.c
+@@ -514,21 +514,6 @@ asmlinkage long sys32_rt_sigpending(comp
+ 	return ret;
+ }
+ 
+-asmlinkage long
+-sys32_rt_sigqueueinfo(int pid, int sig, compat_siginfo_t __user *uinfo)
+-{
+-	siginfo_t info;
+-	int ret;
+-	mm_segment_t old_fs = get_fs();
+-	
+-	if (copy_siginfo_from_user32(&info, uinfo))
+-		return -EFAULT;
+-	set_fs (KERNEL_DS);
+-	ret = sys_rt_sigqueueinfo(pid, sig, (siginfo_t __user *) &info);
+-	set_fs (old_fs);
+-	return ret;
+-}
+-
+ /*
+  * sys32_execve() executes a new program after the asm stub has set
+  * things up for us.  This should basically do what I want it to.
+diff --git a/arch/s390/kernel/compat_wrapper.S b/arch/s390/kernel/compat_wrapper.S
+index 71e54ef..71c1127 100644
+--- a/arch/s390/kernel/compat_wrapper.S
++++ b/arch/s390/kernel/compat_wrapper.S
+@@ -857,7 +857,7 @@ sys32_rt_sigqueueinfo_wrapper:
+ 	lgfr	%r2,%r2			# int
+ 	lgfr	%r3,%r3			# int
+ 	llgtr	%r4,%r4			# siginfo_emu31_t *
+-	jg	sys32_rt_sigqueueinfo	# branch to system call
++	jg	compat_sys_rt_sigqueueinfo	# branch to system call
+ 
+ 	.globl compat_sys_rt_sigsuspend_wrapper
+ compat_sys_rt_sigsuspend_wrapper:
+diff --git a/arch/sparc64/kernel/sys_sparc32.c b/arch/sparc64/kernel/sys_sparc32.c
+index e27cb71..16ff6ff 100644
+--- a/arch/sparc64/kernel/sys_sparc32.c
++++ b/arch/sparc64/kernel/sys_sparc32.c
+@@ -601,22 +601,6 @@ asmlinkage long sys32_rt_sigpending(comp
+ 	return ret;
+ }
+ 
+-asmlinkage long compat_sys_rt_sigqueueinfo(int pid, int sig,
+-					   struct compat_siginfo __user *uinfo)
+-{
+-	siginfo_t info;
+-	int ret;
+-	mm_segment_t old_fs = get_fs();
+-	
+-	if (copy_siginfo_from_user32(&info, uinfo))
+-		return -EFAULT;
+-
+-	set_fs (KERNEL_DS);
+-	ret = sys_rt_sigqueueinfo(pid, sig, (siginfo_t __user *) &info);
+-	set_fs (old_fs);
+-	return ret;
+-}
+-
+ asmlinkage long compat_sys_sigaction(int sig, struct old_sigaction32 __user *act,
+ 				     struct old_sigaction32 __user *oact)
+ {
+diff --git a/arch/x86_64/ia32/ia32entry.S b/arch/x86_64/ia32/ia32entry.S
+index b4aa875..9fa991a 100644
+--- a/arch/x86_64/ia32/ia32entry.S
++++ b/arch/x86_64/ia32/ia32entry.S
+@@ -577,7 +577,7 @@ #endif
+ 	.quad sys32_rt_sigprocmask	/* 175 */
+ 	.quad sys32_rt_sigpending
+ 	.quad compat_sys_rt_sigtimedwait
+-	.quad sys32_rt_sigqueueinfo
++	.quad compat_sys_rt_sigqueueinfo
+ 	.quad stub32_rt_sigsuspend
+ 	.quad sys32_pread		/* 180 */
+ 	.quad sys32_pwrite
+diff --git a/arch/x86_64/ia32/sys_ia32.c b/arch/x86_64/ia32/sys_ia32.c
+index c9bac3a..db10734 100644
+--- a/arch/x86_64/ia32/sys_ia32.c
++++ b/arch/x86_64/ia32/sys_ia32.c
+@@ -628,21 +628,6 @@ sys32_rt_sigpending(compat_sigset_t __us
+ 	return ret;
+ }
+ 
+-asmlinkage long
+-sys32_rt_sigqueueinfo(int pid, int sig, compat_siginfo_t __user *uinfo)
+-{
+-	siginfo_t info;
+-	int ret;
+-	mm_segment_t old_fs = get_fs();
+-	
+-	if (copy_siginfo_from_user32(&info, uinfo))
+-		return -EFAULT;
+-	set_fs (KERNEL_DS);
+-	ret = sys_rt_sigqueueinfo(pid, sig, (siginfo_t __user *)&info);
+-	set_fs (old_fs);
+-	return ret;
+-}
+-
+ /* These are here just in case some old ia32 binary calls it. */
+ asmlinkage long
+ sys32_pause(void)
+diff --git a/block/Kconfig b/block/Kconfig
+index 83766a6..a50f481 100644
+--- a/block/Kconfig
++++ b/block/Kconfig
+@@ -19,11 +19,9 @@ config BLOCK
+ 
+ if BLOCK
+ 
+-#XXX - it makes sense to enable this only for 32-bit subarch's, not for x86_64
+-#for instance.
+ config LBD
+ 	bool "Support for Large Block Devices"
+-	depends on X86 || (MIPS && 32BIT) || PPC32 || (S390 && !64BIT) || SUPERH || UML
++	depends on !64BIT
+ 	help
+ 	  Say Y here if you want to attach large (bigger than 2TB) discs to
+ 	  your machine, or if you want to have a raid or loopback device
+@@ -44,7 +42,7 @@ config BLK_DEV_IO_TRACE
+ 
+ config LSF
+ 	bool "Support for Large Single Files"
+-	depends on X86 || (MIPS && 32BIT) || PPC32 || ARCH_S390_31 || SUPERH || UML
++	depends on !64BIT
+ 	help
+ 	  Say Y here if you want to be able to handle very large files (bigger
+ 	  than 2TB), otherwise say N.
+diff --git a/drivers/char/agp/Kconfig b/drivers/char/agp/Kconfig
+index c603bf2..a9f9c48 100644
+--- a/drivers/char/agp/Kconfig
++++ b/drivers/char/agp/Kconfig
+@@ -86,7 +86,7 @@ config AGP_NVIDIA
+ 
+ config AGP_SIS
+ 	tristate "SiS chipset support"
+-	depends on AGP
++	depends on AGP && X86
+ 	help
+ 	  This option gives you AGP support for the GLX component of
+ 	  X on Silicon Integrated Systems [SiS] chipsets.
+@@ -103,7 +103,7 @@ config AGP_SWORKS
+ 
+ config AGP_VIA
+ 	tristate "VIA chipset support"
+-	depends on AGP
++	depends on AGP && X86
+ 	help
+ 	  This option gives you AGP support for the GLX component of
+ 	  X on VIA MVP3/Apollo Pro chipsets.
+diff --git a/drivers/char/agp/parisc-agp.c b/drivers/char/agp/parisc-agp.c
+index 17c50b0..30cc7ae 100644
+--- a/drivers/char/agp/parisc-agp.c
++++ b/drivers/char/agp/parisc-agp.c
+@@ -235,7 +235,7 @@ static int __init
+ agp_ioc_init(void __iomem *ioc_regs)
+ {
+ 	struct _parisc_agp_info *info = &parisc_agp_info;
+-        u64 *iova_base, *io_pdir, io_tlb_ps;
++        u64 iova_base, *io_pdir, io_tlb_ps;
+         int io_tlb_shift;
+ 
+         printk(KERN_INFO DRVPFX "IO PDIR shared with sba_iommu\n");
+diff --git a/drivers/net/Kconfig b/drivers/net/Kconfig
+index 6e863aa..cede16d 100644
+--- a/drivers/net/Kconfig
++++ b/drivers/net/Kconfig
+@@ -429,10 +429,10 @@ config HPLANCE
+ 
+ config LASI_82596
+ 	tristate "Lasi ethernet"
+-	depends on NET_ETHERNET && PARISC && GSC_LASI
++	depends on NET_ETHERNET && GSC
+ 	help
+-	  Say Y here to support the on-board Intel 82596 ethernet controller
+-	  built into Hewlett-Packard PA-RISC machines.
++	  Say Y here to support the builtin Intel 82596 ethernet controller
++	  found in Hewlett-Packard PA-RISC machines with 10Mbit ethernet.
+ 
+ config MIPS_JAZZ_SONIC
+ 	tristate "MIPS JAZZ onboard SONIC Ethernet support"
+diff --git a/drivers/net/lasi_82596.c b/drivers/net/lasi_82596.c
+index f4d815b..a9dd396 100644
+--- a/drivers/net/lasi_82596.c
++++ b/drivers/net/lasi_82596.c
+@@ -384,7 +384,7 @@ struct i596_private {
+ 	struct device *dev;
+ };
+ 
+-static char init_setup[] =
++static const char init_setup[] =
+ {
+ 	0x8E,			/* length, prefetch on */
+ 	0xC8,			/* fifo to 8, monitor off */
+@@ -683,7 +683,7 @@ static int init_i596_mem(struct net_devi
+ 	enable_irq(dev->irq);	/* enable IRQs from LAN */
+ 
+ 	DEB(DEB_INIT, printk("%s: queuing CmdConfigure\n", dev->name));
+-	memcpy(lp->cf_cmd.i596_config, init_setup, 14);
++	memcpy(lp->cf_cmd.i596_config, init_setup, sizeof(init_setup));
+ 	lp->cf_cmd.cmd.command = CmdConfigure;
+ 	CHECK_WBACK(&(lp->cf_cmd), sizeof(struct cf_cmd));
+ 	i596_add_cmd(dev, &lp->cf_cmd.cmd);
+@@ -1156,32 +1156,12 @@ static int __devinit i82596_probe(struct
+ 	dma_addr_t dma_addr;
+ 
+ 	/* This lot is ensure things have been cache line aligned. */
+-	if (sizeof(struct i596_rfd) != 32) {
+-	    printk("82596: sizeof(struct i596_rfd) = %d\n",
+-			    (int)sizeof(struct i596_rfd));
+-	    return -ENODEV;
+-	}
+-	if ((sizeof(struct i596_rbd) % 32) != 0) {
+-	    printk("82596: sizeof(struct i596_rbd) = %d\n",
+-			    (int)sizeof(struct i596_rbd));
+-	    return -ENODEV;
+-	}
+-	if ((sizeof(struct tx_cmd) % 32) != 0) {
+-	    printk("82596: sizeof(struct tx_cmd) = %d\n",
+-			    (int)sizeof(struct tx_cmd));
+-	    return -ENODEV;
+-	}
+-	if (sizeof(struct i596_tbd) != 32) {
+-	    printk("82596: sizeof(struct i596_tbd) = %d\n",
+-			    (int)sizeof(struct i596_tbd));
+-	    return -ENODEV;
+-	}
++	BUILD_BUG_ON(sizeof(struct i596_rfd) != 32);
++	BUILD_BUG_ON(sizeof(struct i596_rbd) &  31);
++	BUILD_BUG_ON(sizeof(struct tx_cmd)   &  31);
++	BUILD_BUG_ON(sizeof(struct i596_tbd) != 32);
+ #ifndef __LP64__
+-	if (sizeof(struct i596_private) > 4096) {
+-	    printk("82596: sizeof(struct i596_private) = %d\n",
+-			    (int)sizeof(struct i596_private));
+-	    return -ENODEV;
+-	}
++	BUILD_BUG_ON(sizeof(struct i596_private) > 4096);
+ #endif
+ 
+ 	if (!dev->base_addr || !dev->irq)
+diff --git a/drivers/net/tulip/interrupt.c b/drivers/net/tulip/interrupt.c
+index e3488d7..5eee46d 100644
+--- a/drivers/net/tulip/interrupt.c
++++ b/drivers/net/tulip/interrupt.c
+@@ -87,6 +87,10 @@ int tulip_refill_rx(struct net_device *d
+ 		}
+ 		tp->rx_ring[entry].status = cpu_to_le32(DescOwned);
+ 	}
++
++/* FIXME: restarting DMA breaks tulip_down() code path.
++   tulip_down() will unmap the RX and TX descriptors.
++ */
+ 	if(tp->chip_id == LC82C168) {
+ 		if(((ioread32(tp->base_addr + CSR5)>>17)&0x07) == 4) {
+ 			/* Rx stopped due to out of buffers,
+diff --git a/drivers/net/tulip/media.c b/drivers/net/tulip/media.c
+index 20bd52b..5906f52 100644
+--- a/drivers/net/tulip/media.c
++++ b/drivers/net/tulip/media.c
+@@ -44,8 +44,10 @@ static const unsigned char comet_miireg2
+ 
+ /* MII transceiver control section.
+    Read and write the MII registers using software-generated serial
+-   MDIO protocol.  See the MII specifications or DP83840A data sheet
+-   for details. */
++   MDIO protocol.
++   See IEEE 802.3-2002.pdf (Section 2, Chapter "22.2.4 Management functions")
++   or DP83840A data sheet for more details.
++   */
+ 
+ int tulip_mdio_read(struct net_device *dev, int phy_id, int location)
+ {
+@@ -261,24 +263,56 @@ void tulip_select_media(struct net_devic
+ 				u16 *reset_sequence = &((u16*)(p+3))[init_length];
+ 				int reset_length = p[2 + init_length*2];
+ 				misc_info = reset_sequence + reset_length;
+-				if (startup)
++				if (startup) {
++					int timeout = 30;
+ 					for (i = 0; i < reset_length; i++)
+ 						iowrite32(get_u16(&reset_sequence[i]) << 16, ioaddr + CSR15);
++
++					/* flush posted writes */
++					ioread32(ioaddr + CSR15);
++
++					/* Sect 3.10.3 in DP83840A.pdf (p39) */
++					udelay(500);
++
++					/* Section 4.2 in DP83840A.pdf (p43) */
++					/* and IEEE 802.3 "22.2.4.1.1 Reset" */
++					while (timeout-- &&
++						(tulip_mdio_read (dev, phy_num, MII_BMCR) & BMCR_RESET))
++						udelay(100);
++				}
+ 				for (i = 0; i < init_length; i++)
+ 					iowrite32(get_u16(&init_sequence[i]) << 16, ioaddr + CSR15);
++
++				ioread32(ioaddr + CSR15);	/* flush posted writes */
+ 			} else {
+ 				u8 *init_sequence = p + 2;
+ 				u8 *reset_sequence = p + 3 + init_length;
+ 				int reset_length = p[2 + init_length];
+ 				misc_info = (u16*)(reset_sequence + reset_length);
+ 				if (startup) {
++					int timeout = 30;
+ 					iowrite32(mtable->csr12dir | 0x100, ioaddr + CSR12);
+ 					for (i = 0; i < reset_length; i++)
+ 						iowrite32(reset_sequence[i], ioaddr + CSR12);
++
++					/* flush posted writes */
++					ioread32(ioaddr + CSR12);
++
++					/* Sect 3.10.3 in DP83840A.pdf (p39) */
++					udelay(500);
++
++					/* Section 4.2 in DP83840A.pdf (p43) */
++					/* and IEEE 802.3 "22.2.4.1.1 Reset" */
++					while (timeout-- &&
++						(tulip_mdio_read (dev, phy_num, MII_BMCR) & BMCR_RESET))
++						udelay(100);
+ 				}
+ 				for (i = 0; i < init_length; i++)
+ 					iowrite32(init_sequence[i], ioaddr + CSR12);
++
++				ioread32(ioaddr + CSR12);	/* flush posted writes */
+ 			}
++
+ 			tmp_info = get_u16(&misc_info[1]);
+ 			if (tmp_info)
+ 				tp->advertising[phy_num] = tmp_info | 1;
+diff --git a/drivers/net/tulip/tulip.h b/drivers/net/tulip/tulip.h
+index ad107f4..53291bc 100644
+--- a/drivers/net/tulip/tulip.h
++++ b/drivers/net/tulip/tulip.h
+@@ -481,8 +481,11 @@ static inline void tulip_stop_rxtx(struc
+ 			udelay(10);
+ 
+ 		if (!i)
+-			printk(KERN_DEBUG "%s: tulip_stop_rxtx() failed\n",
+-					pci_name(tp->pdev));
++			printk(KERN_DEBUG "%s: tulip_stop_rxtx() failed"
++					" (CSR5 0x%x CSR6 0x%x)\n",
++					pci_name(tp->pdev),
++					ioread32(ioaddr + CSR5),
++					ioread32(ioaddr + CSR6));
+ 	}
+ }
+ 
+diff --git a/drivers/net/tulip/tulip_core.c b/drivers/net/tulip/tulip_core.c
+index 0aee618..d11d28c 100644
+--- a/drivers/net/tulip/tulip_core.c
++++ b/drivers/net/tulip/tulip_core.c
+@@ -736,21 +736,20 @@ #endif
+ 
+ 	/* Disable interrupts by clearing the interrupt mask. */
+ 	iowrite32 (0x00000000, ioaddr + CSR7);
++	ioread32 (ioaddr + CSR7);	/* flush posted write */
+ 
+-	/* Stop the Tx and Rx processes. */
+-	tulip_stop_rxtx(tp);
++	spin_unlock_irqrestore (&tp->lock, flags);
+ 
+-	/* prepare receive buffers */
+-	tulip_refill_rx(dev);
++	free_irq (dev->irq, dev);	/* no more races after this */
++	tulip_stop_rxtx(tp);		/* Stop DMA */
+ 
+-	/* release any unconsumed transmit buffers */
+-	tulip_clean_tx_ring(tp);
++	/* Put driver back into the state we start with */
++	tulip_refill_rx(dev);		/* prepare RX buffers */
++	tulip_clean_tx_ring(tp);	/* clean up unsent TX buffers */
+ 
+ 	if (ioread32 (ioaddr + CSR6) != 0xffffffff)
+ 		tp->stats.rx_missed_errors += ioread32 (ioaddr + CSR8) & 0xffff;
+ 
+-	spin_unlock_irqrestore (&tp->lock, flags);
+-
+ 	init_timer(&tp->timer);
+ 	tp->timer.data = (unsigned long)dev;
+ 	tp->timer.function = tulip_tbl[tp->chip_id].media_timer;
+@@ -776,7 +775,6 @@ static int tulip_close (struct net_devic
+ 		printk (KERN_DEBUG "%s: Shutting down ethercard, status was %2.2x.\n",
+ 			dev->name, ioread32 (ioaddr + CSR5));
+ 
+-	free_irq (dev->irq, dev);
+ 
+ 	/* Free all the skbuffs in the Rx queue. */
+ 	for (i = 0; i < RX_RING_SIZE; i++) {
+@@ -1746,7 +1744,6 @@ static int tulip_suspend (struct pci_dev
+ 		tulip_down(dev);
+ 
+ 	netif_device_detach(dev);
+-	free_irq(dev->irq, dev);
+ 
+ 	pci_save_state(pdev);
+ 	pci_disable_device(pdev);
+diff --git a/drivers/parisc/hppb.c b/drivers/parisc/hppb.c
+index 07dc2b6..9bb4db5 100644
+--- a/drivers/parisc/hppb.c
++++ b/drivers/parisc/hppb.c
+@@ -10,10 +10,6 @@
+ ** the Free Software Foundation; either version 2 of the License, or
+ ** (at your option) any later version.
+ **
+-** This Driver currently only supports the console (port 0) on the MUX.
+-** Additional work will be needed on this driver to enable the full
+-** functionality of the MUX.
+-**
+ */
+ 
+ #include <linux/types.h>
+@@ -67,7 +63,7 @@ static int hppb_probe(struct parisc_devi
+ 		}
+ 		card = card->next;
+ 	}
+-        printk(KERN_INFO "Found GeckoBoa at 0x%lx\n", dev->hpa.start);
++        printk(KERN_INFO "Found GeckoBoa at 0x%x\n", dev->hpa.start);
+ 
+ 	card->hpa = dev->hpa.start;
+ 	card->mmio_region.name = "HP-PB Bus";
+@@ -78,16 +74,18 @@ static int hppb_probe(struct parisc_devi
+ 
+ 	status = ccio_request_resource(dev, &card->mmio_region);
+ 	if(status < 0) {
+-		printk(KERN_ERR "%s: failed to claim HP-PB bus space (%08lx, %08lx)\n",
++		printk(KERN_ERR "%s: failed to claim HP-PB bus space (%08x, %08x)\n",
+ 			__FILE__, card->mmio_region.start, card->mmio_region.end);
+ 	}
+ 
+         return 0;
+ }
+ 
+-
+ static struct parisc_device_id hppb_tbl[] = {
+-        { HPHW_BCPORT, HVERSION_REV_ANY_ID, 0x500, 0xc }, 
++        { HPHW_BCPORT, HVERSION_REV_ANY_ID, 0x500, 0xc }, /* E25 and K */
++        { HPHW_BCPORT, 0x0, 0x501, 0xc }, /* E35 */
++        { HPHW_BCPORT, 0x0, 0x502, 0xc }, /* E45 */
++        { HPHW_BCPORT, 0x0, 0x503, 0xc }, /* E55 */
+         { 0, }
+ };
+ 
+diff --git a/drivers/parisc/iosapic.c b/drivers/parisc/iosapic.c
+index c2949b4..b0b7799 100644
+--- a/drivers/parisc/iosapic.c
++++ b/drivers/parisc/iosapic.c
+@@ -686,13 +686,13 @@ #endif
+  * i386/ia64 support ISA devices and have to deal with
+  * edge-triggered interrupts too.
+  */
+-static void iosapic_end_irq(unsigned int irq)
++void iosapic_end_irq(struct irq_desc *dummy, unsigned int irq)
+ {
+ 	struct vector_info *vi = iosapic_get_vector(irq);
+ 	DBG(KERN_DEBUG "end_irq(%d): eoi(%p, 0x%x)\n", irq,
+ 			vi->eoi_addr, vi->eoi_data);
+ 	iosapic_eoi(vi->eoi_addr, vi->eoi_data);
+-	cpu_end_irq(irq);
++	cpu_end_irq(NULL, irq);
+ }
+ 
+ static unsigned int iosapic_startup_irq(unsigned int irq)
+@@ -729,8 +729,6 @@ static struct hw_interrupt_type iosapic_
+ 	.shutdown =	iosapic_disable_irq,
+ 	.enable =	iosapic_enable_irq,
+ 	.disable =	iosapic_disable_irq,
+-	.ack =		cpu_ack_irq,
+-	.end =		iosapic_end_irq,
+ #ifdef CONFIG_SMP
+ 	.set_affinity =	iosapic_set_affinity_irq,
+ #endif
+@@ -819,6 +817,7 @@ #endif /* CONFIG_SUPERIO */
+ 	vi->eoi_data = cpu_to_le32(vi->txn_data);
+ 
+ 	cpu_claim_irq(vi->txn_irq, &iosapic_interrupt_type, vi);
++	set_irq_handler(vi->txn_irq, handle_level_irq_iosapic);
+ 
+  out:
+ 	pcidev->irq = vi->txn_irq;
+diff --git a/drivers/parisc/iosapic_private.h b/drivers/parisc/iosapic_private.h
+index 41e7ec2..6e05e30 100644
+--- a/drivers/parisc/iosapic_private.h
++++ b/drivers/parisc/iosapic_private.h
+@@ -132,7 +132,7 @@ #endif
+ struct vector_info {
+ 	struct iosapic_info *iosapic;	/* I/O SAPIC this vector is on */
+ 	struct irt_entry *irte;		/* IRT entry */
+-	u32	*eoi_addr;		/* precalculate EOI reg address */
++	u32 __iomem *eoi_addr;		/* precalculate EOI reg address */
+ 	u32	eoi_data;		/* IA64: ?       PA: swapped txn_data */
+ 	int	txn_irq;		/* virtual IRQ number for processor */
+ 	ulong	txn_addr;		/* IA64: id_eid  PA: partial HPA */
+diff --git a/drivers/parisc/lba_pci.c b/drivers/parisc/lba_pci.c
+index ba67699..eae0812 100644
+--- a/drivers/parisc/lba_pci.c
++++ b/drivers/parisc/lba_pci.c
+@@ -980,7 +980,7 @@ #undef LBA_PORT_OUT
+ #define LBA_PORT_OUT(size, mask) \
+ static void lba_pat_out##size (struct pci_hba_data *l, u16 addr, u##size val) \
+ { \
+-	void *where = (void *) PIOP_TO_GMMIO(LBA_DEV(l), addr); \
++	void __iomem *where = PIOP_TO_GMMIO(LBA_DEV(l), addr); \
+ 	DBG_PORT("%s(0x%p, 0x%x, 0x%x)\n", __FUNCTION__, l, addr, val); \
+ 	WRITE_REG##size(val, where); \
+ 	/* flush the I/O down to the elroy at least */ \
+@@ -1406,13 +1406,20 @@ #endif
+ 	return 0;
+ }
+ 
+-
++/*
++ * Unfortunately, when firmware numbers busses, it doesn't take into account
++ * Cardbus bridges.  So we have to renumber the busses to suit ourselves.
++ * Elroy/Mercury don't actually know what bus number they're attached to;
++ * we use bus 0 to indicate the directly attached bus and any other bus
++ * number will be taken care of by the PCI-PCI bridge.
++ */
++static unsigned int lba_next_bus = 0;
+ 
+ /*
+-** Determine if lba should claim this chip (return 0) or not (return 1).
+-** If so, initialize the chip and tell other partners in crime they
+-** have work to do.
+-*/
++ * Determine if lba should claim this chip (return 0) or not (return 1).
++ * If so, initialize the chip and tell other partners in crime they
++ * have work to do.
++ */
+ static int __init
+ lba_driver_probe(struct parisc_device *dev)
+ {
+@@ -1478,9 +1485,7 @@ #endif
+ 		return -ENODEV;
+ 	}
+ 
+-	/*
+-	** Tell I/O SAPIC driver we have a IRQ handler/region.
+-	*/
++	/* Tell I/O SAPIC driver we have a IRQ handler/region. */
+ 	tmp_obj = iosapic_register(dev->hpa.start + LBA_IOSAPIC_BASE);
+ 
+ 	/* NOTE: PCI devices (e.g. 103c:1005 graphics card) which don't
+@@ -1529,16 +1534,17 @@ #endif
+ 		lba_legacy_resources(dev, lba_dev);
+ 	}
+ 
+-	/* 
+-	** Tell PCI support another PCI bus was found.
+-	** Walks PCI bus for us too.
+-	*/
++	if (lba_dev->hba.bus_num.start < lba_next_bus)
++		lba_dev->hba.bus_num.start = lba_next_bus;
++
+ 	dev->dev.platform_data = lba_dev;
+ 	lba_bus = lba_dev->hba.hba_bus =
+ 		pci_scan_bus_parented(&dev->dev, lba_dev->hba.bus_num.start,
+ 				cfg_ops, NULL);
+-	if (lba_bus)
++	if (lba_bus) {
++		lba_next_bus = lba_bus->subordinate + 1;
+ 		pci_bus_add_devices(lba_bus);
++	}
+ 
+ 	/* This is in lieu of calling pci_assign_unassigned_resources() */
+ 	if (is_pdc_pat()) {
+diff --git a/drivers/parisc/sba_iommu.c b/drivers/parisc/sba_iommu.c
+index f1e7ccd..41abbed 100644
+--- a/drivers/parisc/sba_iommu.c
++++ b/drivers/parisc/sba_iommu.c
+@@ -846,7 +846,7 @@ static void *sba_alloc_consistent(struct
+ 	if (!hwdev) {
+ 		/* only support PCI */
+ 		*dma_handle = 0;
+-		return 0;
++		return NULL;
+ 	}
+ 
+         ret = (void *) __get_free_pages(gfp, get_order(size));
+diff --git a/drivers/scsi/53c700.c b/drivers/scsi/53c700.c
+index 562432d..ad36bc8 100644
+--- a/drivers/scsi/53c700.c
++++ b/drivers/scsi/53c700.c
+@@ -294,6 +294,7 @@ NCR_700_detect(struct scsi_host_template
+ 	__u8 *memory;
+ 	__u32 *script;
+ 	struct Scsi_Host *host;
++	const char *chipname;
+ 	static int banner = 0;
+ 	int j;
+ 
+@@ -392,11 +393,11 @@ NCR_700_detect(struct scsi_host_template
+ 		printk(KERN_NOTICE "53c700: Version " NCR_700_VERSION " By James.Bottomley@HansenPartnership.com\n");
+ 		banner = 1;
+ 	}
++	chipname = hostdata->chip710 ? "53c710" : \
++		   (hostdata->fast ? "53c700-66" : "53c700");
+ 	printk(KERN_NOTICE "scsi%d: %s rev %d %s\n", host->host_no,
+-	       hostdata->chip710 ? "53c710" :
+-	       (hostdata->fast ? "53c700-66" : "53c700"),
+-	       hostdata->rev, hostdata->differential ?
+-	       "(Differential)" : "");
++			chipname, hostdata->rev,
++			hostdata->differential ?  "(Differential)" : "");
+ 	/* reset the chip */
+ 	NCR_700_chip_reset(host);
+ 
+diff --git a/drivers/scsi/script_asm.pl b/drivers/scsi/script_asm.pl
+index 7d651d9..d8847ec 100644
+--- a/drivers/scsi/script_asm.pl
++++ b/drivers/scsi/script_asm.pl
+@@ -156,11 +156,11 @@ # Parsing regular expressions
+ $hexnum = '0[xX][0-9A-Fa-f]+';		
+ $constant = "$hexnum|$decnum";
+ 
+-# yucky - since we can't control grouping of # $constant, we need to 
++# yucky - since we can't control grouping of $constant, we need to 
+ # expand out each alternative for $value.
+ 
+-$value = "$identifier|$identifier\\s*[+\-]\\s*$decnum|".
+-    "$identifier\\s*[+-]\s*$hexnum|$constant";
++$value = "$identifier\\s*[+-]\\s*$decnum|$identifier\\s*[+-]\s*$hexnum|".
++    "$identifier\\s*[+-]\\s*$identifier|$identifier|$constant";
+ 
+ print STDERR "value regex = $value\n" if ($debug);
+ 
+@@ -490,7 +490,12 @@ print STDERR "Parsing MOVE FROM $transfe
+ 	    $address += 2;
+ 	} elsif ($rest =~ /^MEMORY\s+(.*)/i) {
+ 	    $rest = $1;
+-	    $code[$address] = 0xc0_00_00_00; 
++	    if ($rest =~ /^NO\s*FLUSH\s+(.*)/i) {
++		$rest = $1;
++		$code[$address] = 0xc1_00_00_00;
++	    } else {
++		$code[$address] = 0xc0_00_00_00; 
++	    }
+ 	    if ($rest =~ /^($value)\s*,\s*($value)\s*,\s*($value)\s*$/) {
+ 		$count = $1;
+ 		$source = $2;
+@@ -715,7 +720,7 @@ # with this syntax to set target mode.
+ 	} else {
+ 	    $code[$address] = 0x98_00_00_00;
+ 	}
+-print STDERR "parsing JUMP, rest = $rest\n" if ($debug);
++print STDERR "parsing $instruction, rest = $rest\n" if ($debug);
+ 
+ # Relative jump. 
+ 	if ($rest =~ /^(REL\s*\(\s*$identifier\s*\))\s*(.*)/i) { 
+@@ -743,7 +748,7 @@ # Absolute jump, requires no more gunk
+ 	} else {
+ 	    die
+ "$0 : syntax error in line $lineno : $_
+-	expected , <conditional> or end of line, got $1
++	expected , <conditional> or end of line, got $rest
+ ";
+ 	}
+ 	
+diff --git a/drivers/scsi/sym53c8xx_2/sym_glue.c b/drivers/scsi/sym53c8xx_2/sym_glue.c
+index 4d78c7e..3a47166 100644
+--- a/drivers/scsi/sym53c8xx_2/sym_glue.c
++++ b/drivers/scsi/sym53c8xx_2/sym_glue.c
+@@ -204,13 +204,6 @@ void sym_xpt_done(struct sym_hcb *np, st
+ 	cmd->scsi_done(cmd);
+ }
+ 
+-static void sym_xpt_done2(struct sym_hcb *np, struct scsi_cmnd *cmd, int cam_status)
+-{
+-	sym_set_cam_status(cmd, cam_status);
+-	sym_xpt_done(np, cmd);
+-}
+-
+-
+ /*
+  *  Tell the SCSI layer about a BUS RESET.
+  */
+@@ -415,10 +408,8 @@ static int sym_queue_command(struct sym_
+ 	 *  Minimal checkings, so that we will not 
+ 	 *  go outside our tables.
+ 	 */
+-	if (sdev->id == np->myaddr) {
+-		sym_xpt_done2(np, cmd, DID_NO_CONNECT);
+-		return 0;
+-	}
++	if (sdev->id == np->myaddr)
++		goto nodev;
+ 
+ 	/*
+ 	 *  Retrieve the target descriptor.
+@@ -439,6 +430,11 @@ static int sym_queue_command(struct sym_
+ 		return 1;	/* Means resource shortage */
+ 	sym_queue_scsiio(np, cmd, cp);
+ 	return 0;
++
++ nodev:
++	cmd->result = DID_NO_CONNECT << 16;
++	cmd->scsi_done(cmd);
++	return 0;
+ }
+ 
+ /*
+@@ -1349,7 +1345,7 @@ static int sym_host_info(struct sym_hcb 
+ 			 "revision id 0x%x\n",
+ 			 np->s.chip_name, np->device_id, np->revision_id);
+ 	copy_info(&info, "At PCI address %s, IRQ " IRQ_FMT "\n",
+-		pci_name(np->s.device), IRQ_PRM(np->s.irq));
++		pci_name(np->s.device), IRQ_PRM(np->s.device->irq));
+ 	copy_info(&info, "Min. period factor %d, %s SCSI BUS%s\n",
+ 			 (int) (np->minsync_dt ? np->minsync_dt : np->minsync),
+ 			 np->maxwide ? "Wide" : "Narrow",
+@@ -1402,8 +1398,8 @@ static void sym_free_resources(struct sy
+ 	/*
+ 	 *  Free O/S specific resources.
+ 	 */
+-	if (np->s.irq)
+-		free_irq(np->s.irq, np);
++	if (pdev->irq)
++		free_irq(pdev->irq, np);
+ 	if (np->s.ioaddr)
+ 		pci_iounmap(pdev, np->s.ioaddr);
+ 	if (np->s.ramaddr)
+@@ -1552,7 +1548,6 @@ static struct Scsi_Host * __devinit sym_
+ 			sym_name(np), pdev->irq);
+ 		goto attach_failed;
+ 	}
+-	np->s.irq = pdev->irq;
+ 
+ 	/*
+ 	 *  After SCSI devices have been opened, we cannot
+@@ -1592,6 +1587,10 @@ static struct Scsi_Host * __devinit sym_
+ 	BUG_ON(sym2_transport_template == NULL);
+ 	instance->transportt	= sym2_transport_template;
+ 
++	/* 53c896 rev 1 errata: DMA may not cross 16MB boundary */
++	if (pdev->device == PCI_DEVICE_ID_NCR_53C896 && np->revision_id < 2)
++		instance->dma_boundary = 0xFFFFFF;
++
+ 	spin_unlock_irqrestore(instance->host_lock, flags);
+ 
+ 	return instance;
+diff --git a/drivers/scsi/sym53c8xx_2/sym_glue.h b/drivers/scsi/sym53c8xx_2/sym_glue.h
+index e022d3c..d4d98ae 100644
+--- a/drivers/scsi/sym53c8xx_2/sym_glue.h
++++ b/drivers/scsi/sym53c8xx_2/sym_glue.h
+@@ -184,7 +184,6 @@ struct sym_shcb {
+ 	void __iomem *	ioaddr;		/* MMIO kernel io address	*/
+ 	void __iomem *	ramaddr;	/* RAM  kernel io address	*/
+ 	u_short		io_ws;		/* IO window size		*/
+-	int		irq;		/* IRQ number			*/
+ 
+ 	struct timer_list timer;	/* Timer handler link header	*/
+ 	u_long		lasttime;
+diff --git a/drivers/scsi/sym53c8xx_2/sym_hipd.h b/drivers/scsi/sym53c8xx_2/sym_hipd.h
+index 79ab6a1..0d7eaf2 100644
+--- a/drivers/scsi/sym53c8xx_2/sym_hipd.h
++++ b/drivers/scsi/sym53c8xx_2/sym_hipd.h
+@@ -38,6 +38,7 @@
+  */
+ 
+ #include <linux/gfp.h>
++#include <linux/hash.h>
+ 
+ #ifndef SYM_HIPD_H
+ #define SYM_HIPD_H
+@@ -305,13 +306,7 @@ #define NS_PPR		(3)
+  */
+ #define CCB_HASH_SHIFT		8
+ #define CCB_HASH_SIZE		(1UL << CCB_HASH_SHIFT)
+-#define CCB_HASH_MASK		(CCB_HASH_SIZE-1)
+-#if 1
+-#define CCB_HASH_CODE(dsa)	\
+-	(((dsa) >> (_LGRU16_(sizeof(struct sym_ccb)))) & CCB_HASH_MASK)
+-#else
+-#define CCB_HASH_CODE(dsa)	(((dsa) >> 9) & CCB_HASH_MASK)
+-#endif
++#define CCB_HASH_CODE(dsa)	hash_u32(dsa, CCB_HASH_SHIFT);
+ 
+ #if	SYM_CONF_DMA_ADDRESSING_MODE == 2
+ /*
+diff --git a/drivers/scsi/sym53c8xx_2/sym_misc.h b/drivers/scsi/sym53c8xx_2/sym_misc.h
+index 0433d5d..921b196 100644
+--- a/drivers/scsi/sym53c8xx_2/sym_misc.h
++++ b/drivers/scsi/sym53c8xx_2/sym_misc.h
+@@ -166,27 +166,4 @@ #define FOR_EACH_QUEUED_ELEMENT(head, qp
+  */
+ #define sym_qptr(p)	((struct sym_quehead *) (p))
+ 
+-/*
+- *  Simple bitmap operations.
+- */ 
+-#define sym_set_bit(p, n)	(((u32 *)(p))[(n)>>5] |=  (1<<((n)&0x1f)))
+-#define sym_clr_bit(p, n)	(((u32 *)(p))[(n)>>5] &= ~(1<<((n)&0x1f)))
+-#define sym_is_bit(p, n)	(((u32 *)(p))[(n)>>5] &   (1<<((n)&0x1f)))
+-
+-/*
+- * The below round up/down macros are to be used with a constant 
+- * as argument (sizeof(...) for example), for the compiler to 
+- * optimize the whole thing.
+- */
+-#define _U_(a,m)	(a)<=(1<<m)?m:
+-
+-/*
+- * Round up logarithm to base 2 of a 16 bit constant.
+- */
+-#define _LGRU16_(a) \
+-( \
+- _U_(a, 0)_U_(a, 1)_U_(a, 2)_U_(a, 3)_U_(a, 4)_U_(a, 5)_U_(a, 6)_U_(a, 7) \
+- _U_(a, 8)_U_(a, 9)_U_(a,10)_U_(a,11)_U_(a,12)_U_(a,13)_U_(a,14)_U_(a,15) \
+- 16)
+-
+ #endif /* SYM_MISC_H */
+diff --git a/drivers/serial/mux.c b/drivers/serial/mux.c
+index 8ad1b8c..9695fe0 100644
+--- a/drivers/serial/mux.c
++++ b/drivers/serial/mux.c
+@@ -51,7 +51,11 @@ #define MUX_BREAK(status) ((status & 0xF
+ 
+ #define MUX_NR 256
+ static unsigned int port_cnt __read_mostly;
+-static struct uart_port mux_ports[MUX_NR];
++struct mux_port {
++	struct uart_port port;
++	int enabled;
++};
++static struct mux_port mux_ports[MUX_NR];
+ 
+ static struct uart_driver mux_driver = {
+ 	.owner = THIS_MODULE,
+@@ -66,7 +70,36 @@ static struct timer_list mux_timer;
+ 
+ #define UART_PUT_CHAR(p, c) __raw_writel((c), (p)->membase + IO_DATA_REG_OFFSET)
+ #define UART_GET_FIFO_CNT(p) __raw_readl((p)->membase + IO_DCOUNT_REG_OFFSET)
+-#define GET_MUX_PORTS(iodc_data) ((((iodc_data)[4] & 0xf0) >> 4) * 8) + 8
++
++/**
++ * get_mux_port_count - Get the number of available ports on the Mux.
++ * @dev: The parisc device.
++ * 
++ * This function is used to determine the number of ports the Mux
++ * supports.  The IODC data reports the number of ports the Mux
++ * can support, but there are cases where not all the Mux ports
++ * are connected.  This function can override the IODC and 
++ * return the true port count.
++ */
++static int __init get_mux_port_count(struct parisc_device *dev)
++{
++	int status;
++	u8 iodc_data[32];
++	unsigned long bytecnt;
++
++	/* If this is the built-in Mux for the K-Class (Eole CAP/MUX),
++	 * we only need to allocate resources for 1 port since the 
++	 * other 7 ports are not connected.
++	 */
++	if(dev->id.hversion == 0x15)
++		return 1;
++
++	status = pdc_iodc_read(&bytecnt, dev->hpa.start, 0, iodc_data, 32);
++	BUG_ON(status != PDC_OK);
++
++	/* Return the number of ports specified in the iodc data. */
++	return ((((iodc_data)[4] & 0xf0) >> 4) * 8) + 8;
++}
+ 
+ /**
+  * mux_tx_empty - Check if the transmitter fifo is empty.
+@@ -250,7 +283,7 @@ static void mux_read(struct uart_port *p
+  */
+ static int mux_startup(struct uart_port *port)
+ {
+-	mod_timer(&mux_timer, jiffies + MUX_POLL_DELAY);
++	mux_ports[port->line].enabled = 1;
+ 	return 0;
+ }
+ 
+@@ -262,6 +295,7 @@ static int mux_startup(struct uart_port 
+  */
+ static void mux_shutdown(struct uart_port *port)
+ {
++	mux_ports[port->line].enabled = 0;
+ }
+ 
+ /**
+@@ -319,7 +353,7 @@ static int mux_request_port(struct uart_
+  * @port: Ptr to the uart_port.
+  * @type: Bitmask of required configurations.
+  *
+- * Perform any autoconfiguration steps for the port.  This functino is
++ * Perform any autoconfiguration steps for the port.  This function is
+  * called if the UPF_BOOT_AUTOCONF flag is specified for the port.
+  * [Note: This is required for now because of a bug in the Serial core.
+  *  rmk has already submitted a patch to linus, should be available for
+@@ -357,11 +391,11 @@ static void mux_poll(unsigned long unuse
+ 	int i;
+ 
+ 	for(i = 0; i < port_cnt; ++i) {
+-		if(!mux_ports[i].info)
++		if(!mux_ports[i].enabled)
+ 			continue;
+ 
+-		mux_read(&mux_ports[i]);
+-		mux_write(&mux_ports[i]);
++		mux_read(&mux_ports[i].port);
++		mux_write(&mux_ports[i].port);
+ 	}
+ 
+ 	mod_timer(&mux_timer, jiffies + MUX_POLL_DELAY);
+@@ -371,8 +405,17 @@ static void mux_poll(unsigned long unuse
+ #ifdef CONFIG_SERIAL_MUX_CONSOLE
+ static void mux_console_write(struct console *co, const char *s, unsigned count)
+ {
+-        while(count--)
+-                pdc_iodc_putc(*s++);
++	/* Wait until the FIFO drains. */
++	while(UART_GET_FIFO_CNT(&mux_ports[0].port))
++		udelay(1);
++
++	while(count--) {
++		if(*s == '\n') {
++			UART_PUT_CHAR(&mux_ports[0].port, '\r');
++		}
++		UART_PUT_CHAR(&mux_ports[0].port, *s++);
++	}
++
+ }
+ 
+ static int mux_console_setup(struct console *co, char *options)
+@@ -428,19 +471,14 @@ static struct uart_ops mux_pops = {
+  */
+ static int __init mux_probe(struct parisc_device *dev)
+ {
+-	int i, status, ports;
+-	u8 iodc_data[32];
+-	unsigned long bytecnt;
+-	struct uart_port *port;
++	int i, status;
+ 
+-	status = pdc_iodc_read(&bytecnt, dev->hpa.start, 0, iodc_data, 32);
+-	if(status != PDC_OK) {
+-		printk(KERN_ERR "Serial mux: Unable to read IODC.\n");
+-		return 1;
+-	}
++	int port_count = get_mux_port_count(dev);
++ 	printk(KERN_INFO "Serial mux driver (%d ports) Revision: 0.6\n", port_count);
+ 
+-	ports = GET_MUX_PORTS(iodc_data);
+- 	printk(KERN_INFO "Serial mux driver (%d ports) Revision: 0.3\n", ports);
++	dev_set_drvdata(&dev->dev, (void *)(long)port_count);
++	request_mem_region(dev->hpa.start + MUX_OFFSET, 
++                           port_count * MUX_LINE_OFFSET, "Mux");
+ 
+ 	if(!port_cnt) {
+ 		mux_driver.cons = MUX_CONSOLE;
+@@ -450,13 +488,10 @@ static int __init mux_probe(struct paris
+ 			printk(KERN_ERR "Serial mux: Unable to register driver.\n");
+ 			return 1;
+ 		}
+-
+-		init_timer(&mux_timer);
+-		mux_timer.function = mux_poll;
+ 	}
+ 
+-	for(i = 0; i < ports; ++i, ++port_cnt) {
+-		port = &mux_ports[port_cnt];
++	for(i = 0; i < port_count; ++i, ++port_cnt) {
++		struct uart_port *port = &mux_ports[port_cnt].port;
+ 		port->iobase	= 0;
+ 		port->mapbase	= dev->hpa.start + MUX_OFFSET +
+ 						(i * MUX_LINE_OFFSET);
+@@ -477,27 +512,73 @@ static int __init mux_probe(struct paris
+ 		 */
+ 		port->timeout   = HZ / 50;
+ 		spin_lock_init(&port->lock);
++
+ 		status = uart_add_one_port(&mux_driver, port);
+ 		BUG_ON(status);
+ 	}
+ 
+-#ifdef CONFIG_SERIAL_MUX_CONSOLE
+-        register_console(&mux_console);
+-#endif
+ 	return 0;
+ }
+ 
++static int __devexit mux_remove(struct parisc_device *dev)
++{
++	int i, j;
++	int port_count = (long)dev_get_drvdata(&dev->dev);
++
++	/* Find Port 0 for this card in the mux_ports list. */
++	for(i = 0; i < port_cnt; ++i) {
++		if(mux_ports[i].port.mapbase == dev->hpa.start + MUX_OFFSET)
++			break;
++	}
++	BUG_ON(i + port_count > port_cnt);
++
++	/* Release the resources associated with each port on the device. */
++	for(j = 0; j < port_count; ++j, ++i) {
++		struct uart_port *port = &mux_ports[i].port;
++
++		uart_remove_one_port(&mux_driver, port);
++		if(port->membase)
++			iounmap(port->membase);
++	}
++	
++	release_mem_region(dev->hpa.start + MUX_OFFSET, port_count * MUX_LINE_OFFSET);
++	return 0;
++}
++
++/* Hack.  This idea was taken from the 8250_gsc.c on how to properly order
++ * the serial port detection in the proper order.   The idea is we always
++ * want the builtin mux to be detected before addin mux cards, so we 
++ * specifically probe for the builtin mux cards first.
++ *
++ * This table only contains the parisc_device_id of known builtin mux
++ * devices.  All other mux cards will be detected by the generic mux_tbl.
++ */
++static struct parisc_device_id builtin_mux_tbl[] = {
++	{ HPHW_A_DIRECT, HVERSION_REV_ANY_ID, 0x15, 0x0000D }, /* All K-class */
++	{ HPHW_A_DIRECT, HVERSION_REV_ANY_ID, 0x44, 0x0000D }, /* E35, E45, and E55 */
++	{ 0, }
++};
++
+ static struct parisc_device_id mux_tbl[] = {
+ 	{ HPHW_A_DIRECT, HVERSION_REV_ANY_ID, HVERSION_ANY_ID, 0x0000D },
+ 	{ 0, }
+ };
+ 
++MODULE_DEVICE_TABLE(parisc, builtin_mux_tbl);
+ MODULE_DEVICE_TABLE(parisc, mux_tbl);
+ 
++static struct parisc_driver builtin_serial_mux_driver = {
++	.name =		"builtin_serial_mux",
++	.id_table =	builtin_mux_tbl,
++	.probe =	mux_probe,
++	.remove =       __devexit_p(mux_remove),
++};
++
+ static struct parisc_driver serial_mux_driver = {
+ 	.name =		"serial_mux",
+ 	.id_table =	mux_tbl,
+ 	.probe =	mux_probe,
++	.remove =       __devexit_p(mux_remove),
+ };
+ 
+ /**
+@@ -507,7 +588,21 @@ static struct parisc_driver serial_mux_d
+  */
+ static int __init mux_init(void)
+ {
+-	return register_parisc_driver(&serial_mux_driver);
++	register_parisc_driver(&builtin_serial_mux_driver);
++	register_parisc_driver(&serial_mux_driver);
++
++	if(port_cnt > 0) {
++		/* Start the Mux timer */
++		init_timer(&mux_timer);
++		mux_timer.function = mux_poll;
++		mod_timer(&mux_timer, jiffies + MUX_POLL_DELAY);
++
++#ifdef CONFIG_SERIAL_MUX_CONSOLE
++	        register_console(&mux_console);
++#endif
++	}
++
++	return 0;
+ }
+ 
+ /**
+@@ -517,14 +612,16 @@ static int __init mux_init(void)
+  */
+ static void __exit mux_exit(void)
+ {
+-	int i;
+-
+-	for (i = 0; i < port_cnt; i++) {
+-		uart_remove_one_port(&mux_driver, &mux_ports[i]);
+-		if (mux_ports[i].membase)
+-			iounmap(mux_ports[i].membase);
++	/* Delete the Mux timer. */
++	if(port_cnt > 0) {
++		del_timer(&mux_timer);
++#ifdef CONFIG_SERIAL_MUX_CONSOLE
++		unregister_console(&mux_console);
++#endif
+ 	}
+ 
++	unregister_parisc_driver(&builtin_serial_mux_driver);
++	unregister_parisc_driver(&serial_mux_driver);
+ 	uart_unregister_driver(&mux_driver);
+ }
+ 
+diff --git a/drivers/serial/serial_core.c b/drivers/serial/serial_core.c
+index c67b05e..5fb4a33 100644
+--- a/drivers/serial/serial_core.c
++++ b/drivers/serial/serial_core.c
+@@ -2043,6 +2043,7 @@ static inline void
+ uart_report_port(struct uart_driver *drv, struct uart_port *port)
+ {
+ 	char address[64];
++	char irq[16];
+ 
+ 	switch (port->iotype) {
+ 	case UPIO_PORT:
+@@ -2065,10 +2066,19 @@ uart_report_port(struct uart_driver *drv
+ 		break;
+ 	}
+ 
+-	printk(KERN_INFO "%s%s%s%d at %s (irq = %d) is a %s\n",
++#ifndef NO_IRQ
++#define NO_IRQ (-1)
++#endif
++	if (port->irq == NO_IRQ) {
++		strlcpy(irq, "polled", sizeof(irq));
++	} else {
++		snprintf(irq, sizeof(irq), "irq = %d", port->irq);
++	}
++
++	printk(KERN_INFO "%s%s%s%d at %s (%s) is a %s\n",
+ 	       port->dev ? port->dev->bus_id : "",
+ 	       port->dev ? ": " : "",
+-	       drv->dev_name, port->line, address, port->irq, uart_type(port));
++	       drv->dev_name, port->line, address, irq, uart_type(port));
+ }
+ 
+ static void
+diff --git a/include/asm-avr32/types.h b/include/asm-avr32/types.h
+index 3f47db9..2bff153 100644
+--- a/include/asm-avr32/types.h
++++ b/include/asm-avr32/types.h
+@@ -57,11 +57,6 @@ typedef unsigned long long u64;
+ 
+ typedef u32 dma_addr_t;
+ 
+-#ifdef CONFIG_LBD
+-typedef u64 sector_t;
+-#define HAVE_SECTOR_T
+-#endif
+-
+ #endif /* __ASSEMBLY__ */
+ 
+ #endif /* __KERNEL__ */
+diff --git a/include/asm-h8300/types.h b/include/asm-h8300/types.h
+index da2402b..2a8b1b2 100644
+--- a/include/asm-h8300/types.h
++++ b/include/asm-h8300/types.h
+@@ -55,12 +55,6 @@ #define BITS_PER_LONG 32
+ 
+ typedef u32 dma_addr_t;
+ 
+-#define HAVE_SECTOR_T
+-typedef u64 sector_t;
+-
+-#define HAVE_BLKCNT_T
+-typedef u64 blkcnt_t;
+-
+ #endif /* __KERNEL__ */
+ 
+ #endif /* __ASSEMBLY__ */
+diff --git a/include/asm-i386/types.h b/include/asm-i386/types.h
+index 4b4b295..ad0a55b 100644
+--- a/include/asm-i386/types.h
++++ b/include/asm-i386/types.h
+@@ -57,16 +57,6 @@ typedef u32 dma_addr_t;
+ #endif
+ typedef u64 dma64_addr_t;
+ 
+-#ifdef CONFIG_LBD
+-typedef u64 sector_t;
+-#define HAVE_SECTOR_T
+-#endif
+-
+-#ifdef CONFIG_LSF
+-typedef u64 blkcnt_t;
+-#define HAVE_BLKCNT_T
+-#endif
+-
+ #endif /* __ASSEMBLY__ */
+ 
+ #endif /* __KERNEL__ */
+diff --git a/include/asm-mips/types.h b/include/asm-mips/types.h
+index 2b52e18..63a13c5 100644
+--- a/include/asm-mips/types.h
++++ b/include/asm-mips/types.h
+@@ -93,16 +93,6 @@ #else
+ typedef unsigned long phys_t;
+ #endif
+ 
+-#ifdef CONFIG_LBD
+-typedef u64 sector_t;
+-#define HAVE_SECTOR_T
+-#endif
+-
+-#ifdef CONFIG_LSF
+-typedef u64 blkcnt_t;
+-#define HAVE_BLKCNT_T
+-#endif
+-
+ #endif /* __ASSEMBLY__ */
+ 
+ #endif /* __KERNEL__ */
+diff --git a/include/asm-parisc/dma-mapping.h b/include/asm-parisc/dma-mapping.h
+index 1e387e1..168815c 100644
+--- a/include/asm-parisc/dma-mapping.h
++++ b/include/asm-parisc/dma-mapping.h
+@@ -236,7 +236,7 @@ int ccio_allocate_resource(const struct 
+ 		unsigned long min, unsigned long max, unsigned long align);
+ #else /* !CONFIG_IOMMU_CCIO */
+ #define ccio_get_iommu(dev) NULL
+-#define ccio_request_resource(dev, res) request_resource(&iomem_resource, res)
++#define ccio_request_resource(dev, res) insert_resource(&iomem_resource, res)
+ #define ccio_allocate_resource(dev, res, size, min, max, align) \
+ 		allocate_resource(&iomem_resource, res, size, min, max, \
+ 				align, NULL, NULL)
+diff --git a/include/asm-parisc/irq-handlers.h b/include/asm-parisc/irq-handlers.h
+new file mode 100644
+index 0000000..a5dfc1a
+--- /dev/null
++++ b/include/asm-parisc/irq-handlers.h
+@@ -0,0 +1,8 @@
++HANDLE_LEVEL_IRQ(_chip, cpu_ack_irq, cpu_end_irq)
++HANDLE_SPECIFIC_IRQ(_timer, cpu_ack_irq, cpu_end_irq, timer_interrupt)
++#ifdef CONFIG_SMP
++HANDLE_SPECIFIC_IRQ(_ipi, cpu_ack_irq, cpu_end_irq, ipi_interrupt)
++#endif
++#ifdef CONFIG_IOSAPIC
++HANDLE_LEVEL_IRQ(_iosapic, cpu_ack_irq, iosapic_end_irq)
++#endif
+diff --git a/include/asm-parisc/irq.h b/include/asm-parisc/irq.h
+index 399c819..ae29629 100644
+--- a/include/asm-parisc/irq.h
++++ b/include/asm-parisc/irq.h
+@@ -8,6 +8,7 @@ #ifndef _ASM_PARISC_IRQ_H
+ #define _ASM_PARISC_IRQ_H
+ 
+ #include <linux/cpumask.h>
++#include <linux/irqreturn.h>
+ #include <asm/types.h>
+ 
+ #define NO_IRQ		(-1)
+@@ -26,6 +27,17 @@ #define CPU_IRQ_MAX	(CPU_IRQ_BASE + (BIT
+ 
+ #define NR_IRQS		(CPU_IRQ_MAX + 1)
+ 
++#define ARCH_HAS_IRQ_HANDLERS
++
++struct irq_desc;
++
++void fastcall handle_level_irq_chip(unsigned int irq, struct irq_desc *desc);
++void fastcall handle_level_irq_iosapic(unsigned int irq, struct irq_desc *desc);
++void fastcall handle_percpu_irq_chip(unsigned int irq, struct irq_desc *desc);
++void fastcall handle_specific_irq_timer(unsigned int irq,
++					struct irq_desc *desc);
++void fastcall handle_specific_irq_ipi(unsigned int irq, struct irq_desc *desc);
++
+ static __inline__ int irq_canonicalize(int irq)
+ {
+ 	return (irq == 2) ? 9 : irq;
+@@ -39,8 +51,9 @@ struct irq_chip;
+  */
+ void no_ack_irq(unsigned int irq);
+ void no_end_irq(unsigned int irq);
+-void cpu_ack_irq(unsigned int irq);
+-void cpu_end_irq(unsigned int irq);
++void cpu_ack_irq(struct irq_desc *, unsigned int irq);
++void cpu_end_irq(struct irq_desc *, unsigned int irq);
++void iosapic_end_irq(struct irq_desc *, unsigned int irq);
+ 
+ extern int txn_alloc_irq(unsigned int nbits);
+ extern int txn_claim_irq(int);
+@@ -51,6 +64,10 @@ extern unsigned long txn_affinity_addr(u
+ extern int cpu_claim_irq(unsigned int irq, struct irq_chip *, void *);
+ extern int cpu_check_affinity(unsigned int irq, cpumask_t *dest);
+ 
++/* Prototypes for the two directly called interrupts */
++extern irqreturn_t timer_interrupt(int, void *);
++extern irqreturn_t ipi_interrupt(int, void *);
++
+ /* soft power switch support (power.c) */
+ extern struct tasklet_struct power_tasklet;
+ 
+diff --git a/include/asm-parisc/page.h b/include/asm-parisc/page.h
+index 3567208..dcf9047 100644
+--- a/include/asm-parisc/page.h
++++ b/include/asm-parisc/page.h
+@@ -127,7 +127,11 @@ #define LINUX_GATEWAY_SPACE     0
+ /* This governs the relationship between virtual and physical addresses.
+  * If you alter it, make sure to take care of our various fixed mapping
+  * segments in fixmap.h */
+-#define __PAGE_OFFSET           (0x10000000)
++#ifdef CONFIG_64BIT
++#define __PAGE_OFFSET	(0x40000000)	/* 1GB */
++#else
++#define __PAGE_OFFSET	(0x10000000)	/* 256MB */
++#endif
+ 
+ #define PAGE_OFFSET		((unsigned long)__PAGE_OFFSET)
+ 
+diff --git a/include/asm-powerpc/types.h b/include/asm-powerpc/types.h
+index d6fb56b..3b36375 100644
+--- a/include/asm-powerpc/types.h
++++ b/include/asm-powerpc/types.h
+@@ -97,16 +97,6 @@ typedef struct {
+ 	unsigned long env;
+ } func_descr_t;
+ 
+-#ifdef CONFIG_LBD
+-typedef u64 sector_t;
+-#define HAVE_SECTOR_T
+-#endif
+-
+-#ifdef CONFIG_LSF
+-typedef u64 blkcnt_t;
+-#define HAVE_BLKCNT_T
+-#endif
+-
+ #endif /* __ASSEMBLY__ */
+ 
+ #endif /* __KERNEL__ */
+diff --git a/include/asm-s390/types.h b/include/asm-s390/types.h
+index ae2951c..fc5d7cf 100644
+--- a/include/asm-s390/types.h
++++ b/include/asm-s390/types.h
+@@ -87,16 +87,6 @@ typedef union {
+ 	} subreg;
+ } register_pair;
+ 
+-#ifdef CONFIG_LBD
+-typedef u64 sector_t;
+-#define HAVE_SECTOR_T
+-#endif
+-
+-#ifdef CONFIG_LSF
+-typedef u64 blkcnt_t;
+-#define HAVE_BLKCNT_T
+-#endif
+-
+ #endif /* ! __s390x__   */
+ #endif /* __ASSEMBLY__  */
+ #endif /* __KERNEL__    */
+diff --git a/include/asm-sh/types.h b/include/asm-sh/types.h
+index 3c09dd4..fd00dbb 100644
+--- a/include/asm-sh/types.h
++++ b/include/asm-sh/types.h
+@@ -52,16 +52,6 @@ typedef unsigned long long u64;
+ 
+ typedef u32 dma_addr_t;
+ 
+-#ifdef CONFIG_LBD
+-typedef u64 sector_t;
+-#define HAVE_SECTOR_T
+-#endif
+-
+-#ifdef CONFIG_LSF
+-typedef u64 blkcnt_t;
+-#define HAVE_BLKCNT_T
+-#endif
+-
+ #endif /* __ASSEMBLY__ */
+ 
+ #endif /* __KERNEL__ */
+diff --git a/include/asm-x86_64/types.h b/include/asm-x86_64/types.h
+index c86c2e6..2d4491a 100644
+--- a/include/asm-x86_64/types.h
++++ b/include/asm-x86_64/types.h
+@@ -48,9 +48,6 @@ typedef unsigned long long u64;
+ typedef u64 dma64_addr_t;
+ typedef u64 dma_addr_t;
+ 
+-typedef u64 sector_t;
+-#define HAVE_SECTOR_T
+-
+ #endif /* __ASSEMBLY__ */
+ 
+ #endif /* __KERNEL__ */
+diff --git a/include/linux/compat_siginfo.h b/include/linux/compat_siginfo.h
+new file mode 100644
+index 0000000..780c9fb
+--- /dev/null
++++ b/include/linux/compat_siginfo.h
+@@ -0,0 +1,140 @@
++#ifndef _ASM_GENERIC_COMPAT_SIGINFO_H
++#define _ASM_GENERIC_COMPAT_SIGINFO_H
++
++#include <linux/compat.h>
++
++#ifndef CONFIG_COMPAT
++
++/* No compatibility layer required, add empty definitions for the compiler */
++
++typedef struct compat_siginfo{
++} compat_siginfo_t;
++
++static inline int compat_copy_siginfo_to_user(compat_siginfo_t __user *to,
++						struct siginfo *from)
++{
++	return -1;
++}
++
++static inline int compat_copy_siginfo_from_user(struct siginfo *to,
++                                                compat_siginfo_t __user *from)
++{
++        return -1;
++}
++
++#else
++
++#include <linux/compiler.h>
++#include <asm/siginfo.h>
++
++/*
++ * This is the size (including padding) of the part of the
++ * struct siginfo that is before the union.
++ */
++#ifndef __ARCH_SI_COMPAT_PREAMBLE_SIZE
++#define __ARCH_SI_COMPAT_PREAMBLE_SIZE	(3 * sizeof(compat_int_t))
++#endif
++
++#define SI_COMPAT_MAX_SIZE	128
++#ifndef SI_COMPAT_PAD_SIZE
++#define SI_COMPAT_PAD_SIZE \
++  ((SI_COMPAT_MAX_SIZE - __ARCH_SI_COMPAT_PREAMBLE_SIZE) / sizeof(compat_int_t))
++#endif
++
++/* 32-bit view of si.uid_t */
++#ifndef __ARCH_SI_COMPAT_UID_T
++#define __ARCH_SI_COMPAT_UID_T compat_uid_t
++#endif
++
++/* 32-bit view of si.band_t */
++#ifndef __ARCH_SI_COMPAT_BAND_T
++#define __ARCH_SI_COMPAT_BAND_T compat_int_t
++#endif
++
++#ifndef HAVE_ARCH_COMPAT_SIGINFO_T
++
++/* Compat view of siginfo_t */
++typedef struct compat_siginfo {
++	compat_int_t si_signo;
++	compat_int_t si_errno;
++	compat_int_t si_code;
++
++	union {
++		compat_int_t _pad[SI_COMPAT_PAD_SIZE];
++
++		/* kill() */
++		struct {
++			compat_pid_t _pid;	/* sender's pid */
++			__ARCH_SI_COMPAT_UID_T _uid;	/* sender's uid */
++		} _kill;
++
++		/* POSIX.1b timers */
++		struct {
++			compat_timer_t _tid;	/* timer id */
++			compat_int_t _overrun;		/* overrun count */
++			char _pad[sizeof(__ARCH_SI_COMPAT_UID_T) - sizeof(compat_int_t)];
++			compat_sigval_t _sigval;	/* same as below */
++			compat_int_t _sys_private;       /* not to be passed to user */
++		} _timer;
++
++		/* POSIX.1b signals */
++		struct {
++			compat_pid_t _pid;		/* sender's pid */
++			__ARCH_SI_COMPAT_UID_T _uid;	/* sender's uid */
++			compat_sigval_t _sigval;
++		} _rt;
++
++		/* SIGCHLD */
++		struct {
++			compat_pid_t _pid;		/* which child */
++			__ARCH_SI_COMPAT_UID_T _uid;	/* sender's uid */
++			compat_int_t _status;		/* exit code */
++			compat_clock_t _utime;
++			compat_clock_t _stime;
++		} _sigchld;
++
++		/* SIGILL, SIGFPE, SIGSEGV, SIGBUS */
++		struct {
++			compat_uptr_t _addr; /* faulting insn/memory ref. */
++#ifdef __ARCH_SI_COMPAT_TRAPNO
++			compat_int_t _trapno;	/* TRAP # which caused the signal */
++#endif
++		} _sigfault;
++
++		/* SIGPOLL */
++		struct {
++			__ARCH_SI_COMPAT_BAND_T _band;	/* POLL_IN, POLL_OUT, POLL_MSG */
++			compat_int_t _fd;
++		} _sigpoll;
++	} _sifields;
++} compat_siginfo_t;
++#endif /* !HAVE_ARCH_COMPAT_SIGINFO_T */
++
++#ifdef __ARCH_SI_COMPAT_TRAPNO
++#define si_trapno	_sifields._sigfault._trapno
++#endif
++
++#ifndef HAVE_ARCH_COMPAT_COPY_SIGINFO
++
++#include <linux/string.h>
++
++static inline void compat_copy_siginfo(struct compat_siginfo *to, struct compat_siginfo *from)
++{
++	if (from->si_code < 0)
++		memcpy(to, from, sizeof(*to));
++	else
++		/* _sigchld is currently the largest know union member */
++		memcpy(to, from, __ARCH_SI_COMPAT_PREAMBLE_SIZE + sizeof(from->_sifields._sigchld));
++}
++
++#endif /* !HAVE_ARCH_COMPAT_COPY_SIGINFO */
++
++extern int compat_copy_siginfo_to_user(compat_siginfo_t __user *to, struct siginfo *from);
++extern int compat_copy_siginfo_from_user(struct siginfo *to, compat_siginfo_t __user *from);
++
++extern int compat_copy_sigevent_from_user(struct sigevent *to, compat_sigevent_t __user *from);
++extern int compat_copy_sigevent_to_user(compat_sigevent_t __user *to, struct sigevent *from);
++
++#endif /* CONFIG_COMPAT */
++#endif /* _ASM_GENERIC_COMPAT_SIGINFO_H */
++
+diff --git a/include/linux/hash.h b/include/linux/hash.h
+index acf17bb..0e6e5a9 100644
+--- a/include/linux/hash.h
++++ b/include/linux/hash.h
+@@ -13,23 +13,36 @@ #define _LINUX_HASH_H
+  * them can use shifts and additions instead of multiplications for
+  * machines where multiplications are slow.
+  */
+-#if BITS_PER_LONG == 32
+ /* 2^31 + 2^29 - 2^25 + 2^22 - 2^19 - 2^16 + 1 */
+-#define GOLDEN_RATIO_PRIME 0x9e370001UL
+-#elif BITS_PER_LONG == 64
++#define GOLDEN_RATIO_PRIME_32 0x9e370001UL
+ /*  2^63 + 2^61 - 2^57 + 2^54 - 2^51 - 2^18 + 1 */
+-#define GOLDEN_RATIO_PRIME 0x9e37fffffffc0001UL
++#define GOLDEN_RATIO_PRIME_64 0x9e37fffffffc0001ULL
++
++#if BITS_PER_LONG == 32
++#define GOLDEN_RATIO_PRIME GOLDEN_RATIO_PRIME_32
++#define hash_long(val, bits) hash_u32(val, bits)
++#elif BITS_PER_LONG == 64
++#define GOLDEN_RATIO_PRIME GOLDEN_RATIO_PRIME_64
++#define hash_long(val, bits) hash_u64(val, bits)
+ #else
+ #error Define GOLDEN_RATIO_PRIME for your wordsize.
+ #endif
+ 
+-static inline unsigned long hash_long(unsigned long val, unsigned int bits)
++static inline unsigned long hash_u32(u32 val, unsigned int bits)
++{
++	/* On some cpus multiply is faster, on others gcc will do shifts */
++	unsigned int hash = val * GOLDEN_RATIO_PRIME_32;
++
++	/* High bits are more random, so use them. */
++	return hash >> (32 - bits);
++}
++
++static inline unsigned long hash_u64(u64 val, unsigned int bits)
+ {
+-	unsigned long hash = val;
++	u64 hash = val;
+ 
+-#if BITS_PER_LONG == 64
+ 	/*  Sigh, gcc can't optimise this alone like it does for 32 bits. */
+-	unsigned long n = hash;
++	u64 n = hash;
+ 	n <<= 18;
+ 	hash -= n;
+ 	n <<= 33;
+@@ -42,13 +55,9 @@ #if BITS_PER_LONG == 64
+ 	hash += n;
+ 	n <<= 2;
+ 	hash += n;
+-#else
+-	/* On some cpus multiply is faster, on others gcc will do shifts */
+-	hash *= GOLDEN_RATIO_PRIME;
+-#endif
+ 
+ 	/* High bits are more random, so use them. */
+-	return hash >> (BITS_PER_LONG - bits);
++	return hash >> (64 - bits);
+ }
+ 	
+ static inline unsigned long hash_ptr(void *ptr, unsigned int bits)
+diff --git a/include/linux/types.h b/include/linux/types.h
+index 750f085..c0fa603 100644
+--- a/include/linux/types.h
++++ b/include/linux/types.h
+@@ -134,15 +134,19 @@ #define aligned_u64 unsigned long long _
+  *
+  * Linux always considers sectors to be 512 bytes long independently
+  * of the devices real block size.
+- *
+- * If required, asm/types.h can override it and define
+- * HAVE_SECTOR_T
+  */
+-#ifndef HAVE_SECTOR_T
++#ifdef CONFIG_LBD
++typedef u64 sector_t;
++#else
+ typedef unsigned long sector_t;
+ #endif
+ 
+-#ifndef HAVE_BLKCNT_T
++/*
++ * The type of the inode's block count.
++ */
++#ifdef CONFIG_LSF
++typedef u64 blkcnt_t;
++#else
+ typedef unsigned long blkcnt_t;
+ #endif
+ 
+diff --git a/kernel/compat.c b/kernel/compat.c
+index 6952dd0..bce5ad4 100644
+--- a/kernel/compat.c
++++ b/kernel/compat.c
+@@ -837,6 +837,24 @@ compat_sys_rt_sigtimedwait (compat_sigse
+ 
+ }
+ 
++asmlinkage long compat_sys_rt_sigqueueinfo(int pid, int sig,
++	struct compat_siginfo __user *uinfo)
++{
++	siginfo_t info;
++
++	if (copy_siginfo_from_user32(&info, uinfo))
++		return -EFAULT;
++
++	/* Not even root can pretend to send signals from the kernel.
++	   Nor can they impersonate a kill(), which adds source info.  */
++	if (info.si_code >= 0)
++		return -EPERM;
++	info.si_signo = sig;
++
++	/* POSIX.1b doesn't mention process groups.  */
++	return kill_proc_info(sig, &info, pid);
++}
++
+ #ifdef __ARCH_WANT_COMPAT_SYS_TIME
+ 
+ /* compat_time_t is a 32 bit "long" and needs to get converted. */
+diff --git a/kernel/irq/chip.c b/kernel/irq/chip.c
+index ebfd24a..1b18c5c 100644
+--- a/kernel/irq/chip.c
++++ b/kernel/irq/chip.c
+@@ -17,6 +17,87 @@ #include <linux/kernel_stat.h>
+ 
+ #include "internals.h"
+ 
++/* Helpers for constructing IRQ handlers */
++
++#ifdef CONFIG_SMP
++#define HANDLE_PERCPU_IRQ(NAME, ACK, EOI)				\
++void fastcall								\
++handle_percpu_irq##NAME(unsigned int irq, struct irq_desc *desc)	\
++{									\
++	irqreturn_t action_ret;						\
++									\
++	kstat_this_cpu.irqs[irq]++;					\
++									\
++	ACK(desc, irq);							\
++									\
++	action_ret = handle_IRQ_event(irq, desc->action);		\
++	if (!noirqdebug)						\
++		note_interrupt(irq, desc, action_ret);			\
++									\
++	EOI(desc,irq);							\
++}
++#else
++#define HANDLE_PERCPU_IRQ(NAME, ACK, END)
++#endif /* CONFIG_SMP */
++
++#define HANDLE_LEVEL_IRQ(NAME, MASK, UNMASK)				\
++void fastcall								\
++handle_level_irq##NAME(unsigned int irq, struct irq_desc *desc)		\
++{									\
++	unsigned int cpu = smp_processor_id();				\
++	struct irqaction *action;					\
++	irqreturn_t action_ret;						\
++									\
++	spin_lock(&desc->lock);						\
++	MASK(desc, irq);						\
++									\
++	if (unlikely(desc->status & IRQ_INPROGRESS))			\
++		goto out_unlock;					\
++	desc->status &= ~(IRQ_REPLAY | IRQ_WAITING);			\
++	kstat_cpu(cpu).irqs[irq]++;					\
++									\
++	/*								\
++	 * If its disabled or no action available			\
++	 * keep it masked and get out of here				\
++	 */								\
++	action = desc->action;						\
++	if (unlikely(!action || (desc->status & IRQ_DISABLED))) {	\
++		desc->status |= IRQ_PENDING;				\
++		goto out_unlock;					\
++	}								\
++									\
++	desc->status |= IRQ_INPROGRESS;					\
++	desc->status &= ~IRQ_PENDING;					\
++	spin_unlock(&desc->lock);					\
++									\
++	action_ret = handle_IRQ_event(irq, action);			\
++	if (!noirqdebug)						\
++		note_interrupt(irq, desc, action_ret);			\
++									\
++	spin_lock(&desc->lock);						\
++	desc->status &= ~IRQ_INPROGRESS;				\
++	UNMASK(desc,irq);						\
++out_unlock:								\
++	spin_unlock(&desc->lock);					\
++}
++
++#define HANDLE_SPECIFIC_IRQ(NAME, ACK, EOI, HANDLER)			\
++void fastcall								\
++handle_specific_irq##NAME(unsigned int irq, struct irq_desc *desc)	\
++{									\
++	irqreturn_t action_ret;						\
++									\
++	kstat_this_cpu.irqs[irq]++;					\
++									\
++	ACK(desc, irq);							\
++									\
++	action_ret = HANDLER(irq, desc->action->dev_id);		\
++	if (!noirqdebug)						\
++		note_interrupt(irq, desc, action_ret);			\
++									\
++	EOI(desc,irq);							\
++}
++
+ /**
+  *	dynamic_irq_init - initialize a dynamically allocated irq
+  *	@irq:	irq number to initialize
+@@ -247,6 +328,24 @@ static inline void mask_ack_irq(struct i
+ 	}
+ }
+ 
++static inline void unmask_enabled_irq(struct irq_desc *desc, int irq)
++{
++	if (!(desc->status & IRQ_DISABLED) && desc->chip->unmask)
++		desc->chip->unmask(irq);
++}
++
++static inline void ack_irq(struct irq_desc *desc, int irq)
++{
++	if (desc->chip->ack)
++		desc->chip->ack(irq);
++}
++
++static inline void eoi_irq(struct irq_desc *desc, int irq)
++{
++	if (desc->chip->eoi)
++		desc->chip->eoi(irq);
++}
++
+ /**
+  *	handle_simple_irq - Simple and software-decoded IRQs.
+  *	@irq:	the interrupt number
+@@ -300,46 +399,7 @@ out_unlock:
+  *	it after the associated handler has acknowledged the device, so the
+  *	interrupt line is back to inactive.
+  */
+-void fastcall
+-handle_level_irq(unsigned int irq, struct irq_desc *desc)
+-{
+-	unsigned int cpu = smp_processor_id();
+-	struct irqaction *action;
+-	irqreturn_t action_ret;
+-
+-	spin_lock(&desc->lock);
+-	mask_ack_irq(desc, irq);
+-
+-	if (unlikely(desc->status & IRQ_INPROGRESS))
+-		goto out_unlock;
+-	desc->status &= ~(IRQ_REPLAY | IRQ_WAITING);
+-	kstat_cpu(cpu).irqs[irq]++;
+-
+-	/*
+-	 * If its disabled or no action available
+-	 * keep it masked and get out of here
+-	 */
+-	action = desc->action;
+-	if (unlikely(!action || (desc->status & IRQ_DISABLED))) {
+-		desc->status |= IRQ_PENDING;
+-		goto out_unlock;
+-	}
+-
+-	desc->status |= IRQ_INPROGRESS;
+-	desc->status &= ~IRQ_PENDING;
+-	spin_unlock(&desc->lock);
+-
+-	action_ret = handle_IRQ_event(irq, action);
+-	if (!noirqdebug)
+-		note_interrupt(irq, desc, action_ret);
+-
+-	spin_lock(&desc->lock);
+-	desc->status &= ~IRQ_INPROGRESS;
+-	if (!(desc->status & IRQ_DISABLED) && desc->chip->unmask)
+-		desc->chip->unmask(irq);
+-out_unlock:
+-	spin_unlock(&desc->lock);
+-}
++HANDLE_LEVEL_IRQ(, mask_ack_irq, unmask_enabled_irq)
+ 
+ /**
+  *	handle_fasteoi_irq - irq handler for transparent controllers
+@@ -472,7 +532,6 @@ out_unlock:
+ 	spin_unlock(&desc->lock);
+ }
+ 
+-#ifdef CONFIG_SMP
+ /**
+  *	handle_percpu_IRQ - Per CPU local irq handler
+  *	@irq:	the interrupt number
+@@ -480,25 +539,11 @@ #ifdef CONFIG_SMP
+  *
+  *	Per CPU interrupts on SMP machines without locking requirements
+  */
+-void fastcall
+-handle_percpu_irq(unsigned int irq, struct irq_desc *desc)
+-{
+-	irqreturn_t action_ret;
+-
+-	kstat_this_cpu.irqs[irq]++;
+-
+-	if (desc->chip->ack)
+-		desc->chip->ack(irq);
++HANDLE_PERCPU_IRQ(, ack_irq, eoi_irq)
+ 
+-	action_ret = handle_IRQ_event(irq, desc->action);
+-	if (!noirqdebug)
+-		note_interrupt(irq, desc, action_ret);
+-
+-	if (desc->chip->eoi)
+-		desc->chip->eoi(irq);
+-}
+-
+-#endif /* CONFIG_SMP */
++#ifdef ARCH_HAS_IRQ_HANDLERS
++#include <asm/irq-handlers.h>
++#endif
+ 
+ void
+ __set_irq_handler(unsigned int irq, irq_flow_handler_t handle, int is_chained,
+diff --git a/kernel/resource.c b/kernel/resource.c
+index 6de60c1..1222289 100644
+--- a/kernel/resource.c
++++ b/kernel/resource.c
+@@ -178,6 +178,8 @@ static int __release_resource(struct res
+ {
+ 	struct resource *tmp, **p;
+ 
++	BUG_ON(old->child);
++
+ 	p = &old->parent->child;
+ 	for (;;) {
+ 		tmp = *p;
+diff --git a/mm/Kconfig b/mm/Kconfig
+index db7c55d..f56683a 100644
+--- a/mm/Kconfig
++++ b/mm/Kconfig
+@@ -153,7 +153,7 @@ config MIGRATION
+ 	  the page.
+ 
+ config RESOURCES_64BIT
+-	bool "64 bit Memory and IO resources (EXPERIMENTAL)" if (!64BIT && EXPERIMENTAL)
++	bool "64 bit Memory and IO resources (EXPERIMENTAL)" if (!64BIT && !PARISC && EXPERIMENTAL)
+ 	default 64BIT
+ 	help
+ 	  This option allows memory and IO resources to be 64 bit.
+diff --git a/mm/shmem.c b/mm/shmem.c
+index 4959535..2c0d2df 100644
+--- a/mm/shmem.c
++++ b/mm/shmem.c
+@@ -630,7 +630,7 @@ done2:
+ 	}
+ }
+ 
+-static void shmem_truncate(struct inode *inode)
++/* static gcc-3.3 OPD bug - GGG */ void shmem_truncate(struct inode *inode)
+ {
+ 	shmem_truncate_range(inode, inode->i_size, (loff_t)-1);
+ }
