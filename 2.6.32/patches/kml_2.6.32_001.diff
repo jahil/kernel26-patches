@@ -1,0 +1,4279 @@
+diff -r 5d51132b3296 -r d30b50c93489 CREDITS
+--- a/CREDITS	Wed Dec 02 19:51:21 2009 -0800
++++ b/CREDITS	Sat Dec 05 14:39:08 2009 +0900
+@@ -2208,6 +2208,10 @@
+ S: Halifax, Nova Scotia
+ S: Canada B3J 3C8
+ 
++N: Toshiyuki Maeda
++E: tosh@is.s.u-tokyo.ac.jp
++D: Kernel Mode Linux
++
+ N: Kai Mäkisara
+ E: Kai.Makisara@kolumbus.fi
+ D: SCSI Tape Driver
+diff -r 5d51132b3296 -r d30b50c93489 Documentation/00-INDEX
+--- a/Documentation/00-INDEX	Wed Dec 02 19:51:21 2009 -0800
++++ b/Documentation/00-INDEX	Sat Dec 05 14:39:08 2009 +0900
+@@ -196,6 +196,8 @@
+ 	- description of the kernel key request service.
+ keys.txt
+ 	- description of the kernel key retention service.
++kml.txt
++	- info on Kernel Mode Linux.
+ kobject.txt
+ 	- info of the kobject infrastructure of the Linux kernel.
+ kprobes.txt
+diff -r 5d51132b3296 -r d30b50c93489 Documentation/kml.txt
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/Documentation/kml.txt	Sat Dec 05 14:39:08 2009 +0900
+@@ -0,0 +1,170 @@
++Kernel Mode Linux (http://web.yl.is.s.u-tokyo.ac.jp/~tosh/kml)
++Copyright 2004,2005 Toshiyuki Maeda
++
++
++Introduction:
++
++Kernel Mode Linux is a technology which enables us to execute user programs
++in kernel mode. In Kernel Mode Linux, user programs can be executed as
++user processes that have the privilege level of kernel mode. The benefit
++of executing user programs in kernel mode is that the user programs can
++access kernel address space directly.  For example, user programs can invoke
++system calls very fast because it is unnecessary to switch between a kernel
++mode and user-mode by using costly software interruptions or context
++switches. In addition, user programs are executed as ordinary processes
++(except for their privilege level, of course), so scheduling and paging are
++performed as usual, unlike kernel modules.
++
++Although it seems dangerous to let user programs access a kernel directly,
++safety of the kernel can be ensured by several means: static type checking
++technology, proof-carrying code technology, software fault isolation, and
++so forth. For proof of concept, we are developing a system which is based
++on the combination of Kernel Mode Linux and Typed Assembly Language, TAL.
++(TAL can ensure safety of programs through its type checking and the type
++checking can be done at machine binary level. For more information about
++TAL, see http://www.cs.cornell.edu/talc)
++
++Currently, IA-32 and AMD64 architecture are supported.
++
++
++Limitation:
++User processes executed in kernel mode should obey the following limitations.
++Otherwise, your system will be in an undefined state. In the worst-case
++scenario, your system will crash.
++
++- On IA-32, user processes executed in kernel mode should not modify their
++  CS, DS, FS and SS register.
++
++- On AMD64, user processes executed in kernel mode should not modify their
++  GS register.
++
++In addition, on AMD64, IA-32 binaries cannot be executed in kernel mode.
++
++
++Instruction:
++
++To enable Kernel Mode Linux, say Y in Kernel Mode Linux field of kernel
++configuration, build and install the kernel, and reboot your machine. Then,
++all executables under the "/trusted" directory are executed in kernel mode
++in the current Kernel Mode Linux implementation. For example, to execute a
++program named "cat" in kernel mode, copy the program to "/trusted" and
++execute it as follows:
++
++% /trusted/cat
++
++
++Implementation Notes for IA-32:
++
++To execute user programs in kernel mode, Kernel Mode Linux has a special
++start_thread (start_kernel_thread) routine, which is called in processing
++execve(2) and sets registers of a user process to specified initial values.
++The original start_thread routine sets CS segment register to __USER_CS.
++The start_kernel_thread routine sets the CS register to __KERNEL_CS. Thus,
++a user program is started as a user process executed in kernel mode.
++
++The biggest problem of implementing Kernel Mode Linux is a stack starvation
++problem. Let's assume that a user program is executed in kernel mode and
++it causes a page fault on its user stack. To generate a page fault exception,
++an IA-32 CPU tries to push several registers (EIP, CS, and so on) to the same
++user stack because the program is executed in kernel mode and the IA-32
++CPU doesn't switch its stack to a kernel stack. Therefore, the IA-32 CPU
++cannot push the registers and generate a double fault exception and fail
++again. Finally, the IA-32 CPU gives up and reset itself. This is the stack
++starvation problem. 
++
++To solve the stack starvation problem, we use the IA-32 hardware task mechanism
++to handle exceptions. By using the mechanism, IA-32 CPU doesn't push the
++registers to its stack. Instead, the CPU switches an execution context to
++another special context. Therefore, the stack starvation problem doesn't occur.
++However, it is costly to handle all exceptions by the IA-32 task mechanism.
++So, in current Kernel Mode Linux implementation, double fault exceptions are
++handled by the IA-32 task. A page fault on a memory stack is not so often, so
++the cost of the IA-32 task mechanism is negligible for usual programs.
++In addition, non-maskable interrupts are also handled by the IA-32 task.
++The reason is described later in this document.
++
++The second problem is a manual stack switching problem. In the original Linux
++kernel, an IA-32 CPU switches a stack from a user stack to a kernel stack on
++exceptions or interrupts. However, in Kernel Mode Linux, a user program
++may be executed in kernel mode and the CPU may not switch a stack.
++Therefore, in current Kernel Mode Linux implementation, the kernel switches
++a stack manually on exceptions and interrupts. To switch a stack, a kernel
++need to know a location of a kernel stack in an address space. However, on
++exceptions and interrupts, the kernel cannot use general registers (EAX, EBX,
++and so on). Therefore, it is very difficult to get the location of the kernel stack.
++
++To solve the above problem, the current Kernel Mode Linux implementation
++exploits a per CPU GDT. In Kernel Mode Linux, one segment descriptor of
++the per CPU GDT entries directly points to the location of the per-CPU TSS
++(Task State Segment). Thus, by using the segment descriptor, the address
++of the kernel stack can be available with only one general register.
++
++The third problem is an interrupt-lost problem on double fault exceptions.
++Let's assume that a user program is executed in kernel mode, and its ESP
++register points to a portion of memory space that has not been mapped to
++its address space yet. What will happen if an external interrupt is raised
++just in time? First, a CPU acks the request for the interrupt from an
++external interrupt controller. Then, the CPU tries to interrupt its execution
++of the user program. However, it can't because there is no stack to save
++the part of the execution context (see above "a stack starvation problem").
++Then, the CPU tries to generate a double fault exception and it succeeds
++because the Kernel Mode Linux implementation handles the double fault by the
++IA-32 task. The problem is that the double fault exception handler knows only
++the suspended user program and it cannot know the request for the interrupt
++because the CPU doesn't tell nothing about it. Therefore, the double fault
++handler directly resumes the user program and doesn't handle the interrupt,
++that is, the same kind of interrupts never be generated because the interrupt
++controller thinks that the previous interrupt has not been serviced by the CPU.
++
++To solve the interrupt-lost problem, the current Kernel Mode Linux implementation
++asks the interrupt controller for untreated interrupts and handles them at the
++end of the double fault exception handler. Asking the interrupt controller is a
++costly operation. However, the cost is negligible because double fault exceptions
++that is, page faults on memory stacks are not so often.
++
++The reason for handling non-maskable interrupts by the IA-32 tasks is closely
++related to the manual stack switching problem and the interrupt-lost problem.
++If an non-maskable interrupt occurs between when a maskable interrupt occurs and
++when a memory stack is switched from a user stack to a kernel stack, and the
++non-maskable interrupt causes a page fault on the memory stack, then the double
++fault exception handler handles the maskable interrupt because it has not been
++handled. The problem is that the double fault handler returns to the suspended
++interrupt handling routine and the routine tries to handle the already-handled
++maskable interrupt again.
++
++The above problem can be avoided by handling non-maskable interrupts with the
++IA-32 tasks, because no double fault exceptions are generated. Usually, non-maskable
++interrupts are very rare, so the cost of the IA-32 task mechanisms doesn't really
++matter. However, if an NMI watchdog is enabled for debugging purpose, performance
++degradation may be observed.
++
++One problem for handling non-maskable interrupts by the IA-32 task mechanism is
++a descriptor-tables inconsistency problem. When the IA-32 tasks are switched
++back and forth, all segment registers (CS, DS, ES, SS, FS, GS) and the local
++descriptor table register (LDTR) are reloaded (unlike the usual IA-32 trap/interrupt
++mechanism). Therefore, to switch the IA-32 task, the global descriptor table
++and the local descriptor table should be consistent, otherwise, the invalid TSS
++exception is raised and it is too complex to recover from the exception.
++The problem is that the consistency cannot be guaranteed because non-maskable
++interrupts are raised anytime and anywhere, that is, when updating the global
++descriptor table or the local descriptor table.
++
++To solve the above problem, the current Kernel Mode Linux implementation inserts
++instructions for saving and restoring FS, GS, and/or LDTR around the portion
++that manipulate the descriptor tables, if needed (CS, DS, ES are used exclusively
++by the kernel at that point, so there are no problems). Then, the non-maskable
++interrupt handler checks whether if FS, GS, and LDTR can be reloaded without problems,
++at the end of itself. If a problem is found, it reloads FS, GS, and/or LDTR with '0'
++(reloading FS, GS, and/or LDTR with '0' always succeeds). The reason why the above
++solution works is as follows. First, if a problem is found at reloading FS, GS,
++and/or LDTR, that means that a non-maskable interrupt occurs when modifying the
++descriptor tables. However, FS, GS, and/or LDTR are properly reloaded after the
++modification by the above mentioned instructions for restoring them. Therefore,
++just reloading FS, GS, and/or LDTR with '0' works because they will be reloaded
++soon after. Inserting the instructions may affect performance. Fortunately, however,
++FS, GS, and/or LDTR are usually reloaded after modifying the descriptor tables,
++so there are little points at that the instructions should be inserted.
++
++
++Implementation Notes for AMD64:
++(Now writing...)
+diff -r 5d51132b3296 -r d30b50c93489 MAINTAINERS
+--- a/MAINTAINERS	Wed Dec 02 19:51:21 2009 -0800
++++ b/MAINTAINERS	Sat Dec 05 14:39:08 2009 +0900
+@@ -3026,6 +3026,12 @@
+ W:	http://janitor.kernelnewbies.org/
+ S:	Odd Fixes
+ 
++KERNEL MODE LINUX
++P:	Toshiyuki Maeda
++M:	tosh@is.s.u-tokyo.ac.jp
++W:	http://www.yl.is.s.u-tokyo.ac.jp/~tosh/kml/
++S:	Maintained
++
+ KERNEL NFSD, SUNRPC, AND LOCKD SERVERS
+ M:	"J. Bruce Fields" <bfields@fieldses.org>
+ M:	Neil Brown <neilb@suse.de>
+diff -r 5d51132b3296 -r d30b50c93489 Makefile
+--- a/Makefile	Wed Dec 02 19:51:21 2009 -0800
++++ b/Makefile	Sat Dec 05 14:39:08 2009 +0900
+@@ -1,7 +1,7 @@
+ VERSION = 2
+ PATCHLEVEL = 6
+ SUBLEVEL = 32
+-EXTRAVERSION =
++EXTRAVERSION = -kml
+ NAME = Man-Eating Seals of Antiquity
+ 
+ # *DOCUMENTATION*
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/Kconfig
+--- a/arch/x86/Kconfig	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/Kconfig	Sat Dec 05 14:39:08 2009 +0900
+@@ -2077,6 +2077,10 @@
+ 
+ source "net/Kconfig"
+ 
++if (X86_64 || (X86_32 && X86_WP_WORKS_OK)) && !PARAVIRT
++source "kernel/Kconfig.kml"
++endif
++
+ source "drivers/Kconfig"
+ 
+ source "drivers/firmware/Kconfig"
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/include/asm/desc.h
+--- a/arch/x86/include/asm/desc.h	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/include/asm/desc.h	Sat Dec 05 14:39:08 2009 +0900
+@@ -91,7 +91,10 @@
+ #define store_idt(dtr) native_store_idt(dtr)
+ #define store_tr(tr) (tr = native_store_tr())
+ 
+-#define load_TLS(t, cpu) native_load_tls(t, cpu)
++#define load_TLS__nmi_unsafe(t, cpu) native_load_tls__nmi_unsafe(t, cpu)
++#ifdef CONFIG_X86_64
++#define load_TLS(t, cpu) load_TLS__nmi_unsafe(t, cpu)
++#endif
+ #define set_ldt native_set_ldt
+ 
+ #define write_ldt_entry(dt, entry, desc)	\
+@@ -108,26 +111,49 @@
+ static inline void paravirt_free_ldt(struct desc_struct *ldt, unsigned entries)
+ {
+ }
+-#endif	/* CONFIG_PARAVIRT */
++#endif /* CONFIG_PARAVIRT */
+ 
+ #define store_ldt(ldt) asm("sldt %0" : "=m"(ldt))
+ 
+ static inline void native_write_idt_entry(gate_desc *idt, int entry,
+ 					  const gate_desc *gate)
+ {
++#ifdef CONFIG_KERNEL_MODE_LINUX
++	NMI_DECLS_GSLDTR
++	preempt_disable();
++	NMI_SAVE_GSLDTR;
++#endif
+ 	memcpy(&idt[entry], gate, sizeof(*gate));
++#ifdef CONFIG_KERNEL_MODE_LINUX
++	NMI_RESTORE_GSLDTR;
++	preempt_enable();
++#endif
+ }
+ 
+ static inline void native_write_ldt_entry(struct desc_struct *ldt, int entry,
+ 					  const void *desc)
+ {
++#ifdef CONFIG_KERNEL_MODE_LINUX
++	NMI_DECLS_GSLDTR
++	preempt_disable();
++	NMI_SAVE_GSLDTR;
++#endif
+ 	memcpy(&ldt[entry], desc, 8);
++#ifdef CONFIG_KERNEL_MODE_LINUX
++	NMI_RESTORE_GSLDTR;
++	preempt_enable();
++#endif
+ }
+ 
+ static inline void native_write_gdt_entry(struct desc_struct *gdt, int entry,
+ 					  const void *desc, int type)
+ {
+ 	unsigned int size;
++#ifdef CONFIG_KERNEL_MODE_LINUX
++	NMI_DECLS_GSLDTR
++	preempt_disable();
++	NMI_SAVE_GSLDTR;
++#endif
+ 	switch (type) {
+ 	case DESC_TSS:
+ 		size = sizeof(tss_desc);
+@@ -140,6 +166,10 @@
+ 		break;
+ 	}
+ 	memcpy(&gdt[entry], desc, size);
++#ifdef CONFIG_KERNEL_MODE_LINUX
++	NMI_RESTORE_GSLDTR;
++	preempt_enable();
++#endif
+ }
+ 
+ static inline void pack_descriptor(struct desc_struct *desc, unsigned long base,
+@@ -193,11 +223,24 @@
+ 
+ #define set_tss_desc(cpu, addr) __set_tss_desc(cpu, GDT_ENTRY_TSS, addr)
+ 
++#ifdef CONFIG_KERNEL_MODE_LINUX
++
++static inline void clear_busy_flag_in_tss_descriptor(unsigned int cpu)
++{
++	get_cpu_gdt_table(cpu)[GDT_ENTRY_TSS].b &= (~0x00000200);
++}
++
++#endif
++
+ static inline void native_set_ldt(const void *addr, unsigned int entries)
+ {
+-	if (likely(entries == 0))
++	if (likely(entries == 0)) {
++#if defined(CONFIG_KERNEL_MODE_LINUX) && defined(CONFIG_X86_32)
++		unsigned cpu = smp_processor_id();
++		per_cpu(init_tss, cpu).x86_tss.ldt = 0;
++#endif
+ 		asm volatile("lldt %w0"::"q" (0));
+-	else {
++	} else {
+ 		unsigned cpu = smp_processor_id();
+ 		ldt_desc ldt;
+ 
+@@ -205,6 +248,9 @@
+ 				      entries * LDT_ENTRY_SIZE - 1);
+ 		write_gdt_entry(get_cpu_gdt_table(cpu), GDT_ENTRY_LDT,
+ 				&ldt, DESC_LDT);
++#if defined(CONFIG_KERNEL_MODE_LINUX) && defined(CONFIG_X86_32)
++		per_cpu(init_tss, cpu).x86_tss.ldt = GDT_ENTRY_LDT * 8;
++#endif
+ 		asm volatile("lldt %w0"::"q" (GDT_ENTRY_LDT*8));
+ 	}
+ }
+@@ -241,7 +287,7 @@
+ 	return tr;
+ }
+ 
+-static inline void native_load_tls(struct thread_struct *t, unsigned int cpu)
++static inline void native_load_tls__nmi_unsafe(struct thread_struct *t, unsigned int cpu)
+ {
+ 	unsigned int i;
+ 	struct desc_struct *gdt = get_cpu_gdt_table(cpu);
+@@ -327,10 +373,16 @@
+  * Pentium F0 0F bugfix can have resulted in the mapped
+  * IDT being write-protected.
+  */
+-static inline void set_intr_gate(unsigned int n, void *addr)
++static inline void set_intr_gate_ist(unsigned int n, void *addr, unsigned int ist)
+ {
+ 	BUG_ON((unsigned)n > 0xFF);
+-	_set_gate(n, GATE_INTERRUPT, addr, 0, 0, __KERNEL_CS);
++	_set_gate(n, GATE_INTERRUPT, addr, 0, ist, __KERNEL_CS);
++}
++
++static inline void set_system_intr_gate_ist(unsigned int n, void *addr, unsigned ist)
++{
++	BUG_ON((unsigned)n > 0xFF);
++	_set_gate(n, GATE_INTERRUPT, addr, 0x3, ist, __KERNEL_CS);
+ }
+ 
+ extern int first_system_vector;
+@@ -347,6 +399,15 @@
+ 		BUG();
+ }
+ 
++static inline void set_intr_gate(unsigned int n, void *addr)
++{
++#if defined(CONFIG_KERNEL_MODE_LINUX) && defined(CONFIG_X86_64)
++	set_intr_gate_ist(n, addr, KML_STACK);
++#else
++	set_intr_gate_ist(n, addr, 0);
++#endif
++}
++
+ static inline void alloc_intr_gate(unsigned int n, void *addr)
+ {
+ 	alloc_system_vector(n);
+@@ -358,38 +419,43 @@
+  */
+ static inline void set_system_intr_gate(unsigned int n, void *addr)
+ {
+-	BUG_ON((unsigned)n > 0xFF);
+-	_set_gate(n, GATE_INTERRUPT, addr, 0x3, 0, __KERNEL_CS);
++#if defined(CONFIG_KERNEL_MODE_LINUX) && defined(CONFIG_X86_64)
++	set_system_intr_gate_ist(n, addr, KML_STACK);
++#else
++	set_system_intr_gate_ist(n, addr, 0);
++#endif
+ }
+ 
++#ifdef CONFIG_KERNEL_MODE_LINUX
++static inline void set_system_intr_gate_orig(unsigned int n, void *addr)
++{
++	set_system_intr_gate_ist(n, addr, 0);
++}
++#endif
++
+ static inline void set_system_trap_gate(unsigned int n, void *addr)
+ {
+ 	BUG_ON((unsigned)n > 0xFF);
+ 	_set_gate(n, GATE_TRAP, addr, 0x3, 0, __KERNEL_CS);
+ }
+ 
+-static inline void set_trap_gate(unsigned int n, void *addr)
+-{
+-	BUG_ON((unsigned)n > 0xFF);
+-	_set_gate(n, GATE_TRAP, addr, 0, 0, __KERNEL_CS);
+-}
+-
+ static inline void set_task_gate(unsigned int n, unsigned int gdt_entry)
+ {
+ 	BUG_ON((unsigned)n > 0xFF);
+ 	_set_gate(n, GATE_TASK, (void *)0, 0, 0, (gdt_entry<<3));
+ }
+ 
+-static inline void set_intr_gate_ist(int n, void *addr, unsigned ist)
++#ifdef CONFIG_KERNEL_MODE_LINUX
++static inline void set_intr_gate_orig(unsigned int n, void *addr)
++{
++	set_intr_gate_ist(n, addr, 0);
++}
++#endif
++
++static inline void set_trap_gate(unsigned int n, void *addr)
+ {
+ 	BUG_ON((unsigned)n > 0xFF);
+-	_set_gate(n, GATE_INTERRUPT, addr, 0, ist, __KERNEL_CS);
+-}
+-
+-static inline void set_system_intr_gate_ist(int n, void *addr, unsigned ist)
+-{
+-	BUG_ON((unsigned)n > 0xFF);
+-	_set_gate(n, GATE_INTERRUPT, addr, 0x3, ist, __KERNEL_CS);
++	_set_gate(n, GATE_TRAP, addr, 0, 0, __KERNEL_CS);
+ }
+ 
+ #endif /* _ASM_X86_DESC_H */
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/include/asm/elf.h
+--- a/arch/x86/include/asm/elf.h	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/include/asm/elf.h	Sat Dec 05 14:39:08 2009 +0900
+@@ -289,7 +289,7 @@
+ 
+ struct task_struct;
+ 
+-#define	ARCH_DLINFO_IA32(vdso_enabled)					\
++#define	ARCH_DLINFO_IA32_ORIG(vdso_enabled)				\
+ do {									\
+ 	if (vdso_enabled) {						\
+ 		NEW_AUX_ENT(AT_SYSINFO,	VDSO_ENTRY);			\
+@@ -297,6 +297,21 @@
+ 	}								\
+ } while (0)
+ 
++#define ARCH_DLINFO_IA32_KML(vdso_enabled)				\
++do {									\
++	if (vdso_enabled) {						\
++		NEW_AUX_ENT(AT_SYSINFO,					\
++			    (kernel_mode ? VDSO_KML_ENTRY : VDSO_ENTRY));\
++		NEW_AUX_ENT(AT_SYSINFO_EHDR, VDSO_CURRENT_BASE);	\
++	}								\
++} while (0)
++
++#ifndef CONFIG_KERNEL_MODE_LINUX
++#define ARCH_DLINFO_IA32 ARCH_DLINFO_IA32_ORIG
++#else
++#define ARCH_DLINFO_IA32 ARCH_DLINFO_IA32_KML
++#endif
++
+ #ifdef CONFIG_X86_32
+ 
+ #define STACK_RND_MASK (0x7ff)
+@@ -305,6 +320,11 @@
+ 
+ #define ARCH_DLINFO		ARCH_DLINFO_IA32(vdso_enabled)
+ 
++#ifdef CONFIG_KERNEL_MODE_LINUX
++#define VDSO_KML_ENTRY \
++	((unsigned long) VDSO32_SYMBOL(VDSO_CURRENT_BASE, vsyscall_kml))
++#endif
++
+ /* update AT_VECTOR_SIZE_ARCH if the number of NEW_AUX_ENT entries changes */
+ 
+ #else /* CONFIG_X86_32 */
+@@ -314,16 +334,36 @@
+ /* 1GB for 64bit, 8MB for 32bit */
+ #define STACK_RND_MASK (test_thread_flag(TIF_IA32) ? 0x7ff : 0x3fffff)
+ 
+-#define ARCH_DLINFO							\
++#define ARCH_DLINFO_ORIG						\
+ do {									\
+ 	if (vdso_enabled)						\
+ 		NEW_AUX_ENT(AT_SYSINFO_EHDR,				\
+ 			    (unsigned long)current->mm->context.vdso);	\
+ } while (0)
+ 
++#define VDSO_KML_ENTRY \
++	((unsigned long) VDSO64_SYMBOL(VDSO_CURRENT_BASE, vdso_kml))
++
++#define ARCH_DLINFO_KML							\
++do {									\
++	if (vdso_enabled) {						\
++		if (kernel_mode) {					\
++			NEW_AUX_ENT(AT_SYSINFO, VDSO_KML_ENTRY);	\
++		}							\
++		NEW_AUX_ENT(AT_SYSINFO_EHDR,				\
++			    (unsigned long)current->mm->context.vdso);	\
++	}								\
++} while (0)
++
++#ifndef CONFIG_KERNEL_MODE_LINUX
++#define ARCH_DLINFO ARCH_DLINFO_ORIG
++#else
++#define ARCH_DLINFO ARCH_DLINFO_KML
++#endif
++
+ #define AT_SYSINFO		32
+ 
+-#define COMPAT_ARCH_DLINFO	ARCH_DLINFO_IA32(sysctl_vsyscall32)
++#define COMPAT_ARCH_DLINFO	ARCH_DLINFO_IA32_ORIG(sysctl_vsyscall32)
+ 
+ #define COMPAT_ELF_ET_DYN_BASE	(TASK_UNMAPPED_BASE + 0x1000000)
+ 
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/include/asm/hw_irq.h
+--- a/arch/x86/include/asm/hw_irq.h	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/include/asm/hw_irq.h	Sat Dec 05 14:39:08 2009 +0900
+@@ -132,6 +132,37 @@
+ static inline void __setup_vector_irq(int cpu) {}
+ #endif
+ 
++#if defined(CONFIG_KERNEL_MODE_LINUX) && defined(CONFIG_X86_32)
++extern struct desc_struct idt_table[256];
++extern void (*test_ISR_and_handle_interrupt)(void);
++
++static inline unsigned long get_address_from_desc(struct desc_struct* s)
++{
++	return (s->a & 0x0000ffff) | (s->b & 0xffff0000);
++}
++
++static inline unsigned long get_intr_address(unsigned long vec)
++{
++	return get_address_from_desc(&idt_table[vec]);
++}
++
++static inline void handle_interrupt_manually(unsigned long vec)
++{
++	unsigned long handler;
++
++	handler = get_intr_address(vec);
++
++	__asm__ __volatile__ (
++	"pushfl\n\t"
++	"pushl %1\n\t"
++	"pushl $0f\n\t"
++	"jmp *%0\n"
++	"0:\n\t"
++	: : "r" (handler), "i" (__KERNEL_CS)
++	);
++}
++#endif
++
+ #endif /* !ASSEMBLY_ */
+ 
+ #endif /* _ASM_X86_HW_IRQ_H */
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/include/asm/page_64_types.h
+--- a/arch/x86/include/asm/page_64_types.h	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/include/asm/page_64_types.h	Sat Dec 05 14:39:08 2009 +0900
+@@ -19,7 +19,12 @@
+ #define NMI_STACK 3
+ #define DEBUG_STACK 4
+ #define MCE_STACK 5
++#ifndef CONFIG_KERNEL_MODE_LINUX
+ #define N_EXCEPTION_STACKS 5  /* hw limit: 7 */
++#else
++#define KML_STACK 6
++#define N_EXCEPTION_STACKS 6  /* hw limit: 7 */
++#endif
+ 
+ #define PUD_PAGE_SIZE		(_AC(1, UL) << PUD_SHIFT)
+ #define PUD_PAGE_MASK		(~(PUD_PAGE_SIZE-1))
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/include/asm/processor.h
+--- a/arch/x86/include/asm/processor.h	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/include/asm/processor.h	Sat Dec 05 14:39:08 2009 +0900
+@@ -135,7 +135,9 @@
+ extern struct cpuinfo_x86	boot_cpu_data;
+ extern struct cpuinfo_x86	new_cpu_data;
+ 
++#ifndef CONFIG_KERNEL_MODE_LINUX
+ extern struct tss_struct	doublefault_tss;
++#endif
+ extern __u32			cpu_caps_cleared[NCAPINTS];
+ extern __u32			cpu_caps_set[NCAPINTS];
+ 
+@@ -188,11 +190,6 @@
+ 	    : "0" (*eax), "2" (*ecx));
+ }
+ 
+-static inline void load_cr3(pgd_t *pgdir)
+-{
+-	write_cr3(__pa(pgdir));
+-}
+-
+ #ifdef CONFIG_X86_32
+ /* This is the TSS defined by the hardware. */
+ struct x86_hw_tss {
+@@ -270,10 +267,25 @@
+ 	 */
+ 	unsigned long		stack[64];
+ 
++#ifdef CONFIG_KERNEL_MODE_LINUX
++#define KML_STACK_SIZE (8*16)
++	char			kml_stack[KML_STACK_SIZE] __attribute__ ((aligned (16)));
++#endif
+ } ____cacheline_aligned;
+ 
+ DECLARE_PER_CPU_SHARED_ALIGNED(struct tss_struct, init_tss);
+ 
++#ifdef CONFIG_KERNEL_MODE_LINUX
++DECLARE_PER_CPU(struct tss_struct, doublefault_tsses);
++DECLARE_PER_CPU(struct tss_struct, nmi_tsses);
++DECLARE_PER_CPU(struct dft_stack_struct, dft_stacks);
++DECLARE_PER_CPU(struct nmi_stack_struct, nmi_stacks);
++DECLARE_PER_CPU(unsigned long, esp0);
++DECLARE_PER_CPU(unsigned long, unused);
++extern void init_doublefault_tss(int);
++extern void init_nmi_tss(int);
++#endif
++
+ /*
+  * Save the original ist values for checking stack pointers during debugging
+  */
+@@ -477,6 +489,23 @@
+ 	struct ds_context	*ds_ctx;
+ };
+ 
++#ifdef CONFIG_KERNEL_MODE_LINUX
++struct dft_stack_struct {
++	unsigned long error_code;
++	struct tss_struct* this_tss;
++	struct tss_struct* normal_tss;
++};
++
++struct nmi_stack_struct {
++	/* This __pad field may be used in NMI handler (see entry.S) */
++	unsigned long __pad[1];
++	struct tss_struct* this_tss;
++	struct tss_struct* normal_tss;
++	void* dft_tss_desc;
++	int need_nmi;
++};
++#endif
++
+ static inline unsigned long native_get_debugreg(int regno)
+ {
+ 	unsigned long val = 0;	/* Damn you, gcc! */
+@@ -556,6 +585,9 @@
+ {
+ 	tss->x86_tss.sp0 = thread->sp0;
+ #ifdef CONFIG_X86_32
++#ifdef CONFIG_KERNEL_MODE_LINUX
++	percpu_write(esp0, thread->sp0);
++#endif
+ 	/* Only happens when SEP is enabled, no need to test "SEP"arately: */
+ 	if (unlikely(tss->x86_tss.ss1 != thread->sysenter_cs)) {
+ 		tss->x86_tss.ss1 = thread->sysenter_cs;
+@@ -1006,6 +1038,11 @@
+ extern void start_thread(struct pt_regs *regs, unsigned long new_ip,
+ 					       unsigned long new_sp);
+ 
++#ifdef CONFIG_KERNEL_MODE_LINUX
++extern void start_kernel_thread(struct pt_regs *regs, unsigned long new_ip,
++						      unsigned long new_sp);
++#endif
++
+ /*
+  * This decides where the kernel will search for a free chunk of vm
+  * space during mmap's.
+@@ -1052,4 +1089,22 @@
+ 	return ratio;
+ }
+ 
++#if defined(CONFIG_KERNEL_MODE_LINUX) && defined(CONFIG_X86_32)
++#define load_cr3(pgdir) \
++do {									\
++	int cpu = smp_processor_id();					\
++	unsigned long pa_pgdir = __pa(pgdir);				\
++									\
++	per_cpu(init_tss, cpu)		.x86_tss.__cr3 = pa_pgdir;	\
++	per_cpu(doublefault_tsses, cpu)	.x86_tss.__cr3 = pa_pgdir;	\
++	per_cpu(nmi_tsses, cpu)		.x86_tss.__cr3 = pa_pgdir;	\
++	write_cr3(pa_pgdir);						\
++} while (0)
++#else
++static inline void load_cr3(pgd_t *pgdir)
++{
++	write_cr3(__pa(pgdir));
++}
++#endif
++
+ #endif /* _ASM_X86_PROCESSOR_H */
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/include/asm/segment.h
+--- a/arch/x86/include/asm/segment.h	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/include/asm/segment.h	Sat Dec 05 14:39:08 2009 +0900
+@@ -63,7 +63,11 @@
+  *  27 - per-cpu			[ offset to per-cpu data area ]
+  *  28 - stack_canary-20		[ for stack protector ]
+  *  29 - unused
++#ifndef CONFIG_KERNEL_MODE_LINUX
+  *  30 - unused
++#else
++ *  30 - TSS for nmi handler
++#endif
+  *  31 - TSS for double fault handler
+  */
+ #define GDT_ENTRY_TLS_MIN	6
+@@ -102,7 +106,25 @@
+ #define __KERNEL_STACK_CANARY		0
+ #endif
+ 
++#ifdef CONFIG_KERNEL_MODE_LINUX
++#define GDT_ENTRY_NMI_TSS		30
++#define __NMI (GDT_ENTRY_NMI_TSS * 8)
++#endif
++
+ #define GDT_ENTRY_DOUBLEFAULT_TSS	31
++#ifdef CONFIG_KERNEL_MODE_LINUX
++#define __DOUBLEFAULT_TSS (GDT_ENTRY_DOUBLEFAULT_TSS * 8)
++#endif
++
++#ifdef CONFIG_KERNEL_MODE_LINUX
++
++#define __KU_CS_INTERRUPT	((1 << 16) | __USER_CS)
++#define __KU_CS_EXCEPTION	((1 << 17) | __USER_CS)
++
++#define kernel_mode_user_process(cs) ((cs) & 0xffff0000)
++#define need_error_code_fix_on_page_fault(cs) ((cs) == __KU_CS_EXCEPTION)
++
++#endif
+ 
+ /*
+  * The GDT has 32 entries
+@@ -163,6 +185,11 @@
+ #define __USER32_CS   (GDT_ENTRY_DEFAULT_USER32_CS * 8 + 3)
+ #define __USER32_DS	__USER_DS
+ 
++#ifdef CONFIG_KERNEL_MODE_LINUX
++#define __KU_CS			(0x7fff0003 | __KERNEL_CS)
++#define need_error_code_fix_on_page_fault(cs) ((cs) & 0x03)
++#endif
++
+ #define GDT_ENTRY_TSS 8	/* needs two entries */
+ #define GDT_ENTRY_LDT 10 /* needs two entries */
+ #define GDT_ENTRY_TLS_MIN 12
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/include/asm/sigcontext.h
+--- a/arch/x86/include/asm/sigcontext.h	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/include/asm/sigcontext.h	Sat Dec 05 14:39:08 2009 +0900
+@@ -115,7 +115,11 @@
+ 	unsigned long trapno;
+ 	unsigned long err;
+ 	unsigned long ip;
++#ifndef CONFIG_KERNEL_MODE_LINUX
+ 	unsigned short cs, __csh;
++#else
++	unsigned long xcs;
++#endif
+ 	unsigned long flags;
+ 	unsigned long sp_at_signal;
+ 	unsigned short ss, __ssh;
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/include/asm/system.h
+--- a/arch/x86/include/asm/system.h	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/include/asm/system.h	Sat Dec 05 14:39:08 2009 +0900
+@@ -171,6 +171,79 @@
+ 		     : :"r" (value), "r" (0) : "memory")
+ 
+ 
++#ifdef CONFIG_KERNEL_MODE_LINUX
++
++#define loadldtr(value)				\
++	asm volatile("\n"			\
++		"1:\t"				\
++		"lldt %0\n"			\
++		"2:\n"				\
++		".section .fixup,\"ax\"\n"	\
++		"3:\t"				\
++		"pushl $0\n\t"			\
++		"lldt (%%esp)\n\t"		\
++		"addl $4, %%esp\n\t"		\
++		"jmp 2b\n"			\
++		".previous\n"			\
++		".section __ex_table,\"a\"\n\t"	\
++		".align 4\n\t"			\
++		".long 1b,3b\n"			\
++		".previous"			\
++		: :"m" (*(unsigned int *)&(value)))
++
++#define saveldtr(value) \
++	asm volatile("sldt %0\n\t" : "=m" (*(int *)&(value)))
++
++#endif
++
++#if defined(CONFIG_KERNEL_MODE_LINUX) && defined(CONFIG_X86_32)
++
++#define NMI_DECLS_GS \
++	unsigned long system__saved_gs = 0;
++
++#define NMI_SAVE_GS \
++	savesegment(gs, system__saved_gs)
++
++#define NMI_RESTORE_GS \
++	loadsegment(gs, system__saved_gs)
++
++#define NMI_DECLS_GSLDTR \
++	NMI_DECLS_GS	\
++	unsigned long system__saved_ldtr = 0;
++
++#define NMI_SAVE_GSLDTR \
++	NMI_SAVE_GS;	\
++	saveldtr(system__saved_ldtr)
++
++#define NMI_RESTORE_GSLDTR \
++	loadldtr(system__saved_ldtr);	\
++	NMI_RESTORE_GS
++
++#else
++
++#define NMI_DECLS_GS
++#define NMI_SAVE_GS
++#define NMI_RESTORE_GS
++#define NMI_DECLS_GSLDTR
++#define NMI_SAVE_GSLDTR
++#define NMI_RESTORE_GSLDTR
++
++#endif
++
++#ifdef CONFIG_KERNEL_MODE_LINUX
++
++/*
++ * The following code was moved from 'switch_to' for NMI safety.
++ *
++ */
++#define prepare_arch_switch(next)					\
++do {									\
++	struct task_struct* prev = current;				\
++	savesegment(gs, prev->thread.gs);				\
++} while (0)
++
++#endif
++
+ /*
+  * Save a segment register away
+  */
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/include/asm/thread_info.h
+--- a/arch/x86/include/asm/thread_info.h	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/include/asm/thread_info.h	Sat Dec 05 14:39:08 2009 +0900
+@@ -96,6 +96,7 @@
+ #define TIF_DS_AREA_MSR		26      /* uses thread_struct.ds_area_msr */
+ #define TIF_LAZY_MMU_UPDATES	27	/* task is updating the mmu lazily */
+ #define TIF_SYSCALL_TRACEPOINT	28	/* syscall tracepoint instrumentation */
++#define TIF_KU			29	/* kernel-mode user process */
+ 
+ #define _TIF_SYSCALL_TRACE	(1 << TIF_SYSCALL_TRACE)
+ #define _TIF_NOTIFY_RESUME	(1 << TIF_NOTIFY_RESUME)
+@@ -119,6 +120,7 @@
+ #define _TIF_DS_AREA_MSR	(1 << TIF_DS_AREA_MSR)
+ #define _TIF_LAZY_MMU_UPDATES	(1 << TIF_LAZY_MMU_UPDATES)
+ #define _TIF_SYSCALL_TRACEPOINT	(1 << TIF_SYSCALL_TRACEPOINT)
++#define _TIF_KU			(1 << TIF_KU)
+ 
+ /* work to do in syscall_trace_enter() */
+ #define _TIF_WORK_SYSCALL_ENTRY	\
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/include/asm/vsyscall.h
+--- a/arch/x86/include/asm/vsyscall.h	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/include/asm/vsyscall.h	Sat Dec 05 14:39:08 2009 +0900
+@@ -7,6 +7,11 @@
+ 	__NR_vgetcpu,
+ };
+ 
++#ifdef CONFIG_KERNEL_MODE_LINUX
++/* XXX : The following offset will need to be increased
++	 if the size of vsyscall-kml.so exceeds a page size. */
++#define VSYSCALL_KML_START (-12UL << 20)
++#endif
+ #define VSYSCALL_START (-10UL << 20)
+ #define VSYSCALL_SIZE 1024
+ #define VSYSCALL_END (-2UL << 20)
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/kernel/Makefile
+--- a/arch/x86/kernel/Makefile	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/kernel/Makefile	Sat Dec 05 14:39:08 2009 +0900
+@@ -82,6 +82,7 @@
+ obj-$(CONFIG_MODULES)		+= module.o
+ obj-$(CONFIG_EFI) 		+= efi.o efi_$(BITS).o efi_stub_$(BITS).o
+ obj-$(CONFIG_DOUBLEFAULT) 	+= doublefault_32.o
++obj-$(CONFIG_KERNEL_MODE_LINUX)	+= task.o
+ obj-$(CONFIG_KGDB)		+= kgdb.o
+ obj-$(CONFIG_VM86)		+= vm86_32.o
+ obj-$(CONFIG_EARLY_PRINTK)	+= early_printk.o
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/kernel/apic/io_apic.c
+--- a/arch/x86/kernel/apic/io_apic.c	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/kernel/apic/io_apic.c	Sat Dec 05 14:39:08 2009 +0900
+@@ -1482,6 +1482,10 @@
+ 	DECLARE_BITMAP(pin_programmed, MP_MAX_IOAPIC_PIN + 1);
+ } mp_ioapic_routing[MAX_IO_APICS];
+ 
++#if defined(CONFIG_KERNEL_MODE_LINUX) && defined(CONFIG_X86_32)
++static void IO_APIC_test_ISR_and_handle_interrupt(void);
++#endif
++
+ static void __init setup_IO_APIC_irqs(void)
+ {
+ 	int apic_id = 0, pin, idx, irq;
+@@ -1547,6 +1551,10 @@
+ 	if (notcon)
+ 		apic_printk(APIC_VERBOSE,
+ 			" (apicid-pin) not connected\n");
++
++#if defined(CONFIG_KERNEL_MODE_LINUX) && defined(CONFIG_X86_32)
++	test_ISR_and_handle_interrupt = IO_APIC_test_ISR_and_handle_interrupt;
++#endif
+ }
+ 
+ /*
+@@ -4032,6 +4040,45 @@
+ 	return 0;
+ }
+ 
++#if defined(CONFIG_KERNEL_MODE_LINUX) && defined(CONFIG_X86_32)
++
++static __inline__ int ffsr0(int x)
++{
++	int r;
++
++	__asm__ ("bsrl %1, %0\n\t"
++		 "jnz 1f\n\t"
++		 "movl $-1, %0\n"
++		 "1:"
++		 : "=r" (r) : "rm" (x));
++
++	return r;
++}
++
++static void IO_APIC_test_ISR_and_handle_interrupt(void)
++{
++	int i;
++
++	for (i = 7; i >= 0; i--) {
++		unsigned long v;
++		int idx;
++
++		v = apic_read(APIC_ISR + i * 0x10);
++
++		idx = ffsr0(v);
++
++		if (idx < 0) {
++			continue;
++		}
++
++		handle_interrupt_manually(idx + i * 32);
++
++		return;
++	}
++
++}
++#endif
++
+ /*
+  * This function currently is only a helper for the i386 smp boot process where
+  * we need to reprogram the ioredtbls to cater for the cpus which have come online
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/kernel/apm_32.c
+--- a/arch/x86/kernel/apm_32.c	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/kernel/apm_32.c	Sat Dec 05 14:39:08 2009 +0900
+@@ -583,9 +583,11 @@
+ 	struct desc_struct	save_desc_40;
+ 	struct desc_struct	*gdt;
+ 	struct apm_bios_call	*call = _call;
++	NMI_DECLS_GS
+ 
+ 	cpu = get_cpu();
+ 	BUG_ON(cpu != 0);
++	NMI_SAVE_GS;
+ 	gdt = get_cpu_gdt_table(cpu);
+ 	save_desc_40 = gdt[0x40 / 8];
+ 	gdt[0x40 / 8] = bad_bios_desc;
+@@ -598,6 +600,7 @@
+ 	APM_DO_RESTORE_SEGS;
+ 	apm_irq_restore(flags);
+ 	gdt[0x40 / 8] = save_desc_40;
++	NMI_RESTORE_GS;
+ 	put_cpu();
+ 
+ 	return call->eax & 0xff;
+@@ -659,9 +662,11 @@
+ 	struct desc_struct	save_desc_40;
+ 	struct desc_struct	*gdt;
+ 	struct apm_bios_call	*call = _call;
++	NMI_DECLS_GS
+ 
+ 	cpu = get_cpu();
+ 	BUG_ON(cpu != 0);
++	NMI_SAVE_GS;
+ 	gdt = get_cpu_gdt_table(cpu);
+ 	save_desc_40 = gdt[0x40 / 8];
+ 	gdt[0x40 / 8] = bad_bios_desc;
+@@ -673,6 +678,7 @@
+ 	APM_DO_RESTORE_SEGS;
+ 	apm_irq_restore(flags);
+ 	gdt[0x40 / 8] = save_desc_40;
++	NMI_RESTORE_GS;
+ 	put_cpu();
+ 	return error;
+ }
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/kernel/asm-offsets_64.c
+--- a/arch/x86/kernel/asm-offsets_64.c	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/kernel/asm-offsets_64.c	Sat Dec 05 14:39:08 2009 +0900
+@@ -116,6 +116,9 @@
+ 	BLANK();
+ #undef ENTRY
+ 	DEFINE(TSS_ist, offsetof(struct tss_struct, x86_tss.ist));
++#ifdef CONFIG_KERNEL_MODE_LINUX
++	DEFINE(TSS_kml_stack, offsetof(struct tss_struct, kml_stack));
++#endif
+ 	BLANK();
+ 	DEFINE(crypto_tfm_ctx_offset, offsetof(struct crypto_tfm, __crt_ctx));
+ 	BLANK();
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/kernel/cpu/common.c
+--- a/arch/x86/kernel/cpu/common.c	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/kernel/cpu/common.c	Sat Dec 05 14:39:08 2009 +0900
+@@ -1149,7 +1149,13 @@
+ 		for (v = 0; v < N_EXCEPTION_STACKS; v++) {
+ 			estacks += exception_stack_sizes[v];
+ 			orig_ist->ist[v] = t->x86_tss.ist[v] =
++#ifndef CONFIG_KERNEL_MODE_LINUX
+ 					(unsigned long)estacks;
++#else
++					(v + 1 == KML_STACK) ?
++						(unsigned long)(t->kml_stack + KML_STACK_SIZE)
++						: (unsigned long)estacks;
++#endif
+ 		}
+ 	}
+ 
+@@ -1201,6 +1207,10 @@
+ 	struct task_struct *curr = current;
+ 	struct tss_struct *t = &per_cpu(init_tss, cpu);
+ 	struct thread_struct *thread = &curr->thread;
++#ifdef CONFIG_KERNEL_MODE_LINUX
++	struct tss_struct* doublefault_tss = &per_cpu(doublefault_tsses, cpu);
++	struct tss_struct* nmi_tss = &per_cpu(nmi_tsses, cpu);
++#endif
+ 
+ 	if (cpumask_test_and_set_cpu(cpu, cpu_initialized_mask)) {
+ 		printk(KERN_WARNING "CPU#%d already initialized!\n", cpu);
+@@ -1231,10 +1241,17 @@
+ 
+ 	t->x86_tss.io_bitmap_base = offsetof(struct tss_struct, io_bitmap);
+ 
++#ifndef CONFIG_KERNEL_MODE_LINUX
+ #ifdef CONFIG_DOUBLEFAULT
+ 	/* Set up doublefault TSS pointer in the GDT */
+ 	__set_tss_desc(cpu, GDT_ENTRY_DOUBLEFAULT_TSS, &doublefault_tss);
+ #endif
++#else
++	init_doublefault_tss(cpu);
++	init_nmi_tss(cpu);
++	__set_tss_desc(cpu, GDT_ENTRY_DOUBLEFAULT_TSS, doublefault_tss);
++	__set_tss_desc(cpu, GDT_ENTRY_NMI_TSS, nmi_tss);
++#endif
+ 
+ 	clear_all_debug_regs();
+ 
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/kernel/direct_call_32.h
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/arch/x86/kernel/direct_call_32.h	Sat Dec 05 14:39:08 2009 +0900
+@@ -0,0 +1,134 @@
++/*
++ * Copyright 2003 Toshiyuki Maeda
++ *
++ * This file is part of Kernel Mode Linux.
++ *
++ * Kernel Mode Linux is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2, or (at your option)
++ * any later version.
++ *
++ * Kernel Mode Linux is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++/*
++ * These are macros for making direct_call_table.
++ *
++ * This file should be included only from the "sys_call_table_maker.h" file.
++ */
++
++#ifdef CONFIG_KERNEL_MODE_LINUX
++
++.macro direct_prepare_stack argnum
++.if \argnum
++addl $-(4 * \argnum), %esp
++.else
++addl $-4, %esp
++.endif
++.endm
++
++.macro direct_push_args argnum
++.if \argnum
++direct_push_args "(\argnum - 1)"
++movl (12 + (\argnum - 1) * 4)(%ebp), %eax
++movl %eax, ((\argnum - 1) * 4)(%esp)
++.endif
++.endm
++
++#define MAKE_DIRECTCALL(name, argnum, syscall_num) \
++.text; \
++ENTRY(direct_ ## name); \
++	pushl %ebp; \
++	movl %esp, %ebp; \
++	movl PER_CPU_VAR(esp0), %esp; \
++\
++	direct_prepare_stack argnum; \
++	direct_push_args argnum; \
++\
++	call name; \
++\
++	GET_THREAD_INFO(%edx); \
++	leave; \
++\
++	movl TI_flags(%edx), %ecx; \
++	testl $_TIF_ALLWORK_MASK, %ecx; \
++	jne 0f; \
++	ret; \
++0:; \
++	pushl %eax; \
++	pushl %ebx; \
++	pushl %edi; \
++	pushl %esi; \
++	pushl %ebp; \
++	movl $(syscall_num), %eax; \
++	jmp direct_exit_work_ ## argnum;
++
++#define MAKE_DIRECTCALL_SPECIAL(name, argnum, syscall_num) \
++.text; \
++ENTRY(direct_ ## name); \
++	pushl %ebx; \
++	pushl %edi; \
++	pushl %esi; \
++	pushl %ebp; \
++	add $-4, %esp; \
++\
++	movl $(syscall_num), %eax; \
++\
++	call direct_special_work_ ## argnum; \
++\
++	pushfl; \
++	pushl %cs; \
++	pushl $direct_wrapper_int_post; \
++	jmp system_call;
++
++direct_wrapper_int_pre:
++	int $0x80
++direct_wrapper_int_post:
++	addl $4, %esp
++	popl %ebp
++	popl %esi
++	popl %edi
++	popl %ebx
++	ret
++
++direct_exit_work_6:
++	movl 48(%esp), %ebp
++direct_exit_work_5:
++	movl 44(%esp), %edi
++direct_exit_work_4:
++	movl 40(%esp), %esi
++direct_exit_work_3:
++	movl 36(%esp), %edx
++direct_exit_work_2:
++	movl 32(%esp), %ecx
++direct_exit_work_1:
++	movl 28(%esp), %ebx
++direct_exit_work_0:
++	pushfl
++	pushl %cs
++	pushl $direct_wrapper_int_post
++	jmp kml_exit_work
++
++direct_special_work_6:
++	movl 52(%esp), %ebp
++direct_special_work_5:
++	movl 48(%esp), %edi
++direct_special_work_4:
++	movl 44(%esp), %esi
++direct_special_work_3:
++	movl 40(%esp), %edx
++direct_special_work_2:
++	movl 36(%esp), %ecx
++direct_special_work_1:
++	movl 32(%esp), %ebx
++direct_special_work_0:
++	ret
++
++#endif
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/kernel/entry_32.S
+--- a/arch/x86/kernel/entry_32.S	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/kernel/entry_32.S	Sat Dec 05 14:39:08 2009 +0900
+@@ -77,6 +77,10 @@
+  * enough to patch inline, increasing performance.
+  */
+ 
++#ifdef CONFIG_KERNEL_MODE_LINUX
++#include <linux/threads.h>
++#endif
++
+ #define nr_syscalls ((syscall_table_size)/4)
+ 
+ #ifdef CONFIG_PREEMPT
+@@ -284,6 +288,117 @@
+ 	POP_GS_EX
+ .endm
+ 
++#ifndef CONFIG_KERNEL_MODE_LINUX
++
++#define SWITCH_STACK_TO_KK_INTERRUPT
++#define SWITCH_STACK_TO_KK_EXCEPTION
++#define SWITCH_STACK_TO_KK_EXCEPTION_WITH_ERROR_CODE
++
++#else
++
++#define TASK_SIZE               (__PAGE_OFFSET)
++
++#define __KU_CS_INTERRUPT	((1 << 16) | __USER_CS)
++#define __KU_CS_EXCEPTION	((1 << 17) | __USER_CS)
++
++/*
++ * These are macros for stack switching.
++ */
++
++.macro SWITCH_STACK_TO_KK_INTERRUPT
++	/* Check whether if we were in the kernel-user mode or not. */
++	cmpl $(TASK_SIZE), %esp
++	ja 1f
++
++	/*
++	 * We assume that the processor clears the High 16 bits of XCS.
++	 */
++
++	/*
++	 * We were in the kernel-user mode.
++	 * Therefore, %fs == __KERNEL_PERCPU.
++	 */
++
++	/*
++	 * We can't use the space where CS is saved,
++	 * because it may cause a page fault (though it's very rare...)
++	 * and it conflicts with the interrupt.
++	 */
++	movl %ebp, PER_CPU_VAR(unused)		/* save %ebp */
++	movl %esp, %ebp				/* save %esp to %ebp */
++	movl PER_CPU_VAR(esp0), %esp		/* switch the stack! */
++
++	addl $-4, %esp			/* push XSS */
++	pushl %ebp			/* push old %esp */
++	pushl $0			/* push EFLAGS */
++	pushl $(__KU_CS_INTERRUPT)	/* push XCS */
++	pushl $0			/* push EIP */
++
++	movl PER_CPU_VAR(unused), %ebp	/* restore %ebp */
++1:
++.endm
++
++.macro SWITCH_STACK_TO_KK_EXCEPTION
++	/* Check whether if we were in the kernel-user mode or not. */
++	cmpl $(TASK_SIZE), %esp
++	ja 1f
++
++	/*
++	 * We assume that the processor clears the High 16 bits of XCS.
++	 */
++
++	/*
++	 * We were in the kernel-user mode.
++	 * Therefore, %fs == __KERNEL_PERCPU && XCS == __KERNEL_CS.
++	 */
++	movl %ebp, 4(%esp)			/* save %ebp to the stack */
++	movl %esp, %ebp				/* save old %esp to %ebp */
++	movl PER_CPU_VAR(esp0), %esp		/* switch the stack! */
++
++	addl $12, %ebp
++
++	addl $-4, %esp			/* push XSS */
++	pushl %ebp			/* push old %esp */
++	pushl -4(%ebp)			/* push EFLAGS */
++	pushl $(__KU_CS_EXCEPTION)	/* push XCS */
++	pushl -12(%ebp)			/* push EIP */
++
++	movl -8(%ebp), %ebp		/* restore %ebp */
++1:
++.endm
++
++.macro SWITCH_STACK_TO_KK_EXCEPTION_WITH_ERROR_CODE
++	/* Check whether if we were in the kernel-user mode or not. */
++	cmpl $(TASK_SIZE), %esp
++	ja 1f
++
++	/*
++	 * We assume that the processor clears the High 16 bits of XCS.
++	 */
++
++	/*
++	 * We were in the kernel-user mode.
++	 * Therefore, %fs == __KERNEL_PERCPU && XCS == __KERNEL_CS.
++	 */
++	movl %ebp, 8(%esp)			/* save %ebp to the stack */
++	movl %esp, %ebp				/* save old %esp to %ebp */
++	movl PER_CPU_VAR(esp0), %esp		/* switch the stack! */
++
++	addl $16, %ebp
++
++	addl $-4, %esp			/* push XSS */
++	pushl %ebp			/* push old %esp */
++	pushl -4(%ebp)			/* push EFLAGS */
++	pushl $(__KU_CS_EXCEPTION)	/* push XCS */
++	pushl -12(%ebp)			/* push EIP */
++	pushl -16(%ebp)			/* push error_code */
++
++	movl -8(%ebp), %ebp		/* restore %ebp */
++1:
++.endm
++
++#endif
++
+ .macro RING0_INT_FRAME
+ 	CFI_STARTPROC simple
+ 	CFI_SIGNAL_FRAME
+@@ -394,6 +509,9 @@
+ 	CFI_DEF_CFA esp, 0
+ 	CFI_REGISTER esp, ebp
+ 	movl TSS_sysenter_sp0(%esp),%esp
++#ifdef CONFIG_KERNEL_MODE_LINUX
++	.globl sysenter_past_esp
++#endif
+ sysenter_past_esp:
+ 	/*
+ 	 * Interrupts are disabled here, but we can't trace it until
+@@ -516,6 +634,7 @@
+ 	# system call handler stub
+ ENTRY(system_call)
+ 	RING0_INT_FRAME			# can't unwind into user space anyway
++	SWITCH_STACK_TO_KK_EXCEPTION
+ 	pushl %eax			# save orig_eax
+ 	CFI_ADJUST_CFA_OFFSET 4
+ 	SAVE_ALL
+@@ -554,6 +673,13 @@
+ restore_nocheck:
+ 	RESTORE_REGS 4			# skip orig_eax/error_code
+ 	CFI_ADJUST_CFA_OFFSET -4
++#ifdef CONFIG_KERNEL_MODE_LINUX
++restore_all_return:
++/* Switch stack KK -> KU. */
++	/* check whether if stack switch occured or not */
++	cmpw $0x0, 6(%esp)
++	jne ret_to_ku
++#endif
+ irq_return:
+ 	INTERRUPT_RETURN
+ .section .fixup,"ax"
+@@ -567,6 +693,108 @@
+ 	.long irq_return,iret_exc
+ .previous
+ 
++#ifdef CONFIG_KERNEL_MODE_LINUX
++
++ENTRY(ret_to_ku)
++	cmpl $__KU_CS_EXCEPTION, 4(%esp)
++	je ret_to_ku_from_exception
++	jmp ret_to_ku_from_interrupt
++
++/*
++ * The stack layout for ret_to_ku_from_interrupt:
++ *
++ * %esp --> 0
++ *          __KU_CS_INTERRUPT
++ *          0
++ *          ESP
++ *          XXX
++ *          ...
++ *
++ * ESP  --> EIP
++ *          CS
++ *          EFLAGS
++ */
++ENTRY(ret_to_ku_from_interrupt)
++	movl %eax, (%esp)	/* save %eax  */
++	movl %edx, 4(%esp)	/* save %edx */
++
++	movl 12(%esp), %eax	/* load ESP to %eax */
++
++	movl 8(%eax), %edx	/* load EFLAGS to %edx */
++	movl %edx, 4(%eax)
++	movl (%eax), %edx	/* load EIP to %edx */
++	movl %edx, 8(%eax)
++
++	movl 4(%esp), %edx	/* restore %edx */
++	movl (%esp), %eax	/* restore %eax */
++
++	movl 12(%esp), %esp	/* switch the stack! */
++	addl $4, %esp
++	popfl			/* restore EFLAGS */
++	ret
++
++/*
++ * The stack layout for ret_to_ku_from_exception:
++ *
++ * %esp --> EIP
++ *          __KU_CS_EXCEPTION
++ *          EFLAGS
++ *          ESP
++ *          XXX
++ *          ...
++ */
++ENTRY(ret_to_ku_from_exception)
++	movl $__KERNEL_CS, 4(%esp)	/* XCS = __KERNEL_CS */
++	pushl %ebp
++
++	/* check whether if we can skip iret or not */
++	movl 12(%esp), %ebp		/* load EFLAGS to %ebp */
++	testl $~(0x240fd7), %ebp
++	movl 16(%esp), %ebp		/* load ESP to %ebp */
++	jz skip_iret
++
++	addl $-16, %ebp
++ret_to_ku_mov_ebp:	popl (%ebp)		/* old EBP */
++ret_to_ku_mov_eip:	popl 4(%ebp)		/* EIP */
++ret_to_ku_mov_cs:	popl 8(%ebp)		/* XCS */
++ret_to_ku_mov_eflags:	popl 12(%ebp)		/* EFLAGS */
++			movl %ebp, %esp		/* switch the stack! */
++ret_to_ku_pop_ebp:	popl %ebp		/* %ebp = old EBP */
++ret_to_ku_iret:		INTERRUPT_RETURN
++
++.section __ex_table,"a"
++	.align 4
++	.long ret_to_ku_mov_ebp,	iret_exc
++	.long ret_to_ku_mov_eip,	iret_exc
++	.long ret_to_ku_mov_cs,		iret_exc
++	.long ret_to_ku_mov_eflags,	iret_exc
++	.long ret_to_ku_pop_ebp,	iret_exc
++	.long ret_to_ku_iret,		iret_exc
++.previous
++
++ENTRY(skip_iret)
++	addl $-12, %ebp
++skip_iret_mov_ebp:	popl (%ebp)		/* old EBP */
++skip_iret_mov_eip:	popl 8(%ebp)		/* EIP */
++			addl $4, %esp		/* skip CS */
++skip_iret_mov_eflags:	popl 4(%ebp)		/* EFLAGS */
++			movl %ebp, %esp		/* switch the stack! */
++skip_iret_pop_ebp:	popl %ebp		/* %ebp = old EBP */
++skip_iret_pop_eflags:	popfl
++skip_iret_ret:		ret
++
++.section __ex_table,"a"
++	.align 4
++	.long skip_iret_mov_ebp,	iret_exc
++	.long skip_iret_mov_eip,	iret_exc
++	.long skip_iret_mov_eflags,	iret_exc
++	.long skip_iret_pop_ebp,	iret_exc
++	.long skip_iret_pop_eflags,	iret_exc
++	.long skip_iret_ret,		iret_exc
++.previous
++
++#endif
++
+ 	CFI_RESTORE_STATE
+ ldt_ss:
+ 	larl PT_OLDSS(%esp), %eax
+@@ -777,10 +1005,11 @@
+ 	.balign 32
+   .rept	7
+     .if vector < NR_VECTORS
++1:	SWITCH_STACK_TO_KK_INTERRUPT
+       .if vector <> FIRST_EXTERNAL_VECTOR
+ 	CFI_ADJUST_CFA_OFFSET -4
+       .endif
+-1:	pushl $(~vector+0x80)	/* Note: always in signed byte range */
++	pushl $(~vector+0x80)	/* Note: always in signed byte range */
+ 	CFI_ADJUST_CFA_OFFSET 4
+       .if ((vector-FIRST_EXTERNAL_VECTOR)%7) <> 6
+ 	jmp 2f
+@@ -817,6 +1046,7 @@
+ #define BUILD_INTERRUPT3(name, nr, fn)	\
+ ENTRY(name)				\
+ 	RING0_INT_FRAME;		\
++	SWITCH_STACK_TO_KK_INTERRUPT;	\
+ 	pushl $~(nr);			\
+ 	CFI_ADJUST_CFA_OFFSET 4;	\
+ 	SAVE_ALL;			\
+@@ -834,6 +1064,7 @@
+ 
+ ENTRY(coprocessor_error)
+ 	RING0_INT_FRAME
++	SWITCH_STACK_TO_KK_EXCEPTION
+ 	pushl $0
+ 	CFI_ADJUST_CFA_OFFSET 4
+ 	pushl $do_coprocessor_error
+@@ -844,6 +1075,7 @@
+ 
+ ENTRY(simd_coprocessor_error)
+ 	RING0_INT_FRAME
++	SWITCH_STACK_TO_KK_EXCEPTION
+ 	pushl $0
+ 	CFI_ADJUST_CFA_OFFSET 4
+ 	pushl $do_simd_coprocessor_error
+@@ -854,6 +1086,7 @@
+ 
+ ENTRY(device_not_available)
+ 	RING0_INT_FRAME
++	SWITCH_STACK_TO_KK_EXCEPTION
+ 	pushl $-1			# mark this as an int
+ 	CFI_ADJUST_CFA_OFFSET 4
+ 	pushl $do_device_not_available
+@@ -879,6 +1112,7 @@
+ 
+ ENTRY(overflow)
+ 	RING0_INT_FRAME
++	SWITCH_STACK_TO_KK_EXCEPTION
+ 	pushl $0
+ 	CFI_ADJUST_CFA_OFFSET 4
+ 	pushl $do_overflow
+@@ -889,6 +1123,7 @@
+ 
+ ENTRY(bounds)
+ 	RING0_INT_FRAME
++	SWITCH_STACK_TO_KK_EXCEPTION
+ 	pushl $0
+ 	CFI_ADJUST_CFA_OFFSET 4
+ 	pushl $do_bounds
+@@ -899,6 +1134,7 @@
+ 
+ ENTRY(invalid_op)
+ 	RING0_INT_FRAME
++	SWITCH_STACK_TO_KK_EXCEPTION
+ 	pushl $0
+ 	CFI_ADJUST_CFA_OFFSET 4
+ 	pushl $do_invalid_op
+@@ -909,6 +1145,7 @@
+ 
+ ENTRY(coprocessor_segment_overrun)
+ 	RING0_INT_FRAME
++	SWITCH_STACK_TO_KK_EXCEPTION
+ 	pushl $0
+ 	CFI_ADJUST_CFA_OFFSET 4
+ 	pushl $do_coprocessor_segment_overrun
+@@ -917,8 +1154,146 @@
+ 	CFI_ENDPROC
+ END(coprocessor_segment_overrun)
+ 
++#ifdef CONFIG_KERNEL_MODE_LINUX
++
++PAGE_FAULT_ERROR_CODE = 0x2
++TSS_ESP0   =  4
++TSS_EIP    = 32
++TSS_EFLAGS = 36
++TSS_CS     = 76
++TSS_ESP    = 56
++TSS_SS     = 80
++
++.macro kml_get_kernel_stack pre_tss, ret
++	cmpw $__KERNEL_CS, TSS_CS(\pre_tss)
++	jne 1f
++
++	movl TSS_ESP(\pre_tss), \ret
++	# If the previous ESP points to kernel-space,
++	# we used the kernel stack.
++	cmpl $TASK_SIZE, \ret
++	jbe 1f
++
++	# If we were in the first instruction of
++	# ia32_sysenter_target, the previous ESP points to
++	# tss->esp1, so we need to reset it to tss->esp0.
++	# EIP will be adjusted in task.c
++	cmpl $ia32_sysenter_target, TSS_EIP(\pre_tss)
++	jne 2f
++
++	# We used the user stack, so
++	# needs to load the kernel stack
++	# from ESP0 field of TSS.
++1:
++	movl PER_CPU_VAR(esp0), \ret
++/*
++	movl $(__KERNEL_PERCPU), %eax
++	movl %eax, %ds
++	movl (ESP0_IN_PDA), \ret
++	movl $(__USER_DS), %eax
++	movl %eax, %ds
++*/
++2:
++.endm
++
++.macro kml_recreate_kernel_stack_layout pre_tss
++	cmpw $__KERNEL_CS, TSS_CS(\pre_tss)
++	jne 1f
++
++	movl TSS_ESP(\pre_tss), %eax
++	cmpl $TASK_SIZE, %eax
++	ja 2f
++1:
++	pushl TSS_SS(\pre_tss)
++	pushl TSS_ESP(\pre_tss)
++2:
++	pushl TSS_EFLAGS(\pre_tss)
++	pushl TSS_CS(\pre_tss)
++	pushl TSS_EIP(\pre_tss)
++.endm
++
++.macro call_helper func target_address cur_tss pre_tss
++	pushl %esp
++	pushl \pre_tss
++	pushl \cur_tss
++	pushl \target_address 
++	call \func
++	addl $16, %esp
++.endm
++
++.macro ret_from_task_without_iret cur_tss tss_desc
++	/* clear NT in EFLAGS */
++	pushfl
++	andl $~X86_EFLAGS_NT, (%esp)
++	popfl
++
++	movl TSS_ESP0(\cur_tss), %esp
++
++	/* We don't use iret, because it will enable NMI */
++	ljmp $(\tss_desc*8), $0x0
++.endm
++
++/*
++ * This is a task-handler for double fault.
++ * In Kernel Mode Linux, user programs may be executed in ring 0 (kernel mode).
++ * Therefore, normal interrupt handling mechanism doesn't work.
++ * For example, if a page fault occurs in a stack,
++ * CPU cannot generate a page fault exception because there is no stack
++ * to save the CPU context. We call this problem "stack starvation".
++ * To solve the stack starvation, we handle double fault with task-handler. 
++ *
++ * Initial stack layout (dft_stack_struct)
++ *
++ * %esp --> error_code (<-- pushed by CPU)
++ *          pointer to dft_tss
++ *          pointer to normal_tss
++ */
++ENTRY(double_fault_task)
++	movl 4(%esp), %edi		# get current TSS.
++/* %edi = current_tss */
++	movl 8(%esp), %ebx		# get normal TSS.
++/* %ebx = prev_tss */
++
++	# get kernel stack.
++	kml_get_kernel_stack %ebx, %esi
++
++	movl %esi, %esp
++/* From now on, we can use stack. */
++
++	# recreate stack layout as if normal interrupt occurs.
++	kml_recreate_kernel_stack_layout %ebx
++
++	call_helper prepare_fault_handler, $double_fault_fixup, %edi, %ebx
++
++	ret_from_task_without_iret %edi, GDT_ENTRY_TSS
++
++	jmp double_fault_task
++
++ENTRY(double_fault_fixup)
++	pushl %eax
++	pushl %edx
++	pushl %ecx
++
++	movl %cr2, %eax
++	pushl %eax
++
++	call do_interrupt_handling
++
++	popl %eax
++	movl %eax, %cr2
++
++	popl %ecx
++	popl %edx
++	popl %eax
++
++	pushl $PAGE_FAULT_ERROR_CODE
++	pushl $do_page_fault
++	jmp error_code
++#endif
++
+ ENTRY(invalid_TSS)
+ 	RING0_EC_FRAME
++	SWITCH_STACK_TO_KK_EXCEPTION_WITH_ERROR_CODE
+ 	pushl $do_invalid_TSS
+ 	CFI_ADJUST_CFA_OFFSET 4
+ 	jmp error_code
+@@ -927,6 +1302,7 @@
+ 
+ ENTRY(segment_not_present)
+ 	RING0_EC_FRAME
++	SWITCH_STACK_TO_KK_EXCEPTION_WITH_ERROR_CODE
+ 	pushl $do_segment_not_present
+ 	CFI_ADJUST_CFA_OFFSET 4
+ 	jmp error_code
+@@ -935,6 +1311,7 @@
+ 
+ ENTRY(stack_segment)
+ 	RING0_EC_FRAME
++	SWITCH_STACK_TO_KK_EXCEPTION_WITH_ERROR_CODE
+ 	pushl $do_stack_segment
+ 	CFI_ADJUST_CFA_OFFSET 4
+ 	jmp error_code
+@@ -943,6 +1320,7 @@
+ 
+ ENTRY(alignment_check)
+ 	RING0_EC_FRAME
++	SWITCH_STACK_TO_KK_EXCEPTION_WITH_ERROR_CODE
+ 	pushl $do_alignment_check
+ 	CFI_ADJUST_CFA_OFFSET 4
+ 	jmp error_code
+@@ -951,6 +1329,7 @@
+ 
+ ENTRY(divide_error)
+ 	RING0_INT_FRAME
++	SWITCH_STACK_TO_KK_EXCEPTION
+ 	pushl $0			# no error code
+ 	CFI_ADJUST_CFA_OFFSET 4
+ 	pushl $do_divide_error
+@@ -962,6 +1341,7 @@
+ #ifdef CONFIG_X86_MCE
+ ENTRY(machine_check)
+ 	RING0_INT_FRAME
++	SWITCH_STACK_TO_KK_EXCEPTION
+ 	pushl $0
+ 	CFI_ADJUST_CFA_OFFSET 4
+ 	pushl machine_check_vector
+@@ -973,6 +1353,7 @@
+ 
+ ENTRY(spurious_interrupt_bug)
+ 	RING0_INT_FRAME
++	SWITCH_STACK_TO_KK_EXCEPTION
+ 	pushl $0
+ 	CFI_ADJUST_CFA_OFFSET 4
+ 	pushl $do_spurious_interrupt_bug
+@@ -1210,6 +1591,7 @@
+ 
+ ENTRY(page_fault)
+ 	RING0_EC_FRAME
++	SWITCH_STACK_TO_KK_EXCEPTION_WITH_ERROR_CODE
+ 	pushl $do_page_fault
+ 	CFI_ADJUST_CFA_OFFSET 4
+ 	ALIGN
+@@ -1311,6 +1693,117 @@
+ 	CFI_ENDPROC
+ END(debug)
+ 
++#ifdef CONFIG_KERNEL_MODE_LINUX
++
++/*
++ * Initial stack layout (nmi_stack_struct)
++ *
++ *          [ unused entry ] <-- used if NMI occurs in DF
++ * %esp --> pointer to nmi_tss
++ *          pointer to normal_tss
++ *          pointer to the descriptor of doublefault_tss
++ *          need_nmi flag
++ */
++ENTRY(nmi_task)
++	/* Check whether if we were in the double fault task or not. */
++	movl (%esp), %edi		# get current TSS.
++/* %edi = current_tss */
++	/* Load the previous tss selector to %ax */
++	movw (%edi), %ax
++	cmpw $__DOUBLEFAULT_TSS, %ax
++	jne 1f
++
++	/* We were in the double fault task. */
++	/*
++	 * Do not handle this NMI,
++	 * and notify the double fault task.
++	 */
++
++	/* clear busy flag in DFT tss descriptor */
++	movl 8(%esp), %edx
++	movl (%edx), %eax
++	andl $~0x00000200, %eax
++	movl %eax, (%edx)
++
++	movl $1, 12(%esp)		# need_nmi = 1
++
++	ret_from_task_without_iret %edi, GDT_ENTRY_DOUBLEFAULT_TSS
++
++	jmp nmi_task
++1:
++	/* We were in the normal task. */
++
++	movl 4(%esp), %ebx		# get normal TSS.
++/* %ebx = prev_tss */
++
++	# get kernel stack.
++	kml_get_kernel_stack %ebx, %esi
++
++	movl %esi, %esp
++/* From now on, we can use stack. */
++
++	# recreate stack layout as if normal interrupt occurs.
++	kml_recreate_kernel_stack_layout %ebx
++
++	# make room for %fs and %gs
++	addl $-8, %esp
++
++	call_helper prepare_nmi_handler, $nmi_fixup, %edi, %ebx
++
++	ret_from_task_without_iret %edi, GDT_ENTRY_TSS
++
++	jmp nmi_task
++
++.macro LLDT
++	pushl %eax
++	movl $(GDT_ENTRY_LDT * 8), %eax
++0:
++	lldtw %ax
++1:
++	popl %eax
++.section .fixup, "ax"
++2:
++	xorl %eax, %eax
++	lldtw %ax
++	jmp 1b
++.previous
++.section __ex_table,"a"
++	.align 4
++	.long 0b, 2b
++.previous
++.endm
++
++.macro POPSEG seg
++0:
++	popl \seg
++1:
++.section .fixup, "ax"
++2:
++	pushl $0
++	popl \seg
++	addl $4, %esp
++	jmp 1b
++.previous
++.section __ex_table,"a"
++	.align 4
++	.long 0b, 2b
++.previous
++.endm
++
++ENTRY(nmi_fixup)
++	pushfl
++	pushl $__KERNEL_CS
++	pushl $0f
++	jmp nmi
++0:
++	LLDT
++	POPSEG %gs
++	POPSEG %fs
++
++	jmp restore_all_return
++
++#endif
++
+ /*
+  * NMI is doubly nasty. It can happen _while_ we're handling
+  * a debug fault, and the debug fault hasn't yet been able to
+@@ -1400,6 +1893,7 @@
+ 
+ ENTRY(int3)
+ 	RING0_INT_FRAME
++	SWITCH_STACK_TO_KK_EXCEPTION
+ 	pushl $-1			# mark this as an int
+ 	CFI_ADJUST_CFA_OFFSET 4
+ 	SAVE_ALL
+@@ -1413,6 +1907,7 @@
+ 
+ ENTRY(general_protection)
+ 	RING0_EC_FRAME
++	SWITCH_STACK_TO_KK_EXCEPTION_WITH_ERROR_CODE
+ 	pushl $do_general_protection
+ 	CFI_ADJUST_CFA_OFFSET 4
+ 	jmp error_code
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/kernel/entry_64.S
+--- a/arch/x86/kernel/entry_64.S	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/kernel/entry_64.S	Sat Dec 05 14:39:08 2009 +0900
+@@ -184,6 +184,84 @@
+ #endif
+ .endm
+ 
++#ifndef CONFIG_KERNEL_MODE_LINUX
++
++#define KML_SWITCH_STACK
++#define KML_RESTORE_CS
++
++#else
++
++#define KML_SWITCH_STACK call kml_switch_stack
++#define KML_RESTORE_CS kml_restore_cs
++
++/* XXX : copy-and-pasted from "asm/processor.h" */
++#define TASK_SIZE       (0x800000000000)
++
++#define KML_RBP_RAX 0
++#define KML_RBP_RBP 8
++#define KML_RBP_RA 16
++#define KML_RBP_ERROR_CODE 24
++#define KML_RBP_RIP 32
++#define KML_RBP_CS 40
++#define KML_RBP_RFLAGS 48
++#define KML_RBP_RSP 56
++#define KML_RBP_SS 64
++
++#define KML_TSS_RSP0 4
++#define KML_STACK_SIZE (8*16)
++#define KML_RBP_TSS_RSP0 (KML_TSS_RSP0 - (TSS_kml_stack + KML_STACK_SIZE - (8*9)))
++
++ENTRY(kml_switch_stack)
++	pushq %rbp
++	pushq %rax
++	movq %rsp, %rbp
++
++	/* set %rsp and mark kernel-mode user process */
++
++	testq $0x03, KML_RBP_CS(%rbp)	# from user-mode?
++	jnz 2f
++
++	# from kernel-mode
++	movq $(TASK_SIZE), %rax
++	cmpq %rax, KML_RBP_RSP(%rbp)	# from kernel-mode user process?
++	jbe 1f
++
++	# from kernel context (align %rsp)
++	movq KML_RBP_RSP(%rbp), %rax
++	andq $~0x0f, %rax
++	movq %rax, %rsp
++	jmp 3f
++1:
++	# from kernel-mode user process
++	orl $0x7fff0003, KML_RBP_CS(%rbp)
++
++2:	# from user-mode
++	movq KML_RBP_TSS_RSP0(%rbp), %rsp
++3:
++	pushq KML_RBP_SS(%rbp)
++	pushq KML_RBP_RSP(%rbp)
++	pushq KML_RBP_RFLAGS(%rbp)
++	pushq KML_RBP_CS(%rbp)
++	pushq KML_RBP_RIP(%rbp)
++	pushq KML_RBP_ERROR_CODE(%rbp)
++	pushq KML_RBP_RA(%rbp)
++
++	movq KML_RBP_RAX(%rbp), %rax		# restore %rbp
++	movq KML_RBP_RBP(%rbp), %rbp		# restore %rbp
++
++	ret
++
++
++
++	.macro kml_restore_cs
++	testl $0x7fff0000, 8(%rsp)	# from kernel-mode user process?
++	jz 1f
++	andl $0x0000fffc, 8(%rsp)
++1:
++	.endm
++
++#endif
++	
+ /*
+  * C code is not supposed to know about undefined top of stack. Every time
+  * a C function with an pt_regs argument is called from the SYSCALL based
+@@ -196,8 +274,20 @@
+ 	.macro FIXUP_TOP_OF_STACK tmp offset=0
+ 	movq PER_CPU_VAR(old_rsp),\tmp
+ 	movq \tmp,RSP+\offset(%rsp)
++#ifdef CONFIG_KERNEL_MODE_LINUX
++	GET_THREAD_INFO(\tmp)
++	bt $TIF_KU,TI_flags(\tmp)
++	jnc 1f
++	movq $__KERNEL_DS,SS+\offset(%rsp)
++	movq $__KU_CS,CS+\offset(%rsp)
++	jmp 2f
++1:
++#endif
+ 	movq $__USER_DS,SS+\offset(%rsp)
+ 	movq $__USER_CS,CS+\offset(%rsp)
++#ifdef CONFIG_KERNEL_MODE_LINUX
++2:
++#endif
+ 	movq $-1,RCX+\offset(%rsp)
+ 	movq R11+\offset(%rsp),\tmp  /* get eflags */
+ 	movq \tmp,EFLAGS+\offset(%rsp)
+@@ -319,6 +409,10 @@
+ 	leaq 8(%rsp), %rbp		/* mov %rsp, %ebp */
+ 	testl $3, CS(%rdi)
+ 	je 1f
++#ifdef CONFIG_KERNEL_MODE_LINUX
++	testl $0x7fff0000, CS(%rdi)
++	jnz 1f
++#endif
+ 	SWAPGS
+ 	/*
+ 	 * irq_count is used to check if a CPU is already on an interrupt stack
+@@ -452,6 +546,16 @@
+  * with them due to bugs in both AMD and Intel CPUs.
+  */
+ 
++#ifdef CONFIG_KERNEL_MODE_LINUX
++ENTRY(kml_call)
++	movq	%rsp,PER_CPU_VAR(old_rsp)
++	movq	PER_CPU_VAR(kernel_stack),%rsp
++
++	sti
++
++	jmp	system_call_sub
++#endif
++
+ ENTRY(system_call)
+ 	CFI_STARTPROC	simple
+ 	CFI_SIGNAL_FRAME
+@@ -473,6 +577,9 @@
+ 	 * and short:
+ 	 */
+ 	ENABLE_INTERRUPTS(CLBR_NONE)
++#ifdef CONFIG_KERNEL_MODE_LINUX
++system_call_sub:
++#endif
+ 	SAVE_ARGS 8,1
+ 	movq  %rax,ORIG_RAX-ARGOFFSET(%rsp)
+ 	movq  %rcx,RIP-ARGOFFSET(%rsp)
+@@ -506,6 +613,10 @@
+ 	 * sysretq will re-enable interrupts:
+ 	 */
+ 	TRACE_IRQS_ON
++#ifdef CONFIG_KERNEL_MODE_LINUX
++	bt	$TIF_KU,TI_flags(%rcx)
++	jc	sysret_ku
++#endif
+ 	movq RIP-ARGOFFSET(%rsp),%rcx
+ 	CFI_REGISTER	rip,rcx
+ 	RESTORE_ARGS 0,-ARG_SKIP,1
+@@ -514,6 +625,18 @@
+ 	USERGS_SYSRET64
+ 
+ 	CFI_RESTORE_STATE
++
++#ifdef CONFIG_KERNEL_MODE_LINUX
++sysret_ku:
++	movq RIP-ARGOFFSET(%rsp),%rcx
++	RESTORE_ARGS 0,-ARG_SKIP,1
++	movq	PER_CPU_VAR(old_rsp), %rsp
++	/* swapgs is not needed */
++	pushq %r11
++	popfq
++	jmp *%rcx
++#endif
++
+ 	/* Handle reschedules */
+ 	/* edx:	work, edi: workmask */
+ sysret_careful:
+@@ -796,6 +919,7 @@
+ 
+ /* 0(%rsp): ~(interrupt number) */
+ 	.macro interrupt func
++	KML_SWITCH_STACK
+ 	subq $10*8, %rsp
+ 	CFI_ADJUST_CFA_OFFSET 10*8
+ 	call save_args
+@@ -845,6 +969,10 @@
+ 	 */
+ 	DISABLE_INTERRUPTS(CLBR_ANY)
+ 	TRACE_IRQS_IRETQ
++#ifdef CONFIG_KERNEL_MODE_LINUX
++	testl $0x7fff0000, CS-ARGOFFSET(%rsp)
++	jnz restore_args
++#endif
+ 	SWAPGS
+ 	jmp restore_args
+ 
+@@ -856,6 +984,7 @@
+ 	TRACE_IRQS_IRETQ
+ restore_args:
+ 	RESTORE_ARGS 0,8,0
++	KML_RESTORE_CS
+ 
+ irq_return:
+ 	INTERRUPT_RETURN
+@@ -1028,6 +1157,7 @@
+ 	INTR_FRAME
+ 	PARAVIRT_ADJUST_EXCEPTION_FRAME
+ 	pushq_cfi $-1		/* ORIG_RAX: no syscall to restart */
++	KML_SWITCH_STACK
+ 	subq $15*8,%rsp
+ 	CFI_ADJUST_CFA_OFFSET 15*8
+ 	call error_entry
+@@ -1046,6 +1176,7 @@
+ 	PARAVIRT_ADJUST_EXCEPTION_FRAME
+ 	pushq $-1		/* ORIG_RAX: no syscall to restart */
+ 	CFI_ADJUST_CFA_OFFSET 8
++	KML_SWITCH_STACK
+ 	subq $15*8, %rsp
+ 	call save_paranoid
+ 	TRACE_IRQS_OFF
+@@ -1081,6 +1212,7 @@
+ ENTRY(\sym)
+ 	XCPT_FRAME
+ 	PARAVIRT_ADJUST_EXCEPTION_FRAME
++	KML_SWITCH_STACK
+ 	subq $15*8,%rsp
+ 	CFI_ADJUST_CFA_OFFSET 15*8
+ 	call error_entry
+@@ -1099,6 +1231,7 @@
+ ENTRY(\sym)
+ 	XCPT_FRAME
+ 	PARAVIRT_ADJUST_EXCEPTION_FRAME
++	KML_SWITCH_STACK
+ 	subq $15*8,%rsp
+ 	CFI_ADJUST_CFA_OFFSET 15*8
+ 	call save_paranoid
+@@ -1409,12 +1542,17 @@
+ 	jnz   paranoid_userspace
+ paranoid_swapgs:
+ 	TRACE_IRQS_IRETQ 0
++#ifdef CONFIG_KERNEL_MODE_LINUX
++	testl $0x7fff0000,CS(%rsp)
++	jnz   paranoid_restore
++#endif
+ 	SWAPGS_UNSAFE_STACK
+ 	RESTORE_ALL 8
+ 	jmp irq_return
+ paranoid_restore:
+ 	TRACE_IRQS_IRETQ 0
+ 	RESTORE_ALL 8
++	KML_RESTORE_CS
+ 	jmp irq_return
+ paranoid_userspace:
+ 	GET_THREAD_INFO(%rcx)
+@@ -1473,6 +1611,10 @@
+ 	testl $3,CS+8(%rsp)
+ 	je error_kernelspace
+ error_swapgs:
++#ifdef CONFIG_KERNEL_MODE_LINUX
++	testl $0x7fff0000,CS+8(%rsp)
++	jnz error_sti
++#endif
+ 	SWAPGS
+ error_sti:
+ 	TRACE_IRQS_OFF
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/kernel/i8259.c
+--- a/arch/x86/kernel/i8259.c	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/kernel/i8259.c	Sat Dec 05 14:39:08 2009 +0900
+@@ -358,3 +358,41 @@
+ 
+ 	spin_unlock_irqrestore(&i8259A_lock, flags);
+ }
++
++#if defined(CONFIG_KERNEL_MODE_LINUX) && defined(CONFIG_X86_32)
++
++static inline unsigned long get_ISR(void)
++{
++	unsigned vl;
++	unsigned vh;
++
++	outb(0x0B, PIC_MASTER_CMD);
++	vl = inb(PIC_MASTER_CMD);
++	outb(0x0A, PIC_MASTER_CMD);
++
++	outb(0x0B, PIC_SLAVE_CMD);
++	vh = inb(PIC_SLAVE_CMD);
++	outb(0x0A, PIC_SLAVE_CMD);
++
++	return ((vh << 8) & 0x0000ff00) | (vl & 0x000000ff);
++}
++
++void i8259A_test_ISR_and_handle_interrupt(void)
++{
++	int i;
++	unsigned long isr;
++
++	isr = get_ISR();
++
++	for (i = 0; i < 16; i++) {
++		if (i == 2) {
++			continue;
++		}
++
++		if (isr & (1 << i)) {
++			handle_interrupt_manually(FIRST_EXTERNAL_VECTOR + i);
++		}
++	}
++}
++
++#endif
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/kernel/irqinit.c
+--- a/arch/x86/kernel/irqinit.c	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/kernel/irqinit.c	Sat Dec 05 14:39:08 2009 +0900
+@@ -215,6 +215,10 @@
+ #endif
+ }
+ 
++#if defined(CONFIG_KERNEL_MODE_LINUX) && defined(CONFIG_X86_32)
++void i8259A_test_ISR_and_handle_interrupt(void);
++#endif
++
+ void __init native_init_IRQ(void)
+ {
+ 	int i;
+@@ -247,5 +251,10 @@
+ 		setup_irq(FPU_IRQ, &fpu_irq);
+ 
+ 	irq_ctx_init(smp_processor_id());
++
++#ifdef CONFIG_KERNEL_MODE_LINUX
++	test_ISR_and_handle_interrupt = i8259A_test_ISR_and_handle_interrupt;
++#endif
++
+ #endif
+ }
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/kernel/kml_call_32.h
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/arch/x86/kernel/kml_call_32.h	Sat Dec 05 14:39:08 2009 +0900
+@@ -0,0 +1,157 @@
++/*
++ * Copyright 2003 Toshiyuki Maeda
++ *
++ * This file is part of Kernel Mode Linux.
++ *
++ * Kernel Mode Linux is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2, or (at your option)
++ * any later version.
++ *
++ * Kernel Mode Linux is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++/*
++ * These are macros for making kml_call_table.
++ *
++ * This file should be included only from the "sys_call_table_maker.h" file.
++ */
++
++#ifdef CONFIG_KERNEL_MODE_LINUX
++
++.macro kml_push_args argnum
++.ifeq \argnum
++addl $-4, %esp
++.endif
++.ifeq \argnum - 1
++pushl %ebx
++.endif
++.ifeq \argnum - 2
++pushl %ecx
++kml_push_args 1
++.endif
++.ifeq \argnum - 3
++pushl %edx
++kml_push_args 2
++.endif
++.ifeq \argnum - 4
++pushl %esi
++kml_push_args 3
++.endif
++.ifeq \argnum - 5
++pushl %edi
++kml_push_args 4
++.endif
++.ifeq \argnum - 6
++pushl (%ebp)
++kml_push_args 5
++.endif
++.endm
++
++#define MAKE_KMLCALL(name, argnum, syscall_num) \
++.ifndef kml_ ## argnum; \
++.text; \
++ENTRY(kml_ ## argnum); \
++	pushl %eax; \
++	pushl %edx; \
++	pushl %ecx; \
++	pushl %ebp; \
++	movl %esp, %ebp; \
++	movl PER_CPU_VAR(esp0), %esp; \
++\
++	kml_push_args argnum; \
++\
++	leal sys_call_table(,%eax,4), %ecx; \
++	call *(%ecx); \
++\
++	GET_THREAD_INFO(%edx); \
++	leave; \
++\
++	movl TI_flags(%edx), %ecx; \
++	testl $_TIF_ALLWORK_MASK, %ecx; \
++	popl %ecx; \
++	popl %edx; \
++	jne 0f; \
++	addl $4, %esp; \
++	ret; \
++0:; \
++	pushl %ecx; \
++	movl 4(%esp), %ecx; \
++	movl %eax, 4(%esp); \
++	movl %ecx, %eax; \
++	popl %ecx; \
++	pushfl; \
++	pushl %cs; \
++	pushl $kml_wrapper_int_post; \
++	jmp kml_exit_work; \
++.endif; \
++kml_ ## name = kml_ ## argnum
++
++#define MAKE_KMLCALL_SPECIAL(name, argnum, syscall_num) \
++kml_ ## name = kml_special
++
++ENTRY(kml_special)
++	add $-4, %esp
++	pushfl
++	pushl %cs
++	pushl $kml_wrapper_int_post
++	jmp system_call
++
++/* generic routines for kml call's exit */
++ENTRY(kml_exit_work)
++	RING0_INT_FRAME
++	SWITCH_STACK_TO_KK_EXCEPTION
++
++	pushl %eax
++	CFI_ADJUST_CFA_OFFSET 4
++	SAVE_ALL
++
++	movl PT_OLDESP(%esp), %eax
++	movl (%eax), %eax
++	movl %eax,PT_EAX(%esp)             # store the return value
++
++	GET_THREAD_INFO(%ebp)
++	jmp syscall_exit
++	CFI_ENDPROC
++
++kml_wrapper_int_pre:
++	int $0x80
++kml_wrapper_int_post:
++	addl $4, %esp
++	ret
++
++ENTRY(kml_sigreturn_shortcut)
++	popl %eax
++	movl $119, %eax		# 119 == __NR_sigreturn
++	jmp return_wrapper
++
++ENTRY(kml_rt_sigreturn_shortcut)
++	movl $173, %eax		# 173 == __NR_rt_sigreturn
++return_wrapper:
++	movl %fs, %edx
++	movl $__KERNEL_PERCPU, %ecx
++	movl %ecx, %fs
++	movl %esp, %ecx
++	movl PER_CPU_VAR(esp0), %esp
++	movl %edx, %fs
++
++	addl $-4, %esp			# XSS
++	pushl %ecx			# ESP
++	pushfl				# EFLAGS
++	pushl $(__KU_CS_EXCEPTION)	# XCS
++	addl $-4, %esp			# EIP
++
++	pushl %eax			# orig_eax
++	addl $-44, %esp			# SAVE_ALL
++
++	GET_THREAD_INFO(%ebp)
++	jmp syscall_call
++
++#endif
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/kernel/process_32.c
+--- a/arch/x86/kernel/process_32.c	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/kernel/process_32.c	Sat Dec 05 14:39:08 2009 +0900
+@@ -312,6 +312,26 @@
+ }
+ EXPORT_SYMBOL_GPL(start_thread);
+ 
++#ifdef CONFIG_KERNEL_MODE_LINUX
++void
++start_kernel_thread(struct pt_regs *regs, unsigned long new_ip, unsigned long new_sp)
++{
++	set_user_gs(regs, 0);
++	regs->fs		= __KERNEL_PERCPU;
++	set_fs(KERNEL_DS);
++	regs->ds		= __USER_DS;
++	regs->es		= __USER_DS;
++	regs->ss		= __KERNEL_DS;
++	regs->cs		= __KU_CS_EXCEPTION;
++	regs->ip		= new_ip;
++	regs->sp		= new_sp;
++	/*
++	 * Free the old FP and other extended state
++	 */
++	free_thread_xstate(current);
++}
++EXPORT_SYMBOL_GPL(start_kernel_thread);
++#endif
+ 
+ /*
+  *	switch_to(x,yn) should switch tasks from x to y.
+@@ -369,6 +389,7 @@
+ 	 */
+ 	load_sp0(tss, next);
+ 
++#ifndef CONFIG_KERNEL_MODE_LINUX
+ 	/*
+ 	 * Save away %gs. No need to save %fs, as it was saved on the
+ 	 * stack on entry.  No need to save %es and %ds, as those are
+@@ -380,11 +401,12 @@
+ 	 * running inside of a hypervisor layer.
+ 	 */
+ 	lazy_save_gs(prev->gs);
++#endif
+ 
+ 	/*
+ 	 * Load the per-thread Thread-Local Storage descriptor.
+ 	 */
+-	load_TLS(next, cpu);
++	load_TLS__nmi_unsafe(next, cpu);
+ 
+ 	/*
+ 	 * Restore IOPL if needed.  In normal use, the flags restore
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/kernel/process_64.c
+--- a/arch/x86/kernel/process_64.c	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/kernel/process_64.c	Sat Dec 05 14:39:08 2009 +0900
+@@ -358,6 +358,9 @@
+ 	regs->ss		= __USER_DS;
+ 	regs->flags		= 0x200;
+ 	set_fs(USER_DS);
++#ifdef CONFIG_KERNEL_MODE_LINUX
++	clear_thread_flag(TIF_KU);
++#endif
+ 	/*
+ 	 * Free the old FP and other extended state
+ 	 */
+@@ -365,6 +368,30 @@
+ }
+ EXPORT_SYMBOL_GPL(start_thread);
+ 
++#ifdef CONFIG_KERNEL_MODE_LINUX
++void
++start_kernel_thread(struct pt_regs *regs, unsigned long new_ip, unsigned long new_sp)
++{
++	int cpu = smp_processor_id();
++	asm volatile("movl %0, %%fs; movl %0, %%es; movl %0, %%ds" :: "r"(0));
++	load_gs_index(0);
++	regs->ip		= new_ip;
++	regs->sp		= new_sp;
++	percpu_write(old_rsp, new_sp);
++	regs->cs		= __KU_CS;
++	regs->ss		= __KERNEL_DS;
++	regs->flags		= 0x200;
++	set_fs(KERNEL_DS);
++	set_thread_flag(TIF_KU);
++	wrmsrl(MSR_KERNEL_GS_BASE, (unsigned long)per_cpu(irq_stack_union.gs_base, cpu));
++	/*
++	 * Free the old FP and other extended state
++	 */
++	free_thread_xstate(current);
++}
++EXPORT_SYMBOL_GPL(start_kernel_thread);
++#endif
++
+ /*
+  *	switch_to(x,y) should switch tasks from x to y.
+  *
+@@ -467,6 +494,11 @@
+ 		if (gsindex)
+ 			prev->gs = 0;
+ 	}
++#ifdef CONFIG_KERNEL_MODE_LINUX
++	if (test_ti_thread_flag(task_thread_info(next_p), TIF_KU)) {
++		next->gs = (unsigned long)per_cpu(irq_stack_union.gs_base, cpu);
++	}
++#endif
+ 	if (next->gs)
+ 		wrmsrl(MSR_KERNEL_GS_BASE, next->gs);
+ 	prev->gsindex = gsindex;
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/kernel/signal.c
+--- a/arch/x86/kernel/signal.c	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/kernel/signal.c	Sat Dec 05 14:39:08 2009 +0900
+@@ -63,10 +63,49 @@
+ 	regs->seg = GET_SEG(seg);			\
+ } while (0)
+ 
++#ifndef CONFIG_KERNEL_MODE_LINUX
++
+ #define COPY_SEG_CPL3(seg)	do {			\
+ 	regs->seg = GET_SEG(seg) | 3;			\
+ } while (0)
+ 
++#define COPY_CS_CPL3 COPY_SEG_CPL3(cs)
++#define COPY_SS_CPL3 COPY_SEG_CPL3(ss)
++
++#else /* !CONFIG_KERNEL_MODE_LINUX */
++
++#ifdef CONFIG_X86_32
++
++#define COPY_CS_CPL3	do {				\
++	unsigned long tmp;				\
++	unsigned long mask;				\
++	get_user_ex(tmp, &sc->xcs);			\
++	mask = (regs->cs == __KU_CS_EXCEPTION) ? 0 : (regs->cs & 3);	\
++	regs->cs = tmp | mask;				\
++} while (0)
++
++#define COPY_SS_CPL3	do {				\
++	unsigned short tmp;				\
++	unsigned long mask;				\
++	get_user_ex(tmp, &sc->ss);			\
++	mask = (regs->cs == __KU_CS_EXCEPTION) ? 0 : (regs->cs & 3);	\
++	regs->ss = tmp | mask;				\
++} while (0)
++
++#else /* !CONFIG_X86_32 */
++
++#define COPY_CS_CPL3 do {				\
++	if (test_thread_flag(TIF_KU)) {			\
++		regs->cs = __KU_CS;			\
++	} else {					\
++		regs->cs = GET_SEG(cs) | 3;		\
++	}						\
++} while (0)
++
++#endif
++
++#endif
++
+ static int
+ restore_sigcontext(struct pt_regs *regs, struct sigcontext __user *sc,
+ 		   unsigned long *pax)
+@@ -102,13 +141,13 @@
+ #endif /* CONFIG_X86_64 */
+ 
+ #ifdef CONFIG_X86_32
+-		COPY_SEG_CPL3(cs);
+-		COPY_SEG_CPL3(ss);
++		COPY_CS_CPL3;
++		COPY_SS_CPL3;
+ #else /* !CONFIG_X86_32 */
+ 		/* Kernel saves and restores only the CS segment register on signals,
+ 		 * which is the bare minimum needed to allow mixed 32/64-bit code.
+ 		 * App's signal handler can save/restore other segments if needed. */
+-		COPY_SEG_CPL3(cs);
++		COPY_CS_CPL3;
+ #endif /* CONFIG_X86_32 */
+ 
+ 		get_user_ex(tmpflags, &sc->flags);
+@@ -162,7 +201,11 @@
+ 		put_user_ex(current->thread.error_code, &sc->err);
+ 		put_user_ex(regs->ip, &sc->ip);
+ #ifdef CONFIG_X86_32
++#ifndef CONFIG_KERNEL_MODE_LINUX
+ 		put_user_ex(regs->cs, (unsigned int __user *)&sc->cs);
++#else
++		put_user_ex(regs->cs, &sc->xcs);
++#endif
+ 		put_user_ex(regs->flags, &sc->flags);
+ 		put_user_ex(regs->sp, &sc->sp_at_signal);
+ 		put_user_ex(regs->ss, (unsigned int __user *)&sc->ss);
+@@ -226,6 +269,9 @@
+ #ifdef CONFIG_X86_32
+ 			/* This is the legacy signal stack switching. */
+ 			if ((regs->ss & 0xffff) != __USER_DS &&
++#ifdef CONFIG_KERNEL_MODE_LINUX
++				(regs->sp > TASK_SIZE) &&
++#endif
+ 				!(ka->sa.sa_flags & SA_RESTORER) &&
+ 					ka->sa.sa_restorer)
+ 				sp = (unsigned long) ka->sa.sa_restorer;
+@@ -280,6 +326,11 @@
+ 	0
+ };
+ 
++#ifdef CONFIG_KERNEL_MODE_LINUX
++extern void kml_sigreturn_shortcut(void);
++extern void kml_rt_sigreturn_shortcut(void);
++#endif
++
+ static int
+ __setup_frame(int sig, struct k_sigaction *ka, sigset_t *set,
+ 	      struct pt_regs *regs)
+@@ -310,7 +361,16 @@
+ 		restorer = VDSO32_SYMBOL(current->mm->context.vdso, sigreturn);
+ 	else
+ 		restorer = &frame->retcode;
++#ifdef CONFIG_KERNEL_MODE_LINUX
++	if (kernel_mode_user_process(regs->cs)) {
++		restorer = (void *) kml_sigreturn_shortcut;
++	}
++#endif
++#ifndef CONFIG_KERNEL_MODE_LINUX
+ 	if (ka->sa.sa_flags & SA_RESTORER)
++#else
++	if ((ka->sa.sa_flags & SA_RESTORER) && (!kernel_mode_user_process(regs->cs)))
++#endif
+ 		restorer = ka->sa.sa_restorer;
+ 
+ 	/* Set up to return from userspace.  */
+@@ -335,10 +395,26 @@
+ 	regs->dx = 0;
+ 	regs->cx = 0;
+ 
++#ifndef CONFIG_KERNEL_MODE_LINUX
+ 	regs->ds = __USER_DS;
+ 	regs->es = __USER_DS;
+ 	regs->ss = __USER_DS;
+ 	regs->cs = __USER_CS;
++#else
++	if (kernel_mode_user_process(regs->cs)) {
++		set_fs(KERNEL_DS);
++		regs->ds = __USER_DS;
++		regs->es = __USER_DS;
++		regs->ss = __KERNEL_DS;
++		regs->cs = __KU_CS_EXCEPTION;
++	} else {
++		set_fs(USER_DS);
++		regs->ds = __USER_DS;
++		regs->es = __USER_DS;
++		regs->ss = __USER_DS;
++		regs->cs = __USER_CS;
++	}
++#endif
+ 
+ 	return 0;
+ }
+@@ -377,8 +453,20 @@
+ 		err |= __copy_to_user(&frame->uc.uc_sigmask, set, sizeof(*set));
+ 
+ 		/* Set up to return from userspace.  */
++#ifndef CONFIG_KERNEL_MODE_LINUX
+ 		restorer = VDSO32_SYMBOL(current->mm->context.vdso, rt_sigreturn);
++#else
++		if (!kernel_mode_user_process(regs->cs)) {
++			restorer = VDSO32_SYMBOL(current->mm->context.vdso, rt_sigreturn);
++		} else {
++			restorer = (void *) kml_rt_sigreturn_shortcut;
++		}
++#endif
++#ifndef CONFIG_KERNEL_MODE_LINUX
+ 		if (ka->sa.sa_flags & SA_RESTORER)
++#else
++		if ((ka->sa.sa_flags & SA_RESTORER) && (!kernel_mode_user_process(regs->cs)))
++#endif
+ 			restorer = ka->sa.sa_restorer;
+ 		put_user_ex(restorer, &frame->pretcode);
+ 
+@@ -402,10 +490,26 @@
+ 	regs->dx = (unsigned long)&frame->info;
+ 	regs->cx = (unsigned long)&frame->uc;
+ 
++#ifndef CONFIG_KERNEL_MODE_LINUX
+ 	regs->ds = __USER_DS;
+ 	regs->es = __USER_DS;
+ 	regs->ss = __USER_DS;
+ 	regs->cs = __USER_CS;
++#else
++	if (kernel_mode_user_process(regs->cs)) {
++		set_fs(KERNEL_DS);
++		regs->ds = __USER_DS;
++		regs->es = __USER_DS;
++		regs->ss = __KERNEL_DS;
++		regs->cs = __KU_CS_EXCEPTION;
++	} else {
++		set_fs(USER_DS);
++		regs->ds = __USER_DS;
++		regs->es = __USER_DS;
++		regs->ss = __USER_DS;
++		regs->cs = __USER_CS;
++	}
++#endif
+ 
+ 	return 0;
+ }
+@@ -471,7 +575,11 @@
+ 
+ 	/* Set up the CS register to run signal handlers in 64-bit mode,
+ 	   even if the handler happens to be interrupting 32-bit code. */
++#ifndef CONFIG_KERNEL_MODE_LINUX
+ 	regs->cs = __USER_CS;
++#else
++	regs->cs = test_thread_flag(TIF_KU) ? __KU_CS : __USER_CS;
++#endif
+ 
+ 	return 0;
+ }
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/kernel/syscall_table_32.S
+--- a/arch/x86/kernel/syscall_table_32.S	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/kernel/syscall_table_32.S	Sat Dec 05 14:39:08 2009 +0900
+@@ -1,338 +1,340 @@
+-ENTRY(sys_call_table)
+-	.long sys_restart_syscall	/* 0 - old "setup()" system call, used for restarting */
+-	.long sys_exit
+-	.long ptregs_fork
+-	.long sys_read
+-	.long sys_write
+-	.long sys_open		/* 5 */
+-	.long sys_close
+-	.long sys_waitpid
+-	.long sys_creat
+-	.long sys_link
+-	.long sys_unlink	/* 10 */
+-	.long ptregs_execve
+-	.long sys_chdir
+-	.long sys_time
+-	.long sys_mknod
+-	.long sys_chmod		/* 15 */
+-	.long sys_lchown16
+-	.long sys_ni_syscall	/* old break syscall holder */
+-	.long sys_stat
+-	.long sys_lseek
+-	.long sys_getpid	/* 20 */
+-	.long sys_mount
+-	.long sys_oldumount
+-	.long sys_setuid16
+-	.long sys_getuid16
+-	.long sys_stime		/* 25 */
+-	.long sys_ptrace
+-	.long sys_alarm
+-	.long sys_fstat
+-	.long sys_pause
+-	.long sys_utime		/* 30 */
+-	.long sys_ni_syscall	/* old stty syscall holder */
+-	.long sys_ni_syscall	/* old gtty syscall holder */
+-	.long sys_access
+-	.long sys_nice
+-	.long sys_ni_syscall	/* 35 - old ftime syscall holder */
+-	.long sys_sync
+-	.long sys_kill
+-	.long sys_rename
+-	.long sys_mkdir
+-	.long sys_rmdir		/* 40 */
+-	.long sys_dup
+-	.long sys_pipe
+-	.long sys_times
+-	.long sys_ni_syscall	/* old prof syscall holder */
+-	.long sys_brk		/* 45 */
+-	.long sys_setgid16
+-	.long sys_getgid16
+-	.long sys_signal
+-	.long sys_geteuid16
+-	.long sys_getegid16	/* 50 */
+-	.long sys_acct
+-	.long sys_umount	/* recycled never used phys() */
+-	.long sys_ni_syscall	/* old lock syscall holder */
+-	.long sys_ioctl
+-	.long sys_fcntl		/* 55 */
+-	.long sys_ni_syscall	/* old mpx syscall holder */
+-	.long sys_setpgid
+-	.long sys_ni_syscall	/* old ulimit syscall holder */
+-	.long sys_olduname
+-	.long sys_umask		/* 60 */
+-	.long sys_chroot
+-	.long sys_ustat
+-	.long sys_dup2
+-	.long sys_getppid
+-	.long sys_getpgrp	/* 65 */
+-	.long sys_setsid
+-	.long sys_sigaction
+-	.long sys_sgetmask
+-	.long sys_ssetmask
+-	.long sys_setreuid16	/* 70 */
+-	.long sys_setregid16
+-	.long sys_sigsuspend
+-	.long sys_sigpending
+-	.long sys_sethostname
+-	.long sys_setrlimit	/* 75 */
+-	.long sys_old_getrlimit
+-	.long sys_getrusage
+-	.long sys_gettimeofday
+-	.long sys_settimeofday
+-	.long sys_getgroups16	/* 80 */
+-	.long sys_setgroups16
+-	.long old_select
+-	.long sys_symlink
+-	.long sys_lstat
+-	.long sys_readlink	/* 85 */
+-	.long sys_uselib
+-	.long sys_swapon
+-	.long sys_reboot
+-	.long sys_old_readdir
+-	.long old_mmap		/* 90 */
+-	.long sys_munmap
+-	.long sys_truncate
+-	.long sys_ftruncate
+-	.long sys_fchmod
+-	.long sys_fchown16	/* 95 */
+-	.long sys_getpriority
+-	.long sys_setpriority
+-	.long sys_ni_syscall	/* old profil syscall holder */
+-	.long sys_statfs
+-	.long sys_fstatfs	/* 100 */
+-	.long sys_ioperm
+-	.long sys_socketcall
+-	.long sys_syslog
+-	.long sys_setitimer
+-	.long sys_getitimer	/* 105 */
+-	.long sys_newstat
+-	.long sys_newlstat
+-	.long sys_newfstat
+-	.long sys_uname
+-	.long ptregs_iopl	/* 110 */
+-	.long sys_vhangup
+-	.long sys_ni_syscall	/* old "idle" system call */
+-	.long ptregs_vm86old
+-	.long sys_wait4
+-	.long sys_swapoff	/* 115 */
+-	.long sys_sysinfo
+-	.long sys_ipc
+-	.long sys_fsync
+-	.long ptregs_sigreturn
+-	.long ptregs_clone	/* 120 */
+-	.long sys_setdomainname
+-	.long sys_newuname
+-	.long sys_modify_ldt
+-	.long sys_adjtimex
+-	.long sys_mprotect	/* 125 */
+-	.long sys_sigprocmask
+-	.long sys_ni_syscall	/* old "create_module" */
+-	.long sys_init_module
+-	.long sys_delete_module
+-	.long sys_ni_syscall	/* 130:	old "get_kernel_syms" */
+-	.long sys_quotactl
+-	.long sys_getpgid
+-	.long sys_fchdir
+-	.long sys_bdflush
+-	.long sys_sysfs		/* 135 */
+-	.long sys_personality
+-	.long sys_ni_syscall	/* reserved for afs_syscall */
+-	.long sys_setfsuid16
+-	.long sys_setfsgid16
+-	.long sys_llseek	/* 140 */
+-	.long sys_getdents
+-	.long sys_select
+-	.long sys_flock
+-	.long sys_msync
+-	.long sys_readv		/* 145 */
+-	.long sys_writev
+-	.long sys_getsid
+-	.long sys_fdatasync
+-	.long sys_sysctl
+-	.long sys_mlock		/* 150 */
+-	.long sys_munlock
+-	.long sys_mlockall
+-	.long sys_munlockall
+-	.long sys_sched_setparam
+-	.long sys_sched_getparam   /* 155 */
+-	.long sys_sched_setscheduler
+-	.long sys_sched_getscheduler
+-	.long sys_sched_yield
+-	.long sys_sched_get_priority_max
+-	.long sys_sched_get_priority_min  /* 160 */
+-	.long sys_sched_rr_get_interval
+-	.long sys_nanosleep
+-	.long sys_mremap
+-	.long sys_setresuid16
+-	.long sys_getresuid16	/* 165 */
+-	.long ptregs_vm86
+-	.long sys_ni_syscall	/* Old sys_query_module */
+-	.long sys_poll
+-	.long sys_nfsservctl
+-	.long sys_setresgid16	/* 170 */
+-	.long sys_getresgid16
+-	.long sys_prctl
+-	.long ptregs_rt_sigreturn
+-	.long sys_rt_sigaction
+-	.long sys_rt_sigprocmask	/* 175 */
+-	.long sys_rt_sigpending
+-	.long sys_rt_sigtimedwait
+-	.long sys_rt_sigqueueinfo
+-	.long sys_rt_sigsuspend
+-	.long sys_pread64	/* 180 */
+-	.long sys_pwrite64
+-	.long sys_chown16
+-	.long sys_getcwd
+-	.long sys_capget
+-	.long sys_capset	/* 185 */
+-	.long ptregs_sigaltstack
+-	.long sys_sendfile
+-	.long sys_ni_syscall	/* reserved for streams1 */
+-	.long sys_ni_syscall	/* reserved for streams2 */
+-	.long ptregs_vfork	/* 190 */
+-	.long sys_getrlimit
+-	.long sys_mmap2
+-	.long sys_truncate64
+-	.long sys_ftruncate64
+-	.long sys_stat64	/* 195 */
+-	.long sys_lstat64
+-	.long sys_fstat64
+-	.long sys_lchown
+-	.long sys_getuid
+-	.long sys_getgid	/* 200 */
+-	.long sys_geteuid
+-	.long sys_getegid
+-	.long sys_setreuid
+-	.long sys_setregid
+-	.long sys_getgroups	/* 205 */
+-	.long sys_setgroups
+-	.long sys_fchown
+-	.long sys_setresuid
+-	.long sys_getresuid
+-	.long sys_setresgid	/* 210 */
+-	.long sys_getresgid
+-	.long sys_chown
+-	.long sys_setuid
+-	.long sys_setgid
+-	.long sys_setfsuid	/* 215 */
+-	.long sys_setfsgid
+-	.long sys_pivot_root
+-	.long sys_mincore
+-	.long sys_madvise
+-	.long sys_getdents64	/* 220 */
+-	.long sys_fcntl64
+-	.long sys_ni_syscall	/* reserved for TUX */
+-	.long sys_ni_syscall
+-	.long sys_gettid
+-	.long sys_readahead	/* 225 */
+-	.long sys_setxattr
+-	.long sys_lsetxattr
+-	.long sys_fsetxattr
+-	.long sys_getxattr
+-	.long sys_lgetxattr	/* 230 */
+-	.long sys_fgetxattr
+-	.long sys_listxattr
+-	.long sys_llistxattr
+-	.long sys_flistxattr
+-	.long sys_removexattr	/* 235 */
+-	.long sys_lremovexattr
+-	.long sys_fremovexattr
+-	.long sys_tkill
+-	.long sys_sendfile64
+-	.long sys_futex		/* 240 */
+-	.long sys_sched_setaffinity
+-	.long sys_sched_getaffinity
+-	.long sys_set_thread_area
+-	.long sys_get_thread_area
+-	.long sys_io_setup	/* 245 */
+-	.long sys_io_destroy
+-	.long sys_io_getevents
+-	.long sys_io_submit
+-	.long sys_io_cancel
+-	.long sys_fadvise64	/* 250 */
+-	.long sys_ni_syscall
+-	.long sys_exit_group
+-	.long sys_lookup_dcookie
+-	.long sys_epoll_create
+-	.long sys_epoll_ctl	/* 255 */
+-	.long sys_epoll_wait
+- 	.long sys_remap_file_pages
+- 	.long sys_set_tid_address
+- 	.long sys_timer_create
+- 	.long sys_timer_settime		/* 260 */
+- 	.long sys_timer_gettime
+- 	.long sys_timer_getoverrun
+- 	.long sys_timer_delete
+- 	.long sys_clock_settime
+- 	.long sys_clock_gettime		/* 265 */
+- 	.long sys_clock_getres
+- 	.long sys_clock_nanosleep
+-	.long sys_statfs64
+-	.long sys_fstatfs64
+-	.long sys_tgkill	/* 270 */
+-	.long sys_utimes
+- 	.long sys_fadvise64_64
+-	.long sys_ni_syscall	/* sys_vserver */
+-	.long sys_mbind
+-	.long sys_get_mempolicy
+-	.long sys_set_mempolicy
+-	.long sys_mq_open
+-	.long sys_mq_unlink
+-	.long sys_mq_timedsend
+-	.long sys_mq_timedreceive	/* 280 */
+-	.long sys_mq_notify
+-	.long sys_mq_getsetattr
+-	.long sys_kexec_load
+-	.long sys_waitid
+-	.long sys_ni_syscall		/* 285 */ /* available */
+-	.long sys_add_key
+-	.long sys_request_key
+-	.long sys_keyctl
+-	.long sys_ioprio_set
+-	.long sys_ioprio_get		/* 290 */
+-	.long sys_inotify_init
+-	.long sys_inotify_add_watch
+-	.long sys_inotify_rm_watch
+-	.long sys_migrate_pages
+-	.long sys_openat		/* 295 */
+-	.long sys_mkdirat
+-	.long sys_mknodat
+-	.long sys_fchownat
+-	.long sys_futimesat
+-	.long sys_fstatat64		/* 300 */
+-	.long sys_unlinkat
+-	.long sys_renameat
+-	.long sys_linkat
+-	.long sys_symlinkat
+-	.long sys_readlinkat		/* 305 */
+-	.long sys_fchmodat
+-	.long sys_faccessat
+-	.long sys_pselect6
+-	.long sys_ppoll
+-	.long sys_unshare		/* 310 */
+-	.long sys_set_robust_list
+-	.long sys_get_robust_list
+-	.long sys_splice
+-	.long sys_sync_file_range
+-	.long sys_tee			/* 315 */
+-	.long sys_vmsplice
+-	.long sys_move_pages
+-	.long sys_getcpu
+-	.long sys_epoll_pwait
+-	.long sys_utimensat		/* 320 */
+-	.long sys_signalfd
+-	.long sys_timerfd_create
+-	.long sys_eventfd
+-	.long sys_fallocate
+-	.long sys_timerfd_settime	/* 325 */
+-	.long sys_timerfd_gettime
+-	.long sys_signalfd4
+-	.long sys_eventfd2
+-	.long sys_epoll_create1
+-	.long sys_dup3			/* 330 */
+-	.long sys_pipe2
+-	.long sys_inotify_init1
+-	.long sys_preadv
+-	.long sys_pwritev
+-	.long sys_rt_tgsigqueueinfo	/* 335 */
+-	.long sys_perf_event_open
++#include "syscall_table_maker_32.h"
++
++SYSCALL_TABLE_BEGIN
++	SYSCALL_ENTRY(sys_restart_syscall,0)	/* 0 - old "setup()" system call, used for restarting */
++	SYSCALL_ENTRY(sys_exit,1)
++	SYSCALL_ENTRY_SPECIAL(ptregs_fork,0)
++	SYSCALL_ENTRY(sys_read,3)
++	SYSCALL_ENTRY(sys_write,3)
++	SYSCALL_ENTRY(sys_open,3)		/* 5 */
++	SYSCALL_ENTRY(sys_close,1)
++	SYSCALL_ENTRY(sys_waitpid,3)
++	SYSCALL_ENTRY(sys_creat,2)
++	SYSCALL_ENTRY(sys_link,2)
++	SYSCALL_ENTRY(sys_unlink,1)		/* 10 */
++	SYSCALL_ENTRY_SPECIAL(ptregs_execve,3)
++	SYSCALL_ENTRY(sys_chdir,1)
++	SYSCALL_ENTRY(sys_time,1)
++	SYSCALL_ENTRY(sys_mknod,3)
++	SYSCALL_ENTRY(sys_chmod,2)		/* 15 */
++	SYSCALL_ENTRY(sys_lchown16,3)
++	SYSCALL_ENTRY(sys_ni_syscall,0)		/* old break syscall holder */
++	SYSCALL_ENTRY(sys_stat,2)
++	SYSCALL_ENTRY(sys_lseek,3)
++	SYSCALL_ENTRY(sys_getpid,0)		/* 20 */
++	SYSCALL_ENTRY(sys_mount,5)
++	SYSCALL_ENTRY(sys_oldumount,1)
++	SYSCALL_ENTRY(sys_setuid16,1)
++	SYSCALL_ENTRY(sys_getuid16,0)
++	SYSCALL_ENTRY(sys_stime,1)		/* 25 */
++	SYSCALL_ENTRY(sys_ptrace,4)
++	SYSCALL_ENTRY(sys_alarm,1)
++	SYSCALL_ENTRY(sys_fstat,2)
++	SYSCALL_ENTRY(sys_pause,0)
++	SYSCALL_ENTRY(sys_utime,2)		/* 30 */
++	SYSCALL_ENTRY(sys_ni_syscall,0)		/* old stty syscall holder */
++	SYSCALL_ENTRY(sys_ni_syscall,0)		/* old gtty syscall holder */
++	SYSCALL_ENTRY(sys_access,2)
++	SYSCALL_ENTRY(sys_nice,1)
++	SYSCALL_ENTRY(sys_ni_syscall,0)		/* 35 - old ftime syscall holder */
++	SYSCALL_ENTRY(sys_sync,0)
++	SYSCALL_ENTRY(sys_kill,2)
++	SYSCALL_ENTRY(sys_rename,2)
++	SYSCALL_ENTRY(sys_mkdir,2)
++	SYSCALL_ENTRY(sys_rmdir,1)		/* 40 */
++	SYSCALL_ENTRY(sys_dup,1)
++	SYSCALL_ENTRY(sys_pipe,1)
++	SYSCALL_ENTRY(sys_times,1)
++	SYSCALL_ENTRY(sys_ni_syscall,0)		/* old prof syscall holder */
++	SYSCALL_ENTRY(sys_brk,1)		/* 45 */
++	SYSCALL_ENTRY(sys_setgid16,1)
++	SYSCALL_ENTRY(sys_getgid16,0)
++	SYSCALL_ENTRY(sys_signal,2)
++	SYSCALL_ENTRY(sys_geteuid16,0)
++	SYSCALL_ENTRY(sys_getegid16,0)		/* 50 */
++	SYSCALL_ENTRY(sys_acct,1)
++	SYSCALL_ENTRY(sys_umount,2)		/* recycled never used phys() */
++	SYSCALL_ENTRY(sys_ni_syscall,0)		/* old lock syscall holder */
++	SYSCALL_ENTRY(sys_ioctl,3)
++	SYSCALL_ENTRY(sys_fcntl,3)		/* 55 */
++	SYSCALL_ENTRY(sys_ni_syscall,0)		/* old mpx syscall holder */
++	SYSCALL_ENTRY(sys_setpgid,2)
++	SYSCALL_ENTRY(sys_ni_syscall,0)		/* old ulimit syscall holder */
++	SYSCALL_ENTRY(sys_olduname,1)
++	SYSCALL_ENTRY(sys_umask,1)		/* 60 */
++	SYSCALL_ENTRY(sys_chroot,1)
++	SYSCALL_ENTRY(sys_ustat,2)
++	SYSCALL_ENTRY(sys_dup2,2)
++	SYSCALL_ENTRY(sys_getppid,0)
++	SYSCALL_ENTRY(sys_getpgrp,0)		/* 65 */
++	SYSCALL_ENTRY(sys_setsid,0)
++	SYSCALL_ENTRY(sys_sigaction,3)
++	SYSCALL_ENTRY(sys_sgetmask,0)
++	SYSCALL_ENTRY(sys_ssetmask,1)
++	SYSCALL_ENTRY(sys_setreuid16,2)		/* 70 */
++	SYSCALL_ENTRY(sys_setregid16,2)
++	SYSCALL_ENTRY_SPECIAL(sys_sigsuspend,3)
++	SYSCALL_ENTRY(sys_sigpending,1)
++	SYSCALL_ENTRY(sys_sethostname,2)
++	SYSCALL_ENTRY(sys_setrlimit,2)		/* 75 */
++	SYSCALL_ENTRY(sys_old_getrlimit,2)
++	SYSCALL_ENTRY(sys_getrusage,2)
++	SYSCALL_ENTRY(sys_gettimeofday,2)
++	SYSCALL_ENTRY(sys_settimeofday,2)
++	SYSCALL_ENTRY(sys_getgroups16,2)	/* 80 */
++	SYSCALL_ENTRY(sys_setgroups16,2)
++	SYSCALL_ENTRY(old_select,1)
++	SYSCALL_ENTRY(sys_symlink,2)
++	SYSCALL_ENTRY(sys_lstat,2)
++	SYSCALL_ENTRY(sys_readlink,3)		/* 85 */
++	SYSCALL_ENTRY(sys_uselib,1)
++	SYSCALL_ENTRY(sys_swapon,2)
++	SYSCALL_ENTRY(sys_reboot,4)
++	SYSCALL_ENTRY(sys_old_readdir,3)
++	SYSCALL_ENTRY(old_mmap,1)		/* 90 */
++	SYSCALL_ENTRY(sys_munmap,2)
++	SYSCALL_ENTRY(sys_truncate,2)
++	SYSCALL_ENTRY(sys_ftruncate,2)
++	SYSCALL_ENTRY(sys_fchmod,2)
++	SYSCALL_ENTRY(sys_fchown16,3)		/* 95 */
++	SYSCALL_ENTRY(sys_getpriority,2)
++	SYSCALL_ENTRY(sys_setpriority,3)
++	SYSCALL_ENTRY(sys_ni_syscall,0)		/* old profil syscall holder */
++	SYSCALL_ENTRY(sys_statfs,2)
++	SYSCALL_ENTRY(sys_fstatfs,2)		/* 100 */
++	SYSCALL_ENTRY(sys_ioperm,3)
++	SYSCALL_ENTRY(sys_socketcall,2)
++	SYSCALL_ENTRY(sys_syslog,3)
++	SYSCALL_ENTRY(sys_setitimer,3)
++	SYSCALL_ENTRY(sys_getitimer,2)		/* 105 */
++	SYSCALL_ENTRY(sys_newstat,2)
++	SYSCALL_ENTRY(sys_newlstat,2)
++	SYSCALL_ENTRY(sys_newfstat,2)
++	SYSCALL_ENTRY(sys_uname,1)
++	SYSCALL_ENTRY_SPECIAL(ptregs_iopl,1)	/* 110 */
++	SYSCALL_ENTRY(sys_vhangup,0)
++	SYSCALL_ENTRY(sys_ni_syscall,0)		/* old "idle" system call */
++	SYSCALL_ENTRY(ptregs_vm86old,1)		/* XXX: KML compatibility not tested */
++	SYSCALL_ENTRY(sys_wait4,4)
++	SYSCALL_ENTRY(sys_swapoff,1)		/* 115 */
++	SYSCALL_ENTRY(sys_sysinfo,1)
++	SYSCALL_ENTRY(sys_ipc,6)
++	SYSCALL_ENTRY(sys_fsync,1)
++	SYSCALL_ENTRY_SPECIAL(ptregs_sigreturn,0)
++	SYSCALL_ENTRY_SPECIAL(ptregs_clone,3)	/* 120 */
++	SYSCALL_ENTRY(sys_setdomainname,2)
++	SYSCALL_ENTRY(sys_newuname,1)
++	SYSCALL_ENTRY(sys_modify_ldt,3)
++	SYSCALL_ENTRY(sys_adjtimex,1)
++	SYSCALL_ENTRY(sys_mprotect,3)		/* 125 */
++	SYSCALL_ENTRY(sys_sigprocmask,3)
++	SYSCALL_ENTRY(sys_ni_syscall,0)		/* old "create_module" */
++	SYSCALL_ENTRY(sys_init_module,3)
++	SYSCALL_ENTRY(sys_delete_module,2)
++	SYSCALL_ENTRY(sys_ni_syscall,0)		/* 130:	old "get_kernel_syms" */
++	SYSCALL_ENTRY(sys_quotactl,4)
++	SYSCALL_ENTRY(sys_getpgid,1)
++	SYSCALL_ENTRY(sys_fchdir,1)
++	SYSCALL_ENTRY(sys_bdflush,2)
++	SYSCALL_ENTRY(sys_sysfs,3)		/* 135 */
++	SYSCALL_ENTRY(sys_personality,1)
++	SYSCALL_ENTRY(sys_ni_syscall,0)		/* reserved for afs_syscall */
++	SYSCALL_ENTRY(sys_setfsuid16,1)
++	SYSCALL_ENTRY(sys_setfsgid16,1)
++	SYSCALL_ENTRY(sys_llseek,5)		/* 140 */
++	SYSCALL_ENTRY(sys_getdents,3)
++	SYSCALL_ENTRY(sys_select,5)
++	SYSCALL_ENTRY(sys_flock,2)
++	SYSCALL_ENTRY(sys_msync,3)
++	SYSCALL_ENTRY(sys_readv,3)		/* 145 */
++	SYSCALL_ENTRY(sys_writev,3)
++	SYSCALL_ENTRY(sys_getsid,1)
++	SYSCALL_ENTRY(sys_fdatasync,1)
++	SYSCALL_ENTRY(sys_sysctl,1)
++	SYSCALL_ENTRY(sys_mlock,2)		/* 150 */
++	SYSCALL_ENTRY(sys_munlock,2)
++	SYSCALL_ENTRY(sys_mlockall,1)
++	SYSCALL_ENTRY(sys_munlockall,0)
++	SYSCALL_ENTRY(sys_sched_setparam,2)
++	SYSCALL_ENTRY(sys_sched_getparam,2)	/* 155 */
++	SYSCALL_ENTRY(sys_sched_setscheduler,3)
++	SYSCALL_ENTRY(sys_sched_getscheduler,1)
++	SYSCALL_ENTRY(sys_sched_yield,0)
++	SYSCALL_ENTRY(sys_sched_get_priority_max,1)
++	SYSCALL_ENTRY(sys_sched_get_priority_min,1)	/* 160 */
++	SYSCALL_ENTRY(sys_sched_rr_get_interval,2)
++	SYSCALL_ENTRY(sys_nanosleep,2)
++	SYSCALL_ENTRY(sys_mremap,5)
++	SYSCALL_ENTRY(sys_setresuid16,3)
++	SYSCALL_ENTRY(sys_getresuid16,3)	/* 165 */
++	SYSCALL_ENTRY(ptregs_vm86,2)		/* XXX: KML compatibility not tested */
++	SYSCALL_ENTRY(sys_ni_syscall,0)		/* Old sys_query_module */
++	SYSCALL_ENTRY(sys_poll,3)
++	SYSCALL_ENTRY(sys_nfsservctl,3)
++	SYSCALL_ENTRY(sys_setresgid16,3)	/* 170 */
++	SYSCALL_ENTRY(sys_getresgid16,3)
++	SYSCALL_ENTRY(sys_prctl,5)
++	SYSCALL_ENTRY_SPECIAL(ptregs_rt_sigreturn,0)
++	SYSCALL_ENTRY(sys_rt_sigaction,4)
++	SYSCALL_ENTRY(sys_rt_sigprocmask,4)	/* 175 */
++	SYSCALL_ENTRY(sys_rt_sigpending,2)
++	SYSCALL_ENTRY(sys_rt_sigtimedwait,4)
++	SYSCALL_ENTRY(sys_rt_sigqueueinfo,3)
++	SYSCALL_ENTRY_SPECIAL(sys_rt_sigsuspend,2)
++	SYSCALL_ENTRY(sys_pread64,5)		/* 180 */
++	SYSCALL_ENTRY(sys_pwrite64,5)
++	SYSCALL_ENTRY(sys_chown16,3)
++	SYSCALL_ENTRY(sys_getcwd,2)
++	SYSCALL_ENTRY(sys_capget,2)
++	SYSCALL_ENTRY(sys_capset,2)		/* 185 */
++	SYSCALL_ENTRY_SPECIAL(ptregs_sigaltstack,2)
++	SYSCALL_ENTRY(sys_sendfile,4)
++	SYSCALL_ENTRY(sys_ni_syscall,0)		/* reserved for streams1 */
++	SYSCALL_ENTRY(sys_ni_syscall,0)		/* reserved for streams2 */
++	SYSCALL_ENTRY_SPECIAL(ptregs_vfork,0)	/* 190 */
++	SYSCALL_ENTRY(sys_getrlimit,2)
++	SYSCALL_ENTRY(sys_mmap2,6)
++	SYSCALL_ENTRY(sys_truncate64,3)
++	SYSCALL_ENTRY(sys_ftruncate64,3)
++	SYSCALL_ENTRY(sys_stat64,2)		/* 195 */
++	SYSCALL_ENTRY(sys_lstat64,2)
++	SYSCALL_ENTRY(sys_fstat64,2)
++	SYSCALL_ENTRY(sys_lchown,3)
++	SYSCALL_ENTRY(sys_getuid,0)
++	SYSCALL_ENTRY(sys_getgid,0)		/* 200 */
++	SYSCALL_ENTRY(sys_geteuid,0)
++	SYSCALL_ENTRY(sys_getegid,0)
++	SYSCALL_ENTRY(sys_setreuid,2)
++	SYSCALL_ENTRY(sys_setregid,2)
++	SYSCALL_ENTRY(sys_getgroups,2)		/* 205 */
++	SYSCALL_ENTRY(sys_setgroups,2)
++	SYSCALL_ENTRY(sys_fchown,3)
++	SYSCALL_ENTRY(sys_setresuid,3)
++	SYSCALL_ENTRY(sys_getresuid,3)
++	SYSCALL_ENTRY(sys_setresgid,3)		/* 210 */
++	SYSCALL_ENTRY(sys_getresgid,3)
++	SYSCALL_ENTRY(sys_chown,3)
++	SYSCALL_ENTRY(sys_setuid,1)
++	SYSCALL_ENTRY(sys_setgid,1)
++	SYSCALL_ENTRY(sys_setfsuid,1)		/* 215 */
++	SYSCALL_ENTRY(sys_setfsgid,1)
++	SYSCALL_ENTRY(sys_pivot_root,2)
++	SYSCALL_ENTRY(sys_mincore,3)
++	SYSCALL_ENTRY(sys_madvise,3)
++	SYSCALL_ENTRY(sys_getdents64,3)		/* 220 */
++	SYSCALL_ENTRY(sys_fcntl64,3)
++	SYSCALL_ENTRY(sys_ni_syscall,0)		/* reserved for TUX */
++	SYSCALL_ENTRY(sys_ni_syscall,0)
++	SYSCALL_ENTRY(sys_gettid,0)
++	SYSCALL_ENTRY(sys_readahead,4)		/* 225 */
++	SYSCALL_ENTRY(sys_setxattr,5)
++	SYSCALL_ENTRY(sys_lsetxattr,5)
++	SYSCALL_ENTRY(sys_fsetxattr,5)
++	SYSCALL_ENTRY(sys_getxattr,4)
++	SYSCALL_ENTRY(sys_lgetxattr,4)		/* 230 */
++	SYSCALL_ENTRY(sys_fgetxattr,4)
++	SYSCALL_ENTRY(sys_listxattr,3)
++	SYSCALL_ENTRY(sys_llistxattr,3)
++	SYSCALL_ENTRY(sys_flistxattr,3)
++	SYSCALL_ENTRY(sys_removexattr,2)	/* 235 */
++	SYSCALL_ENTRY(sys_lremovexattr,2)
++	SYSCALL_ENTRY(sys_fremovexattr,2)
++	SYSCALL_ENTRY(sys_tkill,2)
++	SYSCALL_ENTRY(sys_sendfile64,4)
++	SYSCALL_ENTRY(sys_futex,5)		/* 240 */
++	SYSCALL_ENTRY(sys_sched_setaffinity,3)
++	SYSCALL_ENTRY(sys_sched_getaffinity,3)
++	SYSCALL_ENTRY(sys_set_thread_area,1)
++	SYSCALL_ENTRY(sys_get_thread_area,1)
++	SYSCALL_ENTRY(sys_io_setup,2)		/* 245 */
++	SYSCALL_ENTRY(sys_io_destroy,1)
++	SYSCALL_ENTRY(sys_io_getevents,5)
++	SYSCALL_ENTRY(sys_io_submit,3)
++	SYSCALL_ENTRY(sys_io_cancel,3)
++	SYSCALL_ENTRY(sys_fadvise64,5)		/* 250 */
++	SYSCALL_ENTRY(sys_ni_syscall,0)
++	SYSCALL_ENTRY(sys_exit_group,1)
++	SYSCALL_ENTRY(sys_lookup_dcookie,4)
++	SYSCALL_ENTRY(sys_epoll_create,1)
++	SYSCALL_ENTRY(sys_epoll_ctl,4)		/* 255 */
++	SYSCALL_ENTRY(sys_epoll_wait,4)
++	SYSCALL_ENTRY(sys_remap_file_pages,5)
++	SYSCALL_ENTRY(sys_set_tid_address,1)
++	SYSCALL_ENTRY(sys_timer_create,3)
++	SYSCALL_ENTRY(sys_timer_settime,4)	/* 260 */
++	SYSCALL_ENTRY(sys_timer_gettime,2)
++	SYSCALL_ENTRY(sys_timer_getoverrun,1)
++	SYSCALL_ENTRY(sys_timer_delete,1)
++	SYSCALL_ENTRY(sys_clock_settime,2)
++	SYSCALL_ENTRY(sys_clock_gettime,2)	/* 265 */
++	SYSCALL_ENTRY(sys_clock_getres,2)
++	SYSCALL_ENTRY(sys_clock_nanosleep,4)
++	SYSCALL_ENTRY(sys_statfs64,3)
++	SYSCALL_ENTRY(sys_fstatfs64,3)
++	SYSCALL_ENTRY(sys_tgkill,3)		/* 270 */
++	SYSCALL_ENTRY(sys_utimes,2)
++	SYSCALL_ENTRY(sys_fadvise64_64,6)
++	SYSCALL_ENTRY(sys_ni_syscall,0)		/* sys_vserver */
++	SYSCALL_ENTRY(sys_mbind,6)
++	SYSCALL_ENTRY(sys_get_mempolicy,5)
++	SYSCALL_ENTRY(sys_set_mempolicy,3)
++	SYSCALL_ENTRY(sys_mq_open,4)
++	SYSCALL_ENTRY(sys_mq_unlink,1)
++	SYSCALL_ENTRY(sys_mq_timedsend,5)
++	SYSCALL_ENTRY(sys_mq_timedreceive,5)	/* 280 */
++	SYSCALL_ENTRY(sys_mq_notify,2)
++	SYSCALL_ENTRY(sys_mq_getsetattr,3)
++	SYSCALL_ENTRY(sys_kexec_load,4)
++	SYSCALL_ENTRY(sys_waitid,5)
++	SYSCALL_ENTRY(sys_ni_syscall,0)		/* 285 */ /* avaialble */
++	SYSCALL_ENTRY(sys_add_key,5)
++	SYSCALL_ENTRY(sys_request_key,4)
++	SYSCALL_ENTRY(sys_keyctl,5)
++	SYSCALL_ENTRY(sys_ioprio_set,3)
++	SYSCALL_ENTRY(sys_ioprio_get,2)		/* 290 */
++	SYSCALL_ENTRY(sys_inotify_init,0)
++	SYSCALL_ENTRY(sys_inotify_add_watch,3)
++	SYSCALL_ENTRY(sys_inotify_rm_watch,2)
++	SYSCALL_ENTRY(sys_migrate_pages,4)
++	SYSCALL_ENTRY(sys_openat,4)		/* 295 */
++	SYSCALL_ENTRY(sys_mkdirat,3)
++	SYSCALL_ENTRY(sys_mknodat,4)
++	SYSCALL_ENTRY(sys_fchownat,5)
++	SYSCALL_ENTRY(sys_futimesat,3)
++	SYSCALL_ENTRY(sys_fstatat64,4)		/* 300 */
++	SYSCALL_ENTRY(sys_unlinkat,3)
++	SYSCALL_ENTRY(sys_renameat,4)
++	SYSCALL_ENTRY(sys_linkat,5)
++	SYSCALL_ENTRY(sys_symlinkat,3)
++	SYSCALL_ENTRY(sys_readlinkat,4)		/* 305 */
++	SYSCALL_ENTRY(sys_fchmodat,3)
++	SYSCALL_ENTRY(sys_faccessat,3)
++	SYSCALL_ENTRY(sys_pselect6,6)
++	SYSCALL_ENTRY(sys_ppoll,5)
++	SYSCALL_ENTRY(sys_unshare,1)		/* 310 */
++	SYSCALL_ENTRY(sys_set_robust_list,2)
++	SYSCALL_ENTRY(sys_get_robust_list,3)
++	SYSCALL_ENTRY(sys_splice,6)
++	SYSCALL_ENTRY(sys_sync_file_range,6)
++	SYSCALL_ENTRY(sys_tee,4)		/* 315 */
++	SYSCALL_ENTRY(sys_vmsplice,4)
++	SYSCALL_ENTRY(sys_move_pages,6)
++	SYSCALL_ENTRY(sys_getcpu,3)
++	SYSCALL_ENTRY(sys_epoll_pwait,6)
++	SYSCALL_ENTRY(sys_utimensat,4)		/* 320 */
++	SYSCALL_ENTRY(sys_signalfd,3)
++	SYSCALL_ENTRY(sys_timerfd_create,2)
++	SYSCALL_ENTRY(sys_eventfd,1)
++	SYSCALL_ENTRY(sys_fallocate,6)
++	SYSCALL_ENTRY(sys_timerfd_settime,4)	/* 325 */
++	SYSCALL_ENTRY(sys_timerfd_gettime,2)
++	SYSCALL_ENTRY(sys_signalfd4,4)
++	SYSCALL_ENTRY(sys_eventfd2,2)
++	SYSCALL_ENTRY(sys_epoll_create1,1)
++	SYSCALL_ENTRY(sys_dup3,3)		/* 330 */
++	SYSCALL_ENTRY(sys_pipe2,2)
++	SYSCALL_ENTRY(sys_inotify_init1,1)
++	SYSCALL_ENTRY(sys_preadv,5)
++	SYSCALL_ENTRY(sys_pwritev,5)
++	SYSCALL_ENTRY(sys_rt_tgsigqueueinfo,4)	/* 335 */
++	SYSCALL_ENTRY(sys_perf_event_open,5)
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/kernel/syscall_table_maker_32.h
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/arch/x86/kernel/syscall_table_maker_32.h	Sat Dec 05 14:39:08 2009 +0900
+@@ -0,0 +1,90 @@
++/*
++ * Copyright 2002 Toshiyuki Maeda
++ *
++ * This file is part of Kernel Mode Linux.
++ *
++ * Kernel Mode Linux is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2, or (at your option)
++ * any later version.
++ *
++ * Kernel Mode Linux is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++/*
++ * These are macros for making sys_call_table.
++ *
++ * This file should be included only from the "entry.S" file.
++ */
++
++#ifndef CONFIG_KERNEL_MODE_LINUX
++
++#define SYSCALL_TABLE_BEGIN \
++.section .rodata,"a"; \
++ENTRY(sys_call_table);
++
++#define SYSCALL_ENTRY(name,argnum) \
++.long name;
++
++#define SYSCALL_ENTRY_SPECIAL(name,argnum) \
++.long name;
++
++#else
++
++#include "kml_call_32.h"
++#include "direct_call_32.h"
++
++#define SYSCALL_TABLE_BEGIN \
++SYSCALL_NUM=0; \
++.data 0; \
++ENTRY(sys_call_table); \
++.data 1; \
++ENTRY(kml_call_table); \
++.data 2; \
++ENTRY(direct_call_table); \
++.data 0;
++
++/*
++ * entry.S is compiled with the "-traditional" option.
++ * So, we perform an old-style concatenation instead of '##'!
++ */
++#define SYSCALL_ENTRY(name,argnum) \
++.data 0; \
++.long name; \
++.ifndef kml_ ## name; \
++MAKE_KMLCALL(name,argnum,SYSCALL_NUM); \
++.endif; \
++.data 1; \
++.long kml_ ## name; \
++.ifndef direct_ ## name; \
++MAKE_DIRECTCALL(name,argnum,SYSCALL_NUM); \
++.endif; \
++.data 2; \
++.long direct_ ## name; \
++.data 0; \
++SYSCALL_NUM=SYSCALL_NUM+1;
++
++#define SYSCALL_ENTRY_SPECIAL(name,argnum) \
++.data 0; \
++.long name; \
++.ifndef kml_ ## name; \
++MAKE_KMLCALL_SPECIAL(name,argnum,SYSCALL_NUM); \
++.endif; \
++.data 1; \
++.long kml_ ## name; \
++.ifndef direct_ ## name; \
++MAKE_DIRECTCALL_SPECIAL(name,argnum,SYSCALL_NUM); \
++.endif; \
++.data 2; \
++.long direct_ ## name; \
++.data 0; \
++SYSCALL_NUM=SYSCALL_NUM+1;
++
++#endif
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/kernel/task.c
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/arch/x86/kernel/task.c	Sat Dec 05 14:39:08 2009 +0900
+@@ -0,0 +1,201 @@
++/*
++ * Copyright 2004 Toshiyuki Maeda
++ *
++ * This file is part of Kernel Mode Linux.
++ *
++ * Kernel Mode Linux is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2, or (at your option)
++ * any later version.
++ *
++ * Kernel Mode Linux is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++#ifdef CONFIG_X86_32
++
++#include <linux/init.h>
++#include <linux/percpu.h>
++#include <asm/desc.h>
++#include <asm/processor.h>
++
++extern void nmi_task(void);
++extern void double_fault_task(void);
++
++#define INIT_DFT {						\
++	.x86_tss = {						\
++		.ss0		= __KERNEL_DS,			\
++		.ldt		= 0,				\
++		.fs		= __KERNEL_PERCPU,		\
++		.gs		= 0,				\
++		.io_bitmap_base	= INVALID_IO_BITMAP_OFFSET,	\
++		.ip		= (unsigned long) double_fault_task,	\
++		.flags		= X86_EFLAGS_SF | 0x2,		\
++		.es		= __USER_DS,			\
++		.cs		= __KERNEL_CS,			\
++		.ss		= __KERNEL_DS,			\
++		.ds		= __USER_DS			\
++	}							\
++}
++
++#define INIT_NMIT {						\
++	.x86_tss = {						\
++		.ss0		= __KERNEL_DS,			\
++		.ldt		= 0,				\
++		.fs		= __KERNEL_PERCPU,		\
++		.gs		= 0,				\
++		.io_bitmap_base	= INVALID_IO_BITMAP_OFFSET,	\
++		.ip		= (unsigned long) nmi_task,	\
++		.flags		= X86_EFLAGS_SF | 0x2,		\
++		.es		= __USER_DS,			\
++		.cs		= __KERNEL_CS,			\
++		.ss		= __KERNEL_DS,			\
++		.ds		= __USER_DS			\
++	}							\
++}
++
++DEFINE_PER_CPU(struct tss_struct, nmi_tsses) = INIT_NMIT;
++DEFINE_PER_CPU(struct tss_struct, doublefault_tsses) = INIT_DFT;
++
++DEFINE_PER_CPU(struct nmi_stack_struct, nmi_stacks);
++DEFINE_PER_CPU(struct dft_stack_struct, dft_stacks);
++
++DEFINE_PER_CPU(unsigned long, esp0);
++DEFINE_PER_CPU(unsigned long, unused);
++
++struct df_stk {
++	unsigned long ip;
++	unsigned long cs;
++	unsigned long flags;
++};
++
++struct nmi_stk {
++	unsigned long gs;
++	unsigned long fs;
++	struct df_stk stk;
++};
++
++asmlinkage void prepare_fault_handler(unsigned long target_ip,
++				      struct tss_struct* cur, struct tss_struct* pre, struct df_stk* stk)
++{
++	unsigned int cpu = smp_processor_id();
++
++	clear_busy_flag_in_tss_descriptor(cpu);
++
++	stk->cs &= 0x0000ffff;
++
++	if (pre->x86_tss.cs == __KERNEL_CS && pre->x86_tss.sp <= TASK_SIZE) {
++		stk->cs = __KU_CS_EXCEPTION;
++	}
++
++	pre->x86_tss.ip = target_ip;
++	pre->x86_tss.cs = __KERNEL_CS;
++	pre->x86_tss.flags &= (~(X86_EFLAGS_TF | X86_EFLAGS_IF));
++
++	pre->x86_tss.sp = (unsigned long)stk;
++	pre->x86_tss.ss = __KERNEL_DS;
++
++	return;
++}
++
++extern void ia32_sysenter_target(void);
++extern void sysenter_past_esp(void);
++
++asmlinkage void prepare_nmi_handler(unsigned long target_ip,
++				    struct tss_struct* cur, struct tss_struct* pre, struct nmi_stk* stk)
++{
++	prepare_fault_handler(target_ip, cur, pre, &stk->stk);
++
++	/*
++	 * NOTE: it is unnecessary to set cs to __KU_CS_INTERRUPT
++	 * because the layout of the prepared kernel stack (in entry.S) is
++	 * for exceptions, not interrupts.
++	 */
++
++	stk->fs = pre->x86_tss.fs;
++	stk->gs = pre->x86_tss.gs;
++
++	pre->x86_tss.fs = 0;
++	pre->x86_tss.gs = 0;
++	pre->x86_tss.ldt = 0;
++
++	pre->x86_tss.sp = (unsigned long)stk;
++
++	/*
++	 * Skip the first instruction of ia32_sysenter_target because
++	 * it assumes that %esp points to tss->esp1
++	 * and just loads the correct kernel stack to %esp.
++	 */
++	if (stk->stk.ip == (unsigned long)ia32_sysenter_target) {
++		stk->stk.ip = (unsigned long)sysenter_past_esp;
++	}
++
++	return;
++}
++
++void __cpuinit init_doublefault_tss(int cpu)
++{
++	struct tss_struct* tss = &per_cpu(init_tss, cpu);
++	struct tss_struct* doublefault_tss = &per_cpu(doublefault_tsses, cpu);
++	struct dft_stack_struct* dft_stack = &per_cpu(dft_stacks, cpu);
++
++	doublefault_tss->x86_tss.sp = (unsigned long)(&(dft_stack->error_code) + 1);
++	doublefault_tss->x86_tss.sp0 = doublefault_tss->x86_tss.sp;
++
++	dft_stack->this_tss = doublefault_tss;
++	dft_stack->normal_tss = tss;
++
++}
++
++void __cpuinit init_nmi_tss(int cpu)
++{
++	struct tss_struct* tss = &per_cpu(init_tss, cpu);
++	struct tss_struct* nmi_tss = &per_cpu(nmi_tsses, cpu);
++	struct nmi_stack_struct* nmi_stack = &per_cpu(nmi_stacks, cpu);
++
++	nmi_tss->x86_tss.sp = (unsigned long)(&(nmi_stack->__pad[0]) + 1);
++	nmi_tss->x86_tss.sp0 = nmi_tss->x86_tss.sp;
++
++	nmi_stack->this_tss = nmi_tss;
++	nmi_stack->normal_tss = tss;
++	nmi_stack->dft_tss_desc = &get_cpu_gdt_table(cpu)[GDT_ENTRY_DOUBLEFAULT_TSS].b;
++	nmi_stack->need_nmi = 0;
++
++}
++
++static int NMI_is_set(void) {
++	unsigned int cpu = smp_processor_id();
++
++	if (per_cpu(nmi_stacks, cpu).need_nmi) {
++		per_cpu(nmi_stacks, cpu).need_nmi = 0;
++		return 1;
++	}
++
++	return 0;
++}
++
++void (*test_ISR_and_handle_interrupt)(void);
++
++asmlinkage void do_interrupt_handling(void)
++{
++	if (NMI_is_set()) {
++		__asm__ __volatile__ (
++		"pushfl\n\t"
++		"pushl %0\n\t"
++		"pushl $0f\n\t"
++		"jmp nmi\n\t"
++		"0:\n\t"
++		: : "i" (__KERNEL_CS)
++		);
++	}
++
++	test_ISR_and_handle_interrupt();
++}
++
++#endif
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/kernel/tls.c
+--- a/arch/x86/kernel/tls.c	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/kernel/tls.c	Sat Dec 05 14:39:08 2009 +0900
+@@ -34,12 +34,15 @@
+ 	struct thread_struct *t = &p->thread;
+ 	struct desc_struct *desc = &t->tls_array[idx - GDT_ENTRY_TLS_MIN];
+ 	int cpu;
++	NMI_DECLS_GS
+ 
+ 	/*
+ 	 * We must not get preempted while modifying the TLS.
+ 	 */
+ 	cpu = get_cpu();
+ 
++	NMI_SAVE_GS;
++
+ 	while (n-- > 0) {
+ 		if (LDT_empty(info))
+ 			desc->a = desc->b = 0;
+@@ -50,7 +53,9 @@
+ 	}
+ 
+ 	if (t == &current->thread)
+-		load_TLS(t, cpu);
++		load_TLS__nmi_unsafe(t, cpu);
++
++	NMI_RESTORE_GS;
+ 
+ 	put_cpu();
+ }
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/kernel/traps.c
+--- a/arch/x86/kernel/traps.c	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/kernel/traps.c	Sat Dec 05 14:39:08 2009 +0900
+@@ -911,7 +911,11 @@
+ 
+ 	set_intr_gate(0, &divide_error);
+ 	set_intr_gate_ist(1, &debug, DEBUG_STACK);
++#if defined(CONFIG_KERNEL_MODE_LINUX) && defined(CONFIG_X86_32)
++	set_task_gate(2, GDT_ENTRY_NMI_TSS);
++#else
+ 	set_intr_gate_ist(2, &nmi, NMI_STACK);
++#endif
+ 	/* int3 can be called from all */
+ 	set_system_intr_gate_ist(3, &int3, DEBUG_STACK);
+ 	/* int4 can be called from all */
+@@ -943,9 +947,13 @@
+ 		set_bit(i, used_vectors);
+ 
+ #ifdef CONFIG_IA32_EMULATION
++#if defined(CONFIG_KERNEL_MODE_LINUX) && defined(CONFIG_X86_64)
++	set_system_intr_gate_orig(IA32_SYSCALL_VECTOR, ia32_syscall);
++#else
+ 	set_system_intr_gate(IA32_SYSCALL_VECTOR, ia32_syscall);
+ 	set_bit(IA32_SYSCALL_VECTOR, used_vectors);
+ #endif
++#endif
+ 
+ #ifdef CONFIG_X86_32
+ 	if (cpu_has_fxsr) {
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/mm/fault.c
+--- a/arch/x86/mm/fault.c	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/mm/fault.c	Sat Dec 05 14:39:08 2009 +0900
+@@ -957,6 +957,10 @@
+ 
+ 	/* Get the faulting address: */
+ 	address = read_cr2();
++#ifdef CONFIG_KERNEL_MODE_LINUX
++	if (need_error_code_fix_on_page_fault(regs->cs))
++		error_code |= 0x4;
++#endif
+ 
+ 	/*
+ 	 * Detect and handle instructions that would cause a page fault for
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/vdso/Makefile
+--- a/arch/x86/vdso/Makefile	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/vdso/Makefile	Sat Dec 05 14:39:08 2009 +0900
+@@ -13,6 +13,8 @@
+ # files to link into the vdso
+ vobjs-y := vdso-note.o vclock_gettime.o vgetcpu.o vvar.o
+ 
++vobjs-$(CONFIG_KERNEL_MODE_LINUX)	+= vkml.o
++
+ # files to link into kernel
+ obj-$(VDSO64-y)			+= vma.o vdso.o
+ obj-$(VDSO32-y)			+= vdso32.o vdso32-setup.o
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/vdso/vdso.lds.S
+--- a/arch/x86/vdso/vdso.lds.S	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/vdso/vdso.lds.S	Sat Dec 05 14:39:08 2009 +0900
+@@ -23,6 +23,9 @@
+ 		__vdso_gettimeofday;
+ 		getcpu;
+ 		__vdso_getcpu;
++#ifdef CONFIG_KERNEL_MODE_LINUX
++		__kernel_vdso_kml;
++#endif
+ 	local: *;
+ 	};
+ }
+@@ -35,3 +38,8 @@
+ #define VEXTERN(x)	VDSO64_ ## x = vdso_ ## x;
+ #include "vextern.h"
+ #undef	VEXTERN
++
++#ifdef CONFIG_KERNEL_MODE_LINUX
++VDSO64_vdso_kml = __kernel_vdso_kml;
++VDSO64_ptr_kml_call = __ptr_kml_call;
++#endif
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/vdso/vdso32-setup.c
+--- a/arch/x86/vdso/vdso32-setup.c	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/vdso/vdso32-setup.c	Sat Dec 05 14:39:08 2009 +0900
+@@ -280,6 +280,25 @@
+ 
+ #endif	/* CONFIG_X86_64 */
+ 
++#if defined(CONFIG_KERNEL_MODE_LINUX) && defined(CONFIG_X86_32)
++extern const char kml_call_table;
++extern void __kernel_vsyscall_kml;
++
++static void __init kml_call_table_fixup(const char* base)
++{
++	char* p;
++	unsigned long* to_be_filled;
++
++	p = (char*)VDSO32_SYMBOL(base, vsyscall_kml);
++	to_be_filled = (unsigned long*)(p + 3);
++	*to_be_filled = (unsigned long)&kml_call_table;
++
++	return;
++}
++#else
++#define kml_call_table_fixup(B)
++#endif
++
+ int __init sysenter_setup(void)
+ {
+ 	void *syscall_page = (void *)get_zeroed_page(GFP_ATOMIC);
+@@ -303,6 +322,7 @@
+ 		vsyscall_len = &vdso32_int80_end - &vdso32_int80_start;
+ 	}
+ 
++	kml_call_table_fixup(vsyscall);
+ 	memcpy(syscall_page, vsyscall, vsyscall_len);
+ 	relocate_vdso(syscall_page);
+ 
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/vdso/vdso32/int80.S
+--- a/arch/x86/vdso/vdso32/int80.S	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/vdso/vdso32/int80.S	Sat Dec 05 14:39:08 2009 +0900
+@@ -5,6 +5,7 @@
+  * This must come first.
+  */
+ #include "sigreturn.S"
++#include "kml.S"
+ 
+ 	.text
+ 	.globl __kernel_vsyscall
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/vdso/vdso32/kml.S
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/arch/x86/vdso/vdso32/kml.S	Sat Dec 05 14:39:08 2009 +0900
+@@ -0,0 +1,45 @@
++
++#if defined(CONFIG_KERNEL_MODE_LINUX) && defined(CONFIG_X86_32)
++
++	.text
++	.org __kernel_rt_sigreturn+32,0x90
++	.globl __kernel_vsyscall_kml
++	.type __kernel_vsyscall_kml,@function
++__kernel_vsyscall_kml:
++.LSTART_vsyscall_kml:
++	jmp *kml_call_table(,%eax,4)
++.LEND_vsyscall_kml:
++	.size __kernel_vsyscall_kml,.-.LSTART_vsyscall_kml
++	.balign 32
++	.previous
++
++	.section .eh_frame,"a",@progbits
++.LSTARTFRAMEDLSI_KML:
++	.long .LENDCIEDLSI_KML-.LSTARTCIEDLSI_KML
++.LSTARTCIEDLSI_KML:
++	.long 0
++	.byte 1
++	.string "zR"
++	.uleb128 1
++	.uleb128 -4
++	.byte 8
++	.uleb128 1
++	.byte 0x1b
++	.byte 0x0c
++	.uleb128 4
++	.uleb128 4
++	.byte 0x88
++	.uleb128 1
++	.align 4
++.LENDCIEDLSI_KML:
++	.long .LENDFDEDLSI_KML-.LSTARTFDEDLSI_KML
++.LSTARTFDEDLSI_KML:
++	.long .LSTARTFDEDLSI_KML-.LSTARTFRAMEDLSI_KML
++	.long .LSTART_vsyscall_kml-.
++	.long .LEND_vsyscall_kml-.LSTART_vsyscall_kml
++	.uleb128 0
++	.align 4
++.LENDFDEDLSI_KML:
++	.previous
++
++#endif
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/vdso/vdso32/sysenter.S
+--- a/arch/x86/vdso/vdso32/sysenter.S	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/vdso/vdso32/sysenter.S	Sat Dec 05 14:39:08 2009 +0900
+@@ -5,6 +5,7 @@
+  * This must come first.
+  */
+ #include "sigreturn.S"
++#include "kml.S"
+ 
+ /*
+  * The caller puts arg2 in %ecx, which gets pushed. The kernel will use
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/vdso/vdso32/vdso32.lds.S
+--- a/arch/x86/vdso/vdso32/vdso32.lds.S	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/vdso/vdso32/vdso32.lds.S	Sat Dec 05 14:39:08 2009 +0900
+@@ -24,6 +24,9 @@
+ 		__kernel_vsyscall;
+ 		__kernel_sigreturn;
+ 		__kernel_rt_sigreturn;
++#if defined(CONFIG_KERNEL_MODE_LINUX) && defined(CONFIG_X86_32)
++		__kernel_vsyscall_kml;
++#endif
+ 	local: *;
+ 	};
+ }
+@@ -35,3 +38,6 @@
+ VDSO32_vsyscall		= __kernel_vsyscall;
+ VDSO32_sigreturn	= __kernel_sigreturn;
+ VDSO32_rt_sigreturn	= __kernel_rt_sigreturn;
++#if defined(CONFIG_KERNEL_MODE_LINUX) && defined(CONFIG_X86_32)
++VDSO32_vsyscall_kml	= __kernel_vsyscall_kml;
++#endif
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/vdso/vkml.S
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/arch/x86/vdso/vkml.S	Sat Dec 05 14:39:08 2009 +0900
+@@ -0,0 +1,76 @@
++
++#ifdef CONFIG_KERNEL_MODE_LINUX
++/*
++ * Code for the vDSO.  This version uses the KML direct call method.
++ */
++
++	.text
++	.globl __kernel_vdso_kml
++	.type __kernel_vdso_kml,@function
++__kernel_vdso_kml:
++.LSTART_vdso:
++	leaq .Lreturn(%rip), %rcx
++.Lpushf:
++	pushf
++.Lpopq:
++	popq %r11
++
++	cli
++
++	jmp *.Lptr_kml_call(%rip)
++.Lretry:
++	.byte 0xeb
++	.byte 0xed
++	/* == jmpb __kernel_vdso_kml */
++.Lreturn:
++	ret
++.LEND_vdso:
++	.size __kernel_vdso_kml,.-.LSTART_vdso
++	.data
++	.align 8
++	.globl __ptr_kml_call
++__ptr_kml_call:
++.Lptr_kml_call:
++	.quad 0 /* to be initialized in vma.c */
++	.previous
++
++	.section .eh_frame,"a",@progbits
++.LSTARTFRAMEDLSI:
++	.long .LENDCIEDLSI-.LSTARTCIEDLSI
++.LSTARTCIEDLSI:
++	.long 0			/* CIE ID */
++	.byte 1			/* Version number */
++	.string "zR"		/* NUL-terminated augmentation string */
++	.uleb128 1		/* Code alignment factor */
++	.sleb128 -4		/* Data alignment factor */
++	.byte 8			/* Return address register column */
++	.uleb128 1		/* Augmentation value length */
++	.byte 0x1b		/* DW_EH_PE_pcrel|DW_EH_PE_sdata4. */
++	.byte 0x0c		/* DW_CFA_def_cfa */
++	.uleb128 4
++	.uleb128 4
++	.byte 0x88		/* DW_CFA_offset, column 0x8 */
++	.uleb128 1
++	.align 4
++.LENDCIEDLSI:
++	.long .LENDFDEDLSI-.LSTARTFDEDLSI /* Length FDE */
++.LSTARTFDEDLSI:
++	.long .LSTARTFDEDLSI-.LSTARTFRAMEDLSI /* CIE pointer */
++	.long .LSTART_vdso-.	/* PC-relative start address */
++	.long .LEND_vdso-.LSTART_vdso
++	.uleb128 0
++	/* What follows are the instructions for the table generation.
++	   We have to record all changes of the stack pointer.  */
++	.byte 0x04		/* DW_CFA_advance_loc4 */
++	.long .Lpushf-.LSTART_vdso
++	.byte 0x0e		/* DW_CFA_def_cfa_offset */
++	.byte 0x08		/* RA at offset 8 now */
++	.byte 0x04		/* DW_CFA_advance_loc4 */
++	.long .Lpopq-.Lpushf
++	.byte 0x0e		/* DW_CFA_def_cfa_offset */
++	.byte 0x04		/* RA at offset 4 now */
++	.align 4
++.LENDFDEDLSI:
++	.previous
++
++#endif
+diff -r 5d51132b3296 -r d30b50c93489 arch/x86/vdso/vma.c
+--- a/arch/x86/vdso/vma.c	Wed Dec 02 19:51:21 2009 -0800
++++ b/arch/x86/vdso/vma.c	Sat Dec 05 14:39:08 2009 +0900
+@@ -36,6 +36,9 @@
+ 
+ static int __init init_vdso_vars(void)
+ {
++#ifdef CONFIG_KERNEL_MODE_LINUX
++	extern void kml_call(void);
++#endif
+ 	int npages = (vdso_end - vdso_start + PAGE_SIZE - 1) / PAGE_SIZE;
+ 	int i;
+ 	char *vbase;
+@@ -66,6 +69,11 @@
+ 	*(typeof(__ ## x) **) var_ref(VDSO64_SYMBOL(vbase, x), #x) = &__ ## x;
+ #include "vextern.h"
+ #undef VEXTERN
++
++#ifdef CONFIG_KERNEL_MODE_LINUX
++	*(void**)VDSO64_SYMBOL(vbase, ptr_kml_call) = kml_call;
++#endif
++
+ 	return 0;
+ 
+  oom:
+diff -r 5d51132b3296 -r d30b50c93489 drivers/pnp/pnpbios/bioscalls.c
+--- a/drivers/pnp/pnpbios/bioscalls.c	Wed Dec 02 19:51:21 2009 -0800
++++ b/drivers/pnp/pnpbios/bioscalls.c	Sat Dec 05 14:39:08 2009 +0900
+@@ -87,6 +87,7 @@
+ 	u16 status;
+ 	struct desc_struct save_desc_40;
+ 	int cpu;
++	NMI_DECLS_GS
+ 
+ 	/*
+ 	 * PnP BIOSes are generally not terribly re-entrant.
+@@ -96,6 +97,8 @@
+ 		return PNP_FUNCTION_NOT_SUPPORTED;
+ 
+ 	cpu = get_cpu();
++
++	NMI_SAVE_GS;
+ 	save_desc_40 = get_cpu_gdt_table(cpu)[0x40 / 8];
+ 	get_cpu_gdt_table(cpu)[0x40 / 8] = bad_bios_desc;
+ 
+@@ -136,6 +139,7 @@
+ 	spin_unlock_irqrestore(&pnp_bios_lock, flags);
+ 
+ 	get_cpu_gdt_table(cpu)[0x40 / 8] = save_desc_40;
++	NMI_RESTORE_GS;
+ 	put_cpu();
+ 
+ 	/* If we get here and this is set then the PnP BIOS faulted on us. */
+diff -r 5d51132b3296 -r d30b50c93489 fs/binfmt_elf.c
+--- a/fs/binfmt_elf.c	Wed Dec 02 19:51:21 2009 -0800
++++ b/fs/binfmt_elf.c	Sat Dec 05 14:39:08 2009 +0900
+@@ -9,6 +9,10 @@
+  * Copyright 1993, 1994: Eric Youngdale (ericy@cais.com).
+  */
+ 
++#if defined(CONFIG_KERNEL_MODE_LINUX) && defined(INCLUDED_FOR_COMPAT)
++#undef CONFIG_KERNEL_MODE_LINUX
++#endif
++
+ #include <linux/module.h>
+ #include <linux/kernel.h>
+ #include <linux/fs.h>
+@@ -135,7 +139,11 @@
+ 
+ static int
+ create_elf_tables(struct linux_binprm *bprm, struct elfhdr *exec,
+-		unsigned long load_addr, unsigned long interp_load_addr)
++		unsigned long load_addr, unsigned long interp_load_addr
++#ifdef CONFIG_KERNEL_MODE_LINUX
++		, int kernel_mode
++#endif
++)
+ {
+ 	unsigned long p = bprm->p;
+ 	int argc = bprm->argc;
+@@ -560,8 +568,58 @@
+ #endif
+ }
+ 
++#ifdef CONFIG_KERNEL_MODE_LINUX
++#include <linux/fs_struct.h>
++/*
++ * XXX : we haven't implemented safety check of user programs.
++ */
++#define TRUSTED_DIR_STR		"/trusted/"
++#define TRUSTED_DIR_STR_LEN	9
++
++static inline int is_safe(struct file* file)
++{
++	int ret;
++	char* path;
++	char* tmp;
++	struct fs_struct* cur_fs;
++
++	tmp = (char*)__get_free_page(GFP_KERNEL);
++
++	if (!tmp) {
++		return 0;
++	}
++
++	path = d_path(&file->f_path, tmp, PAGE_SIZE);
++	ret = (0 == strncmp(TRUSTED_DIR_STR, path, TRUSTED_DIR_STR_LEN));
++#if defined(CONFIG_KERNEL_MODE_LINUX) && defined(CONFIG_KML_CHECK_CHROOT)
++	if (ret) {
++		/* Check whether if we are "chroot"ed */
++		cur_fs = current->fs;
++		read_lock(&cur_fs->lock);
++		spin_lock(&dcache_lock);
++		if (cur_fs->root.dentry == boot_root) {
++			ret = 1;
++		} else if (cur_fs->root.dentry && cur_fs->root.dentry->d_name.name
++			&& boot_root && boot_root->d_name.name) {
++			ret = (0 == strcmp(cur_fs->root.dentry->d_name.name, boot_root->d_name.name));
++		} else {
++			printk(KERN_INFO "Cannot determine whether if we were chrooted or not.\n");
++			ret = 0;
++		}
++		spin_unlock(&dcache_lock);
++		read_unlock(&cur_fs->lock);
++	}
++#endif
++        free_page((unsigned long)tmp);
++        return ret;
++}
++#endif
++
+ static int load_elf_binary(struct linux_binprm *bprm, struct pt_regs *regs)
+ {
++#ifdef CONFIG_KERNEL_MODE_LINUX
++	int kernel_mode = 0;
++#endif
+ 	struct file *interpreter = NULL; /* to shut gcc up */
+  	unsigned long load_addr = 0, load_bias = 0;
+ 	int load_addr_set = 0;
+@@ -954,8 +1012,15 @@
+ 
+ 	install_exec_creds(bprm);
+ 	current->flags &= ~PF_FORKNOEXEC;
++#ifdef CONFIG_KERNEL_MODE_LINUX
++	kernel_mode = is_safe(bprm->file);
++#endif
+ 	retval = create_elf_tables(bprm, &loc->elf_ex,
+-			  load_addr, interp_load_addr);
++			  load_addr, interp_load_addr
++#ifdef CONFIG_KERNEL_MODE_LINUX
++			  , kernel_mode
++#endif
++			  );
+ 	if (retval < 0) {
+ 		send_sig(SIGKILL, current, 0);
+ 		goto out;
+@@ -998,7 +1063,15 @@
+ 	ELF_PLAT_INIT(regs, reloc_func_desc);
+ #endif
+ 
++#ifndef CONFIG_KERNEL_MODE_LINUX
+ 	start_thread(regs, elf_entry, bprm->p);
++#else
++	if (kernel_mode) {
++		start_kernel_thread(regs, elf_entry, bprm->p);
++	} else {
++		start_thread(regs, elf_entry, bprm->p);
++	}
++#endif
+ 	retval = 0;
+ out:
+ 	kfree(loc);
+diff -r 5d51132b3296 -r d30b50c93489 fs/compat_binfmt_elf.c
+--- a/fs/compat_binfmt_elf.c	Wed Dec 02 19:51:21 2009 -0800
++++ b/fs/compat_binfmt_elf.c	Sat Dec 05 14:39:08 2009 +0900
+@@ -128,4 +128,7 @@
+ /*
+  * We share all the actual code with the native (64-bit) version.
+  */
++#ifdef CONFIG_KERNEL_MODE_LINUX
++#define INCLUDED_FOR_COMPAT
++#endif
+ #include "binfmt_elf.c"
+diff -r 5d51132b3296 -r d30b50c93489 include/linux/fs_struct.h
+--- a/include/linux/fs_struct.h	Wed Dec 02 19:51:21 2009 -0800
++++ b/include/linux/fs_struct.h	Sat Dec 05 14:39:08 2009 +0900
+@@ -21,4 +21,8 @@
+ extern void daemonize_fs_struct(void);
+ extern int unshare_fs_struct(void);
+ 
++#ifdef CONFIG_KERNEL_MODE_LINUX
++extern struct dentry* boot_root;
++#endif
++
+ #endif /* _LINUX_FS_STRUCT_H */
+diff -r 5d51132b3296 -r d30b50c93489 init/do_mounts.c
+--- a/init/do_mounts.c	Wed Dec 02 19:51:21 2009 -0800
++++ b/init/do_mounts.c	Sat Dec 05 14:39:08 2009 +0900
+@@ -31,6 +31,10 @@
+ 
+ dev_t ROOT_DEV;
+ 
++#ifdef CONFIG_KERNEL_MODE_LINUX
++struct dentry* boot_root;
++#endif
++
+ static int __init load_ramdisk(char *str)
+ {
+ 	rd_doload = simple_strtol(str,NULL,0) & 3;
+@@ -418,4 +422,7 @@
+ 	devtmpfs_mount("dev");
+ 	sys_mount(".", "/", NULL, MS_MOVE, NULL);
+ 	sys_chroot(".");
++#ifdef CONFIG_KERNEL_MODE_LINUX
++	boot_root = dget(current->fs->root.dentry);
++#endif
+ }
+diff -r 5d51132b3296 -r d30b50c93489 kernel/Kconfig.kml
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/kernel/Kconfig.kml	Sat Dec 05 14:39:08 2009 +0900
+@@ -0,0 +1,34 @@
++
++menu "Kernel Mode Linux"
++
++config KERNEL_MODE_LINUX
++        bool "Kernel Mode Linux"
++        ---help---
++          This enables Kernel Mode Linux. In Kernel Mode Linux, user programs
++          can be executed safely in kernel mode and access a kernel address space
++          directly. Thus, for example, costly mode switching between a user and a kernel
++          can be eliminated. If you say Y here, the kernel enables Kernel Mode Linux.
++
++          More information about Kernel Mode Linux can be found in the
++          <file:Documentation/kml.txt>
++
++          If you don't know what to do here, say N.
++
++config KML_CHECK_CHROOT
++        bool "Check for chroot"
++        default y
++        depends on KERNEL_MODE_LINUX
++        ---help---
++          This enables the check for the current root file system being chrooted
++          when executing user processes in kernel mode. In the current KML
++          implementation, programs in the dicretory "/trusted" are executed in
++          kernel mode. Therefore, the chroot check is necessary because,
++          if the root file system is chrooted to "/home/foo/",
++          programs in the directory "/home/foo/trusted" are accidentally executed in kernel mode.
++
++          If you don't know what to do here, say Y.
++
++comment "Safety check have not been implemented"
++depends on KERNEL_MODE_LINUX
++
++endmenu

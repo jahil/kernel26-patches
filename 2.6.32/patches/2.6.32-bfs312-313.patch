@@ -1,0 +1,83 @@
+Stupid mismerge in __might_sleep meant that with the right config options
+dmesg would have been swamped with false warnings. This was making BFS consume
+a lot of CPU under certain conditions in combination with preempt RCU.
+Thanks to Jayson R King for picking it up!
+
+-ck
+
+---
+ include/linux/sched.h |    2 +-
+ init/Kconfig          |    7 ++-----
+ kernel/sched_bfs.c    |   28 +++++++++++++++++-----------
+ 3 files changed, 20 insertions(+), 17 deletions(-)
+
+Index: linux-2.6.32-bfs/include/linux/sched.h
+===================================================================
+--- linux-2.6.32-bfs.orig/include/linux/sched.h	2009-12-30 23:15:15.621772786 +1100
++++ linux-2.6.32-bfs/include/linux/sched.h	2009-12-30 23:15:51.622771796 +1100
+@@ -1585,7 +1585,7 @@ static inline void tsk_cpus_current(stru
+ 
+ static inline void print_scheduler_version(void)
+ {
+-	printk(KERN_INFO"BFS CPU scheduler v0.312 by Con Kolivas.\n");
++	printk(KERN_INFO"BFS CPU scheduler v0.313 by Con Kolivas.\n");
+ }
+ 
+ static inline int iso_task(struct task_struct *p)
+Index: linux-2.6.32-bfs/init/Kconfig
+===================================================================
+--- linux-2.6.32-bfs.orig/init/Kconfig	2009-12-30 23:15:22.491770299 +1100
++++ linux-2.6.32-bfs/init/Kconfig	2009-12-30 23:15:51.651769616 +1100
+@@ -30,11 +30,8 @@ config SCHED_BFS
+ 	  responsiveness on the desktop and solid scalability on normal
+           hardware. Not recommended for 4096 CPUs.
+ 
+-	  Currently incompatible with the Group CPU scheduler, RCU TORTURE
+-          TEST so these options are disabled. Problems have also been reported
+-          with the preemptible tree based hierarchical RCU, so if you run into
+-          problems with this, try the non preemptible option or classical
+-          option.
++	  Currently incompatible with the Group CPU scheduler, and RCU TORTURE
++          TEST so these options are disabled.
+ 
+           Say Y here.
+ 	default y
+Index: linux-2.6.32-bfs/kernel/sched_bfs.c
+===================================================================
+--- linux-2.6.32-bfs.orig/kernel/sched_bfs.c	2009-12-30 23:15:15.645780795 +1100
++++ linux-2.6.32-bfs/kernel/sched_bfs.c	2009-12-30 23:15:51.643022345 +1100
+@@ -6466,17 +6466,23 @@ void __might_sleep(char *file, int line,
+ 
+ 	if ((preempt_count_equals(preempt_offset) && !irqs_disabled()) ||
+ 	    system_state != SYSTEM_RUNNING || oops_in_progress)
+-		if (time_before(jiffies, prev_jiffy + HZ) && prev_jiffy)
+-			return;
+-		prev_jiffy = jiffies;
+-		printk(KERN_ERR "BUG: sleeping function called from invalid"
+-				" context at %s:%d\n", file, line);
+-		printk("in_atomic():%d, irqs_disabled():%d\n",
+-			in_atomic(), irqs_disabled());
+-		debug_show_held_locks(current);
+-		if (irqs_disabled())
+-			print_irqtrace_events(current);
+-		dump_stack();
++		return;
++	if (time_before(jiffies, prev_jiffy + HZ) && prev_jiffy)
++		return;
++	prev_jiffy = jiffies;
++
++	printk(KERN_ERR
++		"BUG: sleeping function called from invalid context at %s:%d\n",
++			file, line);
++	printk(KERN_ERR
++		"in_atomic(): %d, irqs_disabled(): %d, pid: %d, name: %s\n",
++			in_atomic(), irqs_disabled(),
++			current->pid, current->comm);
++
++	debug_show_held_locks(current);
++	if (irqs_disabled())
++		print_irqtrace_events(current);
++	dump_stack();
+ #endif
+ }
+ EXPORT_SYMBOL(__might_sleep);
