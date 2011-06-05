@@ -1,0 +1,308 @@
+Index: linux-2.6.18/net/ipv4/ip_input.c
+===================================================================
+--- linux-2.6.18.orig/net/ipv4/ip_input.c	2006-10-03 14:46:08.000000000 -0400
++++ linux-2.6.18/net/ipv4/ip_input.c	2006-10-03 23:10:50.000000000 -0400
+@@ -146,6 +146,8 @@
+ #include <linux/mroute.h>
+ #include <linux/netlink.h>
+ 
++#include <linux/logdev_packets.h>
++
+ /*
+  *	SNMP management statistics
+  */
+@@ -332,6 +334,7 @@ static inline int ip_rcv_finish(struct s
+ {
+ 	struct iphdr *iph = skb->nh.iph;
+ 
++	logdev_pkt(skb, 1);
+ 	/*
+ 	 *	Initialise the virtual path cache for the packet. It describes
+ 	 *	how the packet travels inside Linux networking.
+Index: linux-2.6.18/net/ipv4/ip_output.c
+===================================================================
+--- linux-2.6.18.orig/net/ipv4/ip_output.c	2006-10-03 14:46:08.000000000 -0400
++++ linux-2.6.18/net/ipv4/ip_output.c	2006-10-03 23:10:50.000000000 -0400
+@@ -83,6 +83,8 @@
+ #include <linux/netlink.h>
+ #include <linux/tcp.h>
+ 
++#include <linux/logdev_packets.h>
++
+ int sysctl_ip_default_ttl = IPDEFTTL;
+ 
+ /* Generate a checksum for an outgoing IP datagram. */
+@@ -182,6 +184,8 @@ static inline int ip_finish_output2(stru
+ 		skb = skb2;
+ 	}
+ 
++	logdev_pkt(skb, 0);
++
+ 	if (hh) {
+ 		int hh_alen;
+ 
+Index: linux-2.6.18/drivers/char/Makefile
+===================================================================
+--- linux-2.6.18.orig/drivers/char/Makefile	2006-10-03 14:46:08.000000000 -0400
++++ linux-2.6.18/drivers/char/Makefile	2006-10-03 23:10:50.000000000 -0400
+@@ -100,6 +100,7 @@ obj-$(CONFIG_LOGDEV)		+= logdev.o
+ obj-$(CONFIG_LOGDEV_PROBE)	+= logdev_probe.o
+ obj-$(CONFIG_LOGDEV_RINGBUF)	+= logdev_ringbuf.o
+ obj-$(CONFIG_LOGDEV_RELAY)	+= logdev_relay.o
++obj-$(CONFIG_LOGDEV)		+= logdev_packets.o
+ 
+ obj-$(CONFIG_HANGCHECK_TIMER)	+= hangcheck-timer.o
+ obj-$(CONFIG_TCG_TPM)		+= tpm/
+Index: linux-2.6.18/drivers/char/logdev_packets.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ linux-2.6.18/drivers/char/logdev_packets.c	2006-10-03 23:11:12.000000000 -0400
+@@ -0,0 +1,238 @@
++#include <linux/init.h>
++#include <linux/module.h>
++#include <linux/skbuff.h>
++#include <linux/logdev.h>
++
++#include <net/tcp.h>
++
++#define LOGDEV_PKT_ID 0x42aa
++
++struct logdev_pkt {
++	unsigned long long t;
++	short protocol;
++	short dir;
++	char packet[0];
++};
++
++/*
++ * This routine may be placed in the network code if you want to see
++ * what packets are traveling through. You may use the direction to
++ * indicate if they are coming or going.
++ *    direction = 0 :   saddr ==> daddr
++ *                1 :   saddr <== daddr
++ */
++void logdev_pkt(struct sk_buff *skb, int direction)
++{
++	struct logdev_pkt rs;
++	struct tcphdr *th;
++	struct iphdr *iph;
++	unsigned long flags;
++	int tsize;
++
++	local_irq_save(flags);
++
++	if (!logdev_print_ison())
++		goto out;
++
++	rs.t = sched_clock();
++
++	iph = skb->nh.iph;
++
++	rs.protocol = skb->protocol;
++	rs.dir = direction;
++
++	if ((skb->protocol != __constant_htons(ETH_P_IP)) ||
++	    (skb->pkt_type != PACKET_HOST) ||
++	    (iph->protocol != IPPROTO_TCP)) {
++		/* Just copy the first 20 bytes of the packet */
++		tsize = sizeof(rs) + 20;
++		logdev_record(LOGDEV_PKT_ID, tsize, &rs, sizeof(rs), iph, 20, NULL);
++
++	} else {
++		int iplen;
++		int tcplen;
++
++		iplen = iph->ihl<<2;
++		th = (struct tcphdr*)((void*)(skb->nh.iph)+(iplen));
++		tcplen = th->doff<<2;
++
++		tsize = sizeof(rs) + iplen + tcplen;
++		logdev_record(LOGDEV_PKT_ID, tsize, &rs, sizeof(rs), iph, iplen+tcplen, NULL);
++	}
++
++ out:
++	local_irq_restore(flags);
++}
++EXPORT_SYMBOL_GPL(logdev_pkt);
++
++static void logdev_pkt_print(struct logdev_header *hdr,
++			     struct logdev_custom *custom,
++			     int cpu,
++			     void *rec)
++{
++	struct logdev_pkt *rs = rec;
++	struct tcphdr th;
++	struct iphdr iph;
++	unsigned long long t;
++	unsigned long usec_rem;
++	unsigned long secs;
++	int len = 0;
++	int iplen;
++	unsigned long end;
++	int tcplen;
++	unsigned long oaddr;
++	unsigned long iaddr;
++	unsigned short oport;
++	unsigned short iport;
++	int dir;
++
++	if (custom->id != LOGDEV_PKT_ID) {
++		printk(">>>> Not packet record!!! <<<<\n");
++		return;
++	}
++
++	t = rs->t;
++	usec_rem = do_div(t, 1000000000)/1000;
++	secs = (unsigned long)t;
++
++	printk("[%5lu.%06lu] cpu:%d ",
++	       secs, usec_rem, cpu);
++
++	if (rs->protocol != htons(ETH_P_IP)) {
++		printk("Not IP packet\n");
++		goto pkt_done;
++	}
++
++	if ((hdr->size - len) < sizeof(iph)) {
++		printk("IP Header corrupted\n");
++		goto pkt_done;
++	}
++
++	iph = *((struct iphdr*)&rs->packet);
++	len += sizeof(iph);
++
++	iph.tot_len = ntohs(iph.tot_len);
++	iph.id = ntohs(iph.id);
++	iph.frag_off = ntohs(iph.frag_off);
++	iph.check = ntohs(iph.check);
++	iph.saddr = ntohl(iph.saddr);
++	iph.daddr = ntohl(iph.daddr);
++
++	/*
++	 * dir is the direction of the packet.
++	 *  0 is incoming, 1 is outgoing.
++	 */
++	dir = rs->dir;
++
++	if (dir) {
++		/* outgoing */
++		oaddr = iph.daddr;
++		iaddr = iph.saddr;
++	} else {
++		/* incomming */
++		oaddr = iph.saddr;
++		iaddr = iph.daddr;
++	}
++
++#define IPBYTE(ip,b) (unsigned char)(((ip)>>((b)*8))&0xff)
++
++	if (iph.protocol != 6) {
++		printk("%d.%d.%d.%d %s "
++		       "%d.%d.%d.%d (Not TCP packet)\n",
++		       IPBYTE(iaddr,3),
++		       IPBYTE(iaddr,2),
++		       IPBYTE(iaddr,1),
++		       IPBYTE(iaddr,0),
++		       dir ? "==>" : "<==",
++		       IPBYTE(oaddr,3),
++		       IPBYTE(oaddr,2),
++		       IPBYTE(oaddr,1),
++		       IPBYTE(oaddr,0));
++
++		goto pkt_done;
++	}
++
++	iplen = iph.ihl<<2;
++
++	/*
++	 * Skip any ip options.
++	 */
++	if (iplen > sizeof(iph))
++		len += iplen - sizeof(iph);
++
++	th = *((struct tcphdr*)(&rs->packet[iplen]));
++
++	if ((hdr->size - len) < sizeof(th)) {
++		printk(" TCP Header corrupted\n");
++		goto pkt_done;
++	}
++
++	len += sizeof(th);
++
++	tcplen = th.doff<<2;
++
++	th.source = ntohs(th.source);
++	th.dest = ntohs(th.dest);
++	th.seq = ntohl(th.seq);
++	th.ack_seq = ntohl(th.ack_seq);
++	th.window = ntohs(th.window);
++	th.check = ntohs(th.check);
++	th.urg_ptr = ntohs(th.urg_ptr);
++
++	iplen = iph.tot_len - (iplen + tcplen);
++	end = th.seq;
++	if (th.fin || th.syn) {
++		end++;
++	}
++	end += iplen;
++
++	if (dir) {
++		/* outgoing */
++		oport = th.dest;
++		iport = th.source;
++	} else {
++		/* incomming */
++		oport = th.source;
++		iport = th.dest;
++	}
++
++	printk("%d.%d.%d.%d:%d %s %d.%d.%d.%d:%d %s:%u %s:%u "
++	       "(%c%c%c%c%c%c) len:%d win:%d end_seq:%lu\n",
++	       IPBYTE(iaddr,3),
++	       IPBYTE(iaddr,2),
++	       IPBYTE(iaddr,1),
++	       IPBYTE(iaddr,0),
++	       iport,
++	       dir ? "==>" : "<==",
++	       IPBYTE(oaddr,3),
++	       IPBYTE(oaddr,2),
++	       IPBYTE(oaddr,1),
++	       IPBYTE(oaddr,0),
++	       oport,
++	       dir ? "seq" : "ack",
++	       dir ? th.seq : th.ack_seq,
++	       dir ? "ack" : "seq",
++	       dir ? th.ack_seq : th.seq,
++	       th.fin ? 'F' : '-',
++	       th.syn ? 'S' : '-',
++	       th.rst ? 'R' : '-',
++	       th.psh ? 'P' : '-',
++	       th.ack ? 'A' : '-',
++	       th.urg ? 'U' : '-',
++	       iplen,
++	       th.window,
++	       end
++		);
++
++ pkt_done:
++
++	return;
++}
++
++int __init logdev_pkt_init(void)
++{
++	logdev_register_callback(LOGDEV_PKT_ID, logdev_pkt_print);
++	return 0;
++}
++
++late_initcall(logdev_pkt_init);
+Index: linux-2.6.18/include/linux/logdev_packets.h
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ linux-2.6.18/include/linux/logdev_packets.h	2006-10-03 23:10:50.000000000 -0400
+@@ -0,0 +1,5 @@
++#ifndef __LINUX_LOGDEV_PACKETS_H
++
++void logdev_pkt(struct sk_buff *skb, int direction);
++
++#endif /* __LINUX_LOGDEV_PACKETS_H */

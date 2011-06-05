@@ -1,0 +1,3883 @@
+Index: linux-2.6.18/kernel/sched.c
+===================================================================
+--- linux-2.6.18.orig/kernel/sched.c	2006-09-25 23:38:53.000000000 -0400
++++ linux-2.6.18/kernel/sched.c	2006-09-25 23:38:57.000000000 -0400
+@@ -54,6 +54,8 @@
+ #include <linux/delayacct.h>
+ #include <asm/tlb.h>
+ 
++#include <linux/logdev.h>
++
+ #include <asm/unistd.h>
+ 
+ /*
+@@ -1826,6 +1828,8 @@ context_switch(struct rq *rq, struct tas
+ 	spin_release(&rq->lock.dep_map, 1, _THIS_IP_);
+ #endif
+ 
++	logdev_record_switch(prev, next);
++
+ 	/* Here we just switch the register state and the stack. */
+ 	switch_to(prev, next, prev);
+ 
+Index: linux-2.6.18/include/linux/logdev.h
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ linux-2.6.18/include/linux/logdev.h	2006-09-25 23:38:57.000000000 -0400
+@@ -0,0 +1,188 @@
++/*
++ * Logdevice - A device used to record debuging information in the kernel.
++ *             It uses a large memory ring buffer consisting of individual pages
++ *             to keep down on hogging large sections. A user may then read the device
++ *             to get debugging information out of it.  Or if configured, this can
++ *             be dumped to the network on a system crash.
++ *
++ * Copyright - 2005 - Steven Rostedt, Kihon Technologies, (rostedt at kihontech dot com)
++ */
++#ifndef _LOG_DEV_H
++#define _LOG_DEV_H
++
++#include <linux/sched.h>
++
++struct logdev_switch_struct {
++	unsigned long long t;
++	short pid_prev;
++	short pid_next;
++	int prev_prio;
++	int prev_static_prio;
++	int prev_normal_prio;
++	int prev_state;
++	int next_prio;
++	int next_static_prio;
++	int next_normal_prio;
++	char prev_comm[TASK_COMM_LEN];
++	char next_comm[TASK_COMM_LEN];
++};
++
++struct logdev_print {
++	char str[0];
++};
++
++struct logdev_print_time {
++	unsigned long long t;
++	char str[0];
++};
++
++struct logdev_print_time_func {
++	const char *file;
++	int line;
++	/* need to be after line, since we use this with print_time. */
++	unsigned long long t;
++	char str[0];
++};
++
++struct logdev_custom {
++	int id;
++	char data[0];
++};
++
++struct logdev_header {
++	long counter;
++	int id;
++	int size;
++};
++
++struct logdev_item {
++	struct logdev_header hdr;
++	union {
++		struct logdev_switch_struct sw;
++		struct logdev_print print;
++		struct logdev_print_time print_time;
++		struct logdev_print_time_func print_time_func;
++		struct logdev_custom custom;
++		char data[0];
++	} u;
++};
++
++#ifdef CONFIG_LOGDEV
++
++extern int in_logdump;
++
++/*
++ * Right now we only have one switch, but this may change
++ * in the future.
++ */
++extern unsigned long logdev_switches;
++#define LOGDEV_SW_PRINT_ENABLED		0
++#define LOGDEV_SW_SWITCH_ENABLED	1
++#define LOGDEV_SW_BITS			2
++
++#define LOGDEV_SW_ISSET(sw) (test_bit(sw, &logdev_switches))
++#define LOGDEV_SW_SET(sw) (set_bit(sw, &logdev_switches))
++#define LOGDEV_SW_CLEAR(sw) (clear_bit(sw, &logdev_switches))
++
++#define logdev_print_ison() LOGDEV_SW_ISSET(LOGDEV_SW_PRINT_ENABLED)
++#define logdev_print_on() LOGDEV_SW_SET(LOGDEV_SW_PRINT_ENABLED);
++#define logdev_print_off() LOGDEV_SW_CLEAR(LOGDEV_SW_PRINT_ENABLED);
++
++#define logdev_switch_ison() LOGDEV_SW_ISSET(LOGDEV_SW_SWITCH_ENABLED)
++#define logdev_switch_on() LOGDEV_SW_SET(LOGDEV_SW_SWITCH_ENABLED);
++#define logdev_switch_off() LOGDEV_SW_CLEAR(LOGDEV_SW_SWITCH_ENABLED);
++
++typedef void (*logdev_callback_func)(struct logdev_header *hdr,
++				     struct logdev_custom *custom,
++				     int cpu,
++				     void *rec);
++
++int logdev_print(const char *str, ...)
++	__attribute__ ((format (printf, 1, 2)));
++int logdev_vprint(const char *str, va_list va);
++int logdev_print_time(const char *str, ...)
++	__attribute__ ((format (printf, 1, 2)));
++int logdev_print_time_func(const char *file, int line, const char *str, ...)
++	__attribute__ ((format (printf, 3, 4)));
++
++/*
++ * logdev_record is used for custom writes (saves of sprintf)
++ * use id and register a callback so that the logdump knows
++ * what to do when it sees this record.
++ * You can pass in multiple data structures, just end the function
++ * parameters with a NULL.
++ */
++int logdev_record(int id, int total_size, const void *data, int size, ...);
++void logdev_dump(void);
++void logdev_record_switch(struct task_struct *prev, struct task_struct *next);
++
++#define LOGDEV(x,y...) logdev_##x(y)
++#define LOGPRINTS(func,x...) do { if (logdev_print_ison()) LOGDEV(func,x); } while(0)
++
++/*
++ * Using the UPPER case here ignores the logdev_print_enabled flag
++ */
++#define LOGPRINT(x...) LOGDEV(print,x)
++#define LOGTPRINT(x...) LOGDEV(print_time,x)
++#define LOGTFPRINT(x...) LOGDEV(print_time_func,__FUNCTION__,__LINE__,x)
++
++/*
++ * Using these functions, will only log if logdev_print_enabled flag is set.
++ */
++
++#define lprint(x...) LOGPRINTS(print,x)
++#define ltprint(x...) LOGPRINTS(print_time,x)
++#define lfprint(x...) LOGPRINTS(print_time_func,__FUNCTION__,__LINE__,x)
++
++/*
++ * lfnprint is identical to lfprint except that it adds a new line at the end.
++ */
++#define _lnprint(func,x,y...) func( x "%s\n", y)
++#define lnprint(x...) _lnprint(lprint,x,"")
++#define ltnprint(x...) _lnprint(ltprint,x,"")
++#define lfnprint(x...) _lnprint(lfprint,x,"")
++
++struct logdev_callback {
++	struct list_head list;
++	int id;
++	logdev_callback_func func;
++};
++
++int logdev_register_callback(int custom_id, logdev_callback_func func);
++int logdev_unregister_callback(int custom_id);
++
++int logdev_init(void); /* If we want to put this in main.c */
++
++#else /* !LOGDEV */
++#define logdev_dump() do {} while(0)
++#define logdev_record(id, size, data) do {} while(0)
++#define logdev_record_switch(prev, next) do {} while(0)
++
++#define LOGPRINT(x...) do {} while(0)
++#define LOGTPRINT(x...) do {} while(0)
++#define LOGTFPRINT(x...) do {} while(0)
++
++#define logdev_print_ison() ( 0 )
++#define logdev_print_on() do {} while(0)
++#define logdev_print_off() do {} while(0)
++
++#define logdev_switch_ison() ( 0 )
++#define logdev_switch_on() do {} while(0)
++#define logdev_switch_off() do {} while(0)
++
++#define logdev_print(x...) do {} while(0)
++
++#define lprint(x...) do {} while(0)
++#define ltprint(x...) do {} while(0)
++#define lfprint(x...) do {} while(0)
++
++#define lnprint(x...) do {} while(0)
++#define ltnprint(x...) do {} while(0)
++#define lfnprint(x...) do {} while(0)
++
++#define logdev_register_callback(i,f) do {} while(0)
++#define logdev_unregister_callback(i) do {} while(0)
++#define in_logdump 0
++#endif /* LOGDEV */
++
++#endif
+Index: linux-2.6.18/lib/Kconfig.debug
+===================================================================
+--- linux-2.6.18.orig/lib/Kconfig.debug	2006-09-25 23:38:53.000000000 -0400
++++ linux-2.6.18/lib/Kconfig.debug	2006-10-03 12:18:27.000000000 -0400
+@@ -355,6 +355,76 @@ config FORCED_INLINING
+ 	  become the default in the future, until then this option is there to
+ 	  test gcc for this.
+ 
++config LOGDEV
++	bool "Enable logdev device"
++	depends on DEBUG_KERNEL
++	help
++	  The logdev device stores data into the kernel that can be retrieved
++	  later through a misc device (major 10).  The minor number is
++	  dynamic and is posted through /proc/logdev/minor. Utilities
++	  to open and read the device can be found at
++	  http://rostedt.homelinux.com/logdev
++
++	  This device allows for tracing lots of information in the kernel
++	  when simply printk is too expensive.  When the logdev is initialized,
++	  it allocates a default of 1 meg of memory (in page size units). This
++	  allows for saving data in a ring buffer without the need to allocate.
++
++config LOGDEV_PROBE
++	bool
++	depends on LOGDEV && KPROBES
++	default y
++
++choice
++	prompt "Logdev Backend"
++	depends on LOGDEV
++	default LOGDEV_RINGBUF
++
++config LOGDEV_RINGBUF
++	bool "Logdev internal ring buffer"
++	---help---
++	  Logdev needs a backend to store the data as it is logged.
++	  this is done in memory, to record without much digression
++	  in performance of machine.  With this option logdev creates
++	  its own simple memory ring buffer.  This allows it to record
++	  things really early in the boot process.
++
++config LOGDEV_RELAY
++	bool "Logdev with relayfs (BROKEN)"
++	---help---
++	  Logdev needs a backend to store the data as it is logged.
++	  this is done in memory, to record without much digression
++	  in performance of machine.  With this option logdev uses
++	  relayfs as its back end.  This makes it more standard to
++	  other things in the kernel, and for userspace.
++
++endchoice
++
++config LOGDEV_PAGES
++	int "Number of pages to allocate for logdev device"
++	depends on LOGDEV
++	default 256
++	help
++	  The Logdev device allocates a number of pages for the sole
++	  purpose of logging data.  This is the number of pages that
++	  the Logdev device should allocate upon loading / initializing.
++
++config LOGDEV_PRINT_ENABLED
++	bool "Default Logdev prints should be enabled on startup"
++	depends on LOGDEV
++	help
++	  Enable this if you expect the LOGPRINT macros to be enabled
++	  as soon as the logdev device is loaded. Otherwise you must
++	  enable it with /proc/logdev/print
++
++config LOGDEV_SWITCH_ENABLED
++	bool "Default Logdev printing of context switches on startup"
++	depends on LOGDEV
++	help
++	  Enable this if you expect the LOGSWITCH macros to be enabled
++	  as soon as the logdev device is loaded. Otherwise you must
++	  enable it with /proc/logdev/switch
++
+ config RCU_TORTURE_TEST
+ 	tristate "torture tests for RCU"
+ 	depends on DEBUG_KERNEL
+Index: linux-2.6.18/arch/i386/kernel/traps.c
+===================================================================
+--- linux-2.6.18.orig/arch/i386/kernel/traps.c	2006-09-25 23:38:53.000000000 -0400
++++ linux-2.6.18/arch/i386/kernel/traps.c	2006-09-25 23:38:57.000000000 -0400
+@@ -28,6 +28,7 @@
+ #include <linux/kprobes.h>
+ #include <linux/kexec.h>
+ #include <linux/unwind.h>
++#include <linux/logdev.h>
+ 
+ #ifdef CONFIG_EISA
+ #include <linux/ioport.h>
+@@ -690,6 +691,7 @@ void die_nmi (struct pt_regs *regs, cons
+ 	printk(" on CPU%d, eip %08lx, registers:\n",
+ 		smp_processor_id(), regs->eip);
+ 	show_registers(regs);
++	logdev_dump();
+ 	printk(KERN_EMERG "console shuts up ...\n");
+ 	console_silent();
+ 	spin_unlock(&nmi_print_lock);
+Index: linux-2.6.18/drivers/char/logdev.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ linux-2.6.18/drivers/char/logdev.c	2006-10-04 19:00:16.000000000 -0400
+@@ -0,0 +1,1261 @@
++/*
++ * logdev.c
++ *
++ * Copyright (C) 2004-2006 Steven Rostedt <steven.rostedt@kihontech.com>
++ *
++ * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; version 2 of the License (not later!)
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++ *
++ * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++ */
++#undef CONFIG_CRITICAL_IRQSOFF_TIMING /* ignore this for this whole file! */
++#include <linux/init.h>
++#include <linux/module.h>
++#include <linux/spinlock.h>
++#include <linux/slab.h>
++#include <linux/time.h>
++#include <linux/kprobes.h>
++#include <linux/cpumask.h>
++#include <linux/notifier.h>
++#include <linux/nmi.h>
++#include <linux/delay.h>
++#include <linux/bootmem.h>
++#include <linux/debugfs.h>
++#include <linux/logdev.h>
++
++#include <asm/uaccess.h>
++#include <asm/io.h>
++#include <asm/kdebug.h>
++
++#include "logdev_priv.h"
++
++static char *logdev_version = "0.5.3";
++
++/* used for BUG(), since we can't add any headers in that file */
++int get_processor_id(void) { return smp_processor_id(); }
++EXPORT_SYMBOL(get_processor_id);
++
++void log_show_eip(const char *func)
++{
++	lfnprint("(%s) from %p",func,__builtin_return_address(0));
++}
++
++/* bit mask of logdev settings (only one bit used so far) */
++unsigned long logdev_switches;
++EXPORT_SYMBOL_GPL(logdev_switches);
++
++/* Compares good for a difference of ~2 billion. */
++static inline int compare_cnt(unsigned long a, unsigned long b)
++{
++	long x = (long)a - (long)b;
++	return x > 0 ? 1 : x < 0 ? -1 : 0;
++}
++
++static atomic_t logdev_counter = ATOMIC_INIT(0);
++#define logdev_counter_inc() atomic_inc_return(&logdev_counter);
++
++DEFINE_PER_CPU(struct logdev_dev, logdev_dev);
++
++/*
++ * We don't support hotplug CPUS
++ */
++#define check_cpu(cpu) ({ \
++			static int once = 1;				\
++			int x;						\
++			if (unlikely(x = (cpu >= LOGDEV_CPUS)) && once) { \
++				once = 0;				\
++				printk("BUG %s:%d: cpu %d doesn't fit logdev cpus\n", \
++				       __FILE__, __LINE__, cpu);	\
++			}						\
++			x;						\
++		})
++
++int logdev_copy_from_dev(struct logdev_dev *dev, void *buf,
++			 int size);
++int logdev_copy_to_dev(struct logdev_dev *dev, const void *dat,
++		       int size);
++
++static int option_logdev_print(char *opt)
++{
++	logdev_print_on();
++	return 0;
++}
++
++static int option_logdev_switch(char *opt)
++{
++	logdev_switch_on();
++	return 0;
++}
++
++__setup("logdevprint", option_logdev_print);
++__setup("logdevswitch", option_logdev_switch);
++
++/*
++ * The following is to register call back functions to print out
++ * a custom record.
++ */
++
++DEFINE_SPINLOCK(logdev_callbacks_lock);
++
++LIST_HEAD(logdev_callbacks);
++EXPORT_SYMBOL_GPL(logdev_callbacks);
++
++int __kprobes logdev_register_callback(int custom_id,
++				       logdev_callback_func func)
++{
++	struct list_head *p;
++	struct logdev_callback *cb;
++	unsigned long flags;
++	int ret = 0;
++
++	cb = kmalloc(sizeof(*cb),GFP_KERNEL);
++	if (!cb) {
++		ret = -ENOMEM;
++		goto out;
++	}
++
++	spin_lock_irqsave(&logdev_callbacks_lock, flags);
++	list_for_each(p,&logdev_callbacks) {
++		struct logdev_callback *c =
++			list_entry(p, struct logdev_callback, list);
++		if (c->id == custom_id) {
++			spin_unlock_irqrestore(&logdev_callbacks_lock,flags);
++			kfree(cb);
++			ret = -EBUSY;
++			goto out;
++		}
++	}
++
++	cb->id = custom_id;
++	cb->func = func;
++	list_add(&cb->list, &logdev_callbacks);
++	spin_unlock_irqrestore(&logdev_callbacks_lock, flags);
++
++ out:
++	return ret;
++}
++
++int __kprobes logdev_unregister_callback(int custom_id)
++{
++	struct list_head *p;
++	struct logdev_callback *cb;
++	unsigned long flags;
++	int ret = 0;
++
++	spin_lock_irqsave(&logdev_callbacks_lock, flags);
++	list_for_each(p,&logdev_callbacks) {
++		cb = list_entry(p, struct logdev_callback, list);
++		if (cb->id == custom_id)
++			break;
++	}
++	if (p == &logdev_callbacks) {
++		ret = -ENODEV;
++		spin_unlock_irqrestore(&logdev_callbacks_lock,flags);
++		goto out;
++	}
++
++	list_del(&cb->list);
++	spin_unlock_irqrestore(&logdev_callbacks_lock, flags);
++
++	kfree(cb);
++
++ out:
++	return ret;
++}
++
++/*
++ * We have a separate kernel buffer for each CPU.
++ * This buffer is used to copy snprintf data into the ring buffer.
++ */
++static char kern_buffer[LOGDEV_CPUS][PAGE_SIZE];
++
++/*
++ * logdev_record_switch is used to track context switches.
++ *
++ * If the logdev_switch is not set, then this doesn't record. Thus allowing
++ * you to just record the context switches that are needed to record.
++ * Just use logdev_switch_on and logdev_switch_off to turn on this function.
++ *
++ * This is called from schedule, and interrupts should already be turned off.
++ */
++void __kprobes  logdev_record_switch(struct task_struct *prev,
++				     struct task_struct *next)
++{
++	struct logdev_dev *dev;
++	struct logdev_header hdr;
++	struct logdev_switch_struct rs;
++	int cpu = smp_processor_id();
++
++	if (!logdev_switch_ison())
++		return;
++
++	if (check_cpu(cpu))
++		return;
++
++	dev = get_logdev(cpu);
++	if (!dev_running(dev))
++		return;
++
++	WARN_ON(!irqs_disabled());
++
++	rs.t = sched_clock();
++	rs.pid_prev = prev->pid;
++	rs.prev_prio = prev->prio;
++	rs.prev_static_prio = prev->static_prio;
++	rs.prev_normal_prio = prev->normal_prio;
++	rs.prev_state = prev->state;
++	rs.pid_next = next->pid;
++	rs.next_prio = next->prio;
++	rs.next_static_prio = next->static_prio;
++	rs.next_normal_prio = next->normal_prio;
++	memcpy(rs.prev_comm, prev->comm, TASK_COMM_LEN);
++	memcpy(rs.next_comm, next->comm, TASK_COMM_LEN);
++
++	hdr.counter = logdev_counter_inc();
++	hdr.id = LOGDEV_SWITCH_ID;
++	hdr.size = sizeof(hdr) + sizeof(rs);
++
++	spin_lock(&dev->lock);
++	logdev_copy_to_dev(dev,&hdr,sizeof(hdr));
++	logdev_copy_to_dev(dev,&rs,sizeof(rs));
++	spin_unlock(&dev->lock);
++}
++
++/*
++ * logdev_print acts like printk but it writes to the logdev device instead
++ *  of a console.
++ */
++int __kprobes logdev_vprint(const char *str, va_list va)
++{
++	struct logdev_dev *dev;
++	char *buffer;
++	int len=0;
++	struct logdev_header hdr;
++	struct logdev_print rs;
++	unsigned long flags;
++	int cpu;
++
++	local_irq_save(flags);
++
++	cpu = smp_processor_id();
++
++	if (check_cpu(cpu))
++		goto out;
++
++	dev = get_logdev(cpu);
++	if (!dev_running(dev))
++		goto out;
++
++	buffer = kern_buffer[cpu];
++	len = vsnprintf(buffer, PAGE_SIZE, str, va);
++
++	if (len >= PAGE_SIZE) {
++		buffer[PAGE_SIZE-1] = 0;
++		len = PAGE_SIZE;
++	}
++
++	hdr.counter = logdev_counter_inc();
++	hdr.id = LOGDEV_PRINT;
++	hdr.size = sizeof(hdr) + sizeof(rs) + len;
++
++	spin_lock(&dev->lock);
++	logdev_copy_to_dev(dev, &hdr, sizeof(hdr));
++	if (sizeof(rs))
++		logdev_copy_to_dev(dev, &rs, sizeof(rs));
++	logdev_copy_to_dev(dev, buffer, len);
++	spin_unlock(&dev->lock);
++
++ out:
++	local_irq_restore(flags);
++
++	return len;
++}
++
++int  __kprobes logdev_print(const char *str, ...)
++{
++	va_list va;
++	struct logdev_dev *dev;
++	char *buffer;
++	int len=0;
++	struct logdev_header hdr;
++	struct logdev_print rs;
++	unsigned long flags;
++	int cpu;
++
++	local_irq_save(flags);
++
++	cpu = smp_processor_id();
++
++	if (check_cpu(cpu))
++		goto out;
++
++	dev = get_logdev(cpu);
++	if (!dev_running(dev))
++		goto out;
++
++	buffer = kern_buffer[cpu];
++
++	va_start(va,str);
++	len = vsnprintf(buffer, PAGE_SIZE, str, va);
++	va_end(va);
++
++	if (len >= PAGE_SIZE) {
++		buffer[PAGE_SIZE-1] = 0;
++		len = PAGE_SIZE;
++	}
++
++	hdr.counter = logdev_counter_inc();
++	hdr.id = LOGDEV_PRINT;
++	hdr.size = sizeof(hdr) + sizeof(rs) + len;
++
++	spin_lock(&dev->lock);
++	logdev_copy_to_dev(dev, &hdr, sizeof(hdr));
++	if (sizeof(rs))
++		logdev_copy_to_dev(dev, &rs, sizeof(rs));
++	logdev_copy_to_dev(dev, buffer, len);
++	spin_unlock(&dev->lock);
++
++ out:
++	local_irq_restore(flags);
++
++	return len;
++}
++
++/*
++ * logdev_print_time is the same as logdev_print but it attaches a timestamp
++ *  to it.  Saves on doing it yourself.
++ */
++int  __kprobes logdev_print_time(const char *str, ...)
++{
++	struct logdev_dev *dev;
++	char *buffer;
++	va_list va;
++	int len = 0;
++	struct logdev_header hdr;
++	struct logdev_print_time rs;
++	unsigned long flags;
++	int cpu;
++
++	local_irq_save(flags);
++
++	cpu = smp_processor_id();
++
++	if (check_cpu(cpu))
++		goto out;
++
++	dev = get_logdev(cpu);
++	if (!dev_running(dev))
++		goto out;
++
++	buffer = kern_buffer[cpu];
++
++	va_start(va,str);
++	len = vsnprintf(buffer, PAGE_SIZE, str, va);
++	va_end(va);
++
++	if (len >= PAGE_SIZE) {
++		buffer[PAGE_SIZE-1] = 0;
++		len = PAGE_SIZE;
++	}
++
++	rs.t = sched_clock();
++
++	hdr.counter = logdev_counter_inc();
++	hdr.id = LOGDEV_PRINT_TIME;
++	hdr.size = sizeof(hdr) + sizeof(rs) + len;
++
++	spin_lock(&dev->lock);
++	logdev_copy_to_dev(dev, &hdr, sizeof(hdr));
++	logdev_copy_to_dev(dev, &rs, sizeof(rs));
++	logdev_copy_to_dev(dev, buffer, len);
++	spin_unlock(&dev->lock);
++
++ out:
++	local_irq_restore(flags);
++
++	return len;
++}
++
++/*
++ * logdev_print_time_func quickly stores the time, function and line number.
++ * this is really only good for live runs since the function is just a pointer,
++ * so a user land process would need to have the System.map available.
++ */
++int  __kprobes logdev_print_time_func(const char *file, int line,
++				      const char *str, ...)
++{
++	struct logdev_dev *dev;
++	char *buffer;
++	va_list va;
++	int len = 0;
++	struct logdev_header hdr;
++	struct logdev_print_time_func rs;
++	unsigned long flags;
++	int cpu;
++
++	local_irq_save(flags);
++
++	cpu = smp_processor_id();
++
++	if (check_cpu(cpu))
++		goto out;
++
++	dev = get_logdev(cpu);
++	if (!dev_running(dev))
++		goto out;
++
++	buffer = kern_buffer[cpu];
++
++	va_start(va,str);
++	len = vsnprintf(buffer, PAGE_SIZE, str, va);
++	va_end(va);
++
++	if (len >= PAGE_SIZE) {
++		buffer[PAGE_SIZE-1] = 0;
++		len = PAGE_SIZE;
++	}
++
++	rs.t = sched_clock();
++	rs.file = file;
++	rs.line = line;
++
++	hdr.counter = logdev_counter_inc();
++	hdr.id = LOGDEV_PRINT_TIME_FUNC;
++	hdr.size = sizeof(hdr) + sizeof(rs) + len;
++
++	spin_lock(&dev->lock);
++	logdev_copy_to_dev(dev, &hdr, sizeof(hdr));
++	logdev_copy_to_dev(dev, &rs, sizeof(rs));
++	logdev_copy_to_dev(dev, buffer, len);
++	spin_unlock(&dev->lock);
++
++ out:
++	local_irq_restore(flags);
++
++	return len;
++}
++
++/*
++ * If you feel like recording your own data, you can use logdev_record.
++ *  just pass your own id, size and data.  The size is the size of
++ *  the data being passed and not the size actually being written to the
++ *  device.
++ *  That is already calculated.
++ *
++ * This record will be added as LOGDEV_CUSTOM and the given id will be the
++ *  custom id.
++ *
++ * We use total_size so that we can avoid multiple copies to get the data
++ * into the buffer.
++ */
++int  __kprobes logdev_record(int id, int total_size, const void *data,
++			     int size, ...)
++{
++	struct logdev_dev *dev;
++	struct logdev_header hdr;
++	struct logdev_custom rs;
++	unsigned long flags;
++	int tsize = size;
++	int cpu;
++	int ret = 0;
++	va_list ap;
++
++	if (!data)
++		return -EINVAL;
++
++	local_irq_save(flags);
++
++	cpu = smp_processor_id();
++
++	if (check_cpu(cpu))
++		goto out;
++
++	dev = get_logdev(cpu);
++	if (!dev_running(dev))
++		goto out;
++
++	hdr.counter = logdev_counter_inc();
++	hdr.id = LOGDEV_CUSTOM;
++	hdr.size = sizeof(hdr) + sizeof(rs) + total_size;
++
++	rs.id = id;
++
++	spin_lock(&dev->lock);
++	logdev_copy_to_dev(dev, &hdr, sizeof(hdr));
++	logdev_copy_to_dev(dev, &rs, sizeof(rs));
++	va_start(ap, size);
++	do {
++		ret = logdev_copy_to_dev(dev, data, size);
++		if (tsize > total_size)
++			break;
++		data = va_arg(ap, void *);
++		if (data) {
++			size = va_arg(ap, int);
++			tsize += size;
++			if (tsize > total_size)
++				size -= tsize - total_size;
++		}
++	} while (data);
++	va_end(ap);
++
++	/*
++	 * If total_size didn't equal all sizes, then write padding.
++	 */
++	while (tsize < total_size) {
++		int cnt = total_size - tsize;
++		if (cnt > PAGE_SIZE)
++			cnt = PAGE_SIZE;
++		logdev_copy_to_dev(dev, kern_buffer[cpu], cnt);
++		tsize += cnt;
++	}
++
++	spin_unlock(&dev->lock);
++
++out:
++	local_irq_restore(flags);
++
++	return ret;
++}
++
++/*
++ * If you just want to write into the buffer using your own methods, then this
++ * is perfectly fine. Just pass in your data and the size of the data being
++ * passed in. You can read it out later with logdev_record_read. But you wont
++ * have the benefits of keeping integrity when the buffer overflows.
++ */
++int __kprobes logdev_record_write(const char *data, int size)
++{
++	struct logdev_dev *dev;
++	int ret;
++	unsigned long flags;
++	int cpu;
++
++	local_irq_save(flags);
++
++	cpu = smp_processor_id();
++	dev = get_logdev(cpu);
++	if (!dev_running(dev)) {
++		local_irq_restore(flags);
++		return 0;
++	}
++
++	spin_lock(&dev->lock);
++	ret = logdev_copy_to_dev(dev, data, size);
++	spin_unlock(&dev->lock);
++	local_irq_restore(flags);
++
++	return ret;
++}
++
++/*
++ * logdev_record_read reads some data from the logdev device no matter what
++ * it was.
++ */
++int __kprobes logdev_record_read(void *data, int size)
++{
++	struct logdev_dev *dev;
++	int ret;
++	unsigned long flags;
++	int cpu;
++
++	local_irq_save(flags);
++
++	cpu = smp_processor_id();
++	dev = get_logdev(cpu);
++	if (!dev_running(dev)) {
++		local_irq_restore(flags);
++		return 0;
++	}
++
++	spin_lock(&dev->lock);
++	ret = logdev_copy_from_dev(dev, data, size);
++	spin_unlock(&dev->lock);
++	local_irq_restore(flags);
++
++	return ret;
++}
++
++/*
++ * sched_clock isn't exported, so we export it ourselves.
++ */
++
++int in_logdump;
++EXPORT_SYMBOL_GPL(in_logdump);
++
++static int __kprobes get_next_cpus(struct logdev_header *hdr,
++				   int *_this_cpu, int *_next_cpu)
++{
++	int cpu;
++	int f = 0;
++	struct logdev_dev *dev;
++	int this_cpu = -1;
++	int next_cpu = -1;
++	int last_cpu = 1;
++
++	for_each_present_cpu(cpu) {
++
++		if (cpu >= LOGDEV_CPUS)
++			break;
++
++		dev = get_logdev(cpu);
++		if (!dev_suspended(dev))
++			continue;
++
++		/* Skip empty buffers */
++		if (hdr[cpu].id == LOGDEV_HDR_DONE)
++			continue;
++
++		/*
++		 * If the header is corrupted, just pick it
++		 * as if this buffer was the last. The corruption
++		 * will break out of the loop in the flush.
++		 */
++		if  (!logdev_valid(hdr[cpu].id)) {
++			this_cpu = cpu;
++			next_cpu = -1;
++			last_cpu = 1;
++			break;
++		}
++
++		/*
++		 * If this is the first cpu, then use it, otherwise,
++		 * compare.
++		 */
++		if (!f ||
++		    compare_cnt(hdr[cpu].counter,
++				hdr[this_cpu].counter) < 0) {
++			if (!f)
++				f = 1;
++			else {
++				/* we already have the first count */
++				next_cpu = this_cpu;
++				last_cpu = 0;
++				f = 2;
++			}
++			this_cpu = cpu;
++		} else if (f == 1 ||
++			   compare_cnt(hdr[cpu].counter,
++				       hdr[next_cpu].counter) < 0) {
++			f = 2;
++			next_cpu = cpu;
++			last_cpu = 0;
++		}
++	}
++
++	*_this_cpu = this_cpu;
++	*_next_cpu = next_cpu;
++
++	return last_cpu;
++}
++
++static int __kprobes process_log(struct logdev_dev *dev,
++				 struct logdev_header *hdr,
++				 int cpu)
++{
++	int i;
++	int r;
++	int count;
++	int corrupt = 0;
++	int line = 0;
++	int newline = 1;
++	unsigned long long t;
++	unsigned long usec_rem;
++	unsigned long secs;
++	const char *file = NULL;
++
++	r = sizeof(hdr[0]);
++
++	switch (hdr[cpu].id) {
++
++	case LOGDEV_PRINT_TIME_FUNC:
++	{
++		struct logdev_print_time_func rs;
++		int cap = sizeof(rs) - sizeof(struct logdev_print_time);
++
++		logdev_copy_from_dev(dev, &rs, cap);
++		file = rs.file;
++		line = rs.line;
++
++		r += cap;
++
++		/* fall through */
++	}
++
++	case LOGDEV_PRINT_TIME:
++	{
++		struct logdev_print_time rs;
++
++		logdev_copy_from_dev(dev, &rs, sizeof(rs));
++
++		if (newline) {
++			t = rs.t;
++			usec_rem = do_div(t, 1000000000)/1000;
++			secs = (unsigned long)t;
++
++			printk("[%5lu.%06lu] ",
++			       secs, usec_rem);
++		}
++
++		r += sizeof(rs);
++
++		/* fall through */
++	}
++
++	case LOGDEV_PRINT:
++		if (newline) {
++			printk("cpu:%d ",cpu);
++
++			if (hdr[cpu].id == LOGDEV_PRINT_TIME_FUNC)
++				printk("%s:%d ",file, line);
++		}
++		for (i=r; i < hdr[cpu].size; i += r) {
++			count = hdr[cpu].size - i;
++			if (count > PAGE_SIZE-1)
++				count = PAGE_SIZE-1;
++			r = logdev_copy_from_dev(dev, kern_buffer[cpu], count);
++			if (r < 0)
++				break;
++			kern_buffer[cpu][count] = 0;
++			printk("%s", kern_buffer[cpu]);
++			newline = (count) &&
++				(kern_buffer[cpu][count - 1] != '\n') ? 0 : 1;
++		}
++		break;
++
++	case  LOGDEV_SWITCH_ID:
++	{
++		struct logdev_switch_struct rs;
++
++		printk(">>>> IN LOGDEV SWITCH <<<< cpu:%d \n", cpu);
++
++		logdev_copy_from_dev(dev,&rs,sizeof(rs));
++
++		t = rs.t;
++		usec_rem = do_div(t, 1000000000)/1000;
++		secs = (unsigned long)t;
++
++		printk("CPU=%d [%5lu.%06lu] ",
++		       cpu, secs,usec_rem);
++
++		printk("%s:%d(%d:%d:%d) -->> ",
++		       rs.prev_comm,
++		       rs.pid_prev,
++		       rs.prev_prio,
++		       rs.prev_static_prio,
++		       rs.prev_normal_prio);
++
++		printk("%s:%d(%d:%d:%d)\n",
++		       rs.next_comm,
++		       rs.pid_next,
++		       rs.next_prio,
++		       rs.next_static_prio,
++		       rs.next_normal_prio);
++
++		break;
++	}
++
++	case LOGDEV_CUSTOM:
++	{
++		struct list_head *p;
++		struct logdev_custom custom;
++		int len;
++
++		logdev_copy_from_dev(dev,&custom,sizeof(custom));
++
++		spin_lock(&logdev_callbacks_lock);
++		i = len = hdr[cpu].size - sizeof(hdr[0]) - sizeof(custom);
++		if (i > PAGE_SIZE)
++			i = PAGE_SIZE;
++
++		/* change size to be what the record size is. */
++		hdr[cpu].size = i;
++
++		logdev_copy_from_dev(dev,kern_buffer[cpu],i);
++
++		list_for_each(p, &logdev_callbacks) {
++			struct logdev_callback *cb =
++				list_entry(p, struct logdev_callback, list);
++			if (cb->id == custom.id) {
++				cb->func(&hdr[cpu], &custom, cpu,
++					 kern_buffer[cpu]);
++				break;
++			}
++		}
++
++		/* No record should be bigger than a page. Ignore all else */
++		while (i < len) {
++			int count = len - i;
++			if (count > PAGE_SIZE)
++				count = PAGE_SIZE;
++			logdev_copy_from_dev(dev,kern_buffer[cpu],count);
++			i += count;
++		}
++
++		/* check if we didn't find a call back */
++		if (p == &logdev_callbacks) {
++			printk("skipping! LOGDEV_CUSTOM id %d\n",custom.id);
++		}
++
++		spin_unlock(&logdev_callbacks_lock);
++		break;
++	}
++	default:
++		corrupt = 1;
++		if (!dev->corrupted) {
++			dev->corrupted = 1;
++			printk(">>>>> Unknown logdev header, cpu %d buffer "
++			       "may be corrupted from this point on\n", cpu);
++		} else
++			printk("CPU %d >>> corrupted header <<<\n", cpu);
++		break;
++	}
++
++	return corrupt;
++}
++
++static int __kprobes flush_buffer(struct logdev_dev *dev,
++				  struct logdev_header *hdr,
++				  int cpu, int next_cpu, int last_cpu)
++{
++	int corrupt = 0;
++	int more_work = 1;
++
++	while (last_cpu || compare_cnt(hdr[cpu].counter,
++				       hdr[next_cpu].counter) <= 0) {
++
++		BUG_ON(hdr[cpu].id == LOGDEV_HDR_DONE);
++
++		/*
++		 *  Lets not set off watchdogs.
++		 */
++		touch_nmi_watchdog();
++
++		corrupt = process_log(dev, hdr, cpu);
++
++		/* Read the next header for this */
++		if ((logdev_copy_from_dev(dev,&hdr[cpu],sizeof(hdr[0])))
++		    != sizeof(hdr[0])) {
++			hdr[cpu].id = LOGDEV_HDR_DONE;
++			if (last_cpu)
++				more_work = 0;
++			break;
++		}
++		/*
++		 * if we have a corrupted header, then stop this buffer flush.
++		 */
++		if (corrupt)
++			break;
++	}
++
++	return more_work;
++}
++
++void __kprobes logdev_dump(void)
++{
++	int save_switch;
++	int save_print;
++	struct logdev_dev *dev;
++	struct logdev_header hdr[LOGDEV_CPUS];
++	static int started  = 0;
++	int do_lock = 1;
++	extern int in_logdump;
++	unsigned long flags;
++	int more_work = 0;
++	int cpu;
++
++	/*
++	 * We don't care about race conditions with this started variable.
++	 * It only exists to keep dumps a little cleaner. If two dumps get
++	 * through at the same time, it doesn't hurt.
++	 */
++	if (started)
++		return;
++
++	started = 1;
++
++	/*
++	 * Because of the started race, we also use in_logdump just for
++	 * reference.
++	 */
++	in_logdump++;
++
++	if (oops_in_progress)
++		do_lock = 0;
++
++	local_irq_save(flags);
++
++	/*
++	 * This is for debugging, so we don't want to reintroduce more output.
++	 */
++	save_switch = logdev_switch_ison();
++	save_print = logdev_print_ison();
++	logdev_switch_off();
++	logdev_print_off();
++
++	printk("****** Starting Logdev Dump ********\n");
++
++	/*
++	 * Read all the available headers for each CPU.
++	 */
++	for_each_present_cpu(cpu) {
++
++		if (cpu >= LOGDEV_CPUS)
++			break;
++
++		dev = get_logdev(cpu);
++		if (!dev_running(dev))
++			continue;
++
++		if (dev->corrupted) {
++			printk("Warning buffer for CPU %d is corrupted\n",
++			       cpu);
++			/* will be set when corrupted part is read. */
++			dev->corrupted = 0;
++		}
++
++		/*
++		 * Long time to hold the spin locks, but hey it's just
++		 * debugging.
++		 */
++		spin_lock(&dev->lock);
++
++		/*
++		 * Try to limit the amount added while reading
++		 * this buffer, suspend the buffer. (redundant but also good
++		 * for accounting)
++		 */
++		dev->init = LOGDEV_DEV_SUSPENDED;
++
++		if ((logdev_copy_from_dev(dev, &hdr[cpu], sizeof(hdr[0])))
++		    == sizeof(hdr[0]))
++			/* record that we have a buffer to work with. */
++			more_work = 1;
++		else
++			/* record that the buffer is empty */
++			hdr[cpu].id = LOGDEV_HDR_DONE;
++	}
++
++	while (more_work) {
++		int this_cpu;
++		int next_cpu;
++		int last_cpu;
++
++		/*
++		 * Find the cpu to work with that has the earliest counter,
++		 * and also the cpu with the next counter.
++		 */
++		last_cpu = get_next_cpus(hdr, &this_cpu, &next_cpu);
++
++		cpu = this_cpu;
++		dev = get_logdev(cpu);
++
++		BUG_ON(this_cpu < 0);
++		BUG_ON(!last_cpu && next_cpu < 0);
++		BUG_ON(dev->init != LOGDEV_DEV_SUSPENDED);
++		BUG_ON(hdr[cpu].id == LOGDEV_HDR_DONE);
++
++		/*
++		 * Now print out all from this buffer until we reach
++		 * the next cpu. If this is the last buffer to write
++		 * then finish the buffer.
++		 */
++		more_work = flush_buffer(dev, hdr, cpu, next_cpu, last_cpu);
++	}
++
++	printk( ">>>>> done <<<<<\n");
++
++	for_each_present_cpu(cpu) {
++		if (cpu >= LOGDEV_CPUS)
++			break;
++		dev = get_logdev(cpu);
++		if (dev_suspended(dev)) {
++		    dev->init = LOGDEV_DEV_RUNNING;
++		    /* buffers should be emptied */
++		    dev->corrupted = 0;
++		    spin_unlock(&dev->lock);
++		}
++
++	}
++	if (save_print)
++		logdev_print_on();
++	if (save_switch)
++		logdev_switch_on();
++
++	local_irq_restore(flags);
++	started = 0;
++	in_logdump--;
++}
++
++static int __kprobes logdev_panic_handler(struct notifier_block *this,
++					  unsigned long event,
++					  void *unused)
++{
++	logdev_dump();
++	return NOTIFY_OK;
++}
++
++static struct notifier_block logdev_panic_notifier = {
++	.notifier_call	= logdev_panic_handler,
++	.next		= NULL,
++	.priority	= 150	/* priority: INT_MAX >= x >= 0 */
++};
++
++/*
++ * Unfortunately, the die handlers have no way to unregister, so
++ * we don't want to do this if we are a module. We would if we could
++ * find a way to clean ourselves up when unloaded.
++ */
++int __kprobes logdev_die_handler(struct notifier_block *self,
++				 unsigned long val,
++				 void *data)
++{
++	switch (val) {
++	case DIE_OOPS:
++		logdev_dump();
++		break;
++	default:
++		break;
++	}
++	return NOTIFY_OK;
++}
++
++static struct notifier_block logdev_die_notifier = {
++	.notifier_call = logdev_die_handler,
++	.priority = 200
++};
++
++static int logdev_open_generic(struct inode *inode, struct file *filp)
++{
++	filp->private_data = inode->u.generic_ip;
++	return 0;
++}
++
++
++static ssize_t logdev_debug_sw_read(struct file *filp, char __user *ubuf,
++				size_t cnt, loff_t *ppos)
++{
++	long bit = (long)(filp->private_data);
++	char buf[16];
++	int var = !!(logdev_switches & (1<<bit));
++	int r;
++
++	r = sprintf(buf, "%d\n", var);
++	return simple_read_from_buffer(ubuf, cnt, ppos,
++				       buf, r);
++}
++
++static ssize_t logdev_debug_sw_write(struct file *filp,
++				     const char __user *ubuf,
++				     size_t cnt, loff_t *ppos)
++{
++	int val;
++	unsigned long bit = (long)(filp->private_data);
++	char buf[16];
++
++	/* We control what bit is, so it had better be right! */
++	if (bit >= LOGDEV_SW_BITS)
++		BUG();
++
++	bit = (1 << bit);
++
++	if (cnt > 15)
++		cnt = 15;
++
++	if(copy_from_user(&buf, ubuf, cnt))
++		return -EFAULT;
++
++	buf[cnt] = 0;
++
++	val = simple_strtoul(buf, NULL, 10) ? bit : 0;
++
++	logdev_switches = (logdev_switches & ~bit) | val;
++
++	filp->f_pos += cnt;
++
++	return cnt;
++}
++
++static struct file_operations logdev_debug_sw_fops = {
++	.open = logdev_open_generic,
++	.read = logdev_debug_sw_read,
++	.write = logdev_debug_sw_write,
++};
++
++static ssize_t logdev_debug_read(struct file *filp, char __user *ubuf,
++				size_t cnt, loff_t *ppos)
++{
++	unsigned long *data = filp->private_data;
++	char buf[16];
++	int r;
++
++	r = sprintf(buf, "%0lx\n", *data);
++	return simple_read_from_buffer(ubuf, cnt, ppos,
++				       buf, r);
++}
++
++static ssize_t logdev_debug_write(struct file *filp, char __user *ubuf,
++				  size_t cnt, loff_t *ppos)
++{
++	unsigned long *data = filp->private_data;
++	char buf[10];
++	unsigned long val;
++
++	if (cnt > 9)
++		cnt = 9;
++
++	if(copy_from_user(&buf, ubuf, cnt))
++		return -EFAULT;
++
++	buf[cnt] = 0;
++
++	val = simple_strtoul(buf, NULL, 10);
++
++	*data = val;
++
++	filp->f_pos += cnt;
++
++	return cnt;
++}
++
++static struct file_operations logdev_debug_rdonly_fops = {
++	.open = logdev_open_generic,
++	.read = logdev_debug_read,
++};
++
++static struct file_operations logdev_debug_rdwr_fops = {
++	.open = logdev_open_generic,
++	.read = logdev_debug_read,
++	.read = logdev_debug_write,
++};
++
++struct dentry *logdev_d;
++EXPORT_SYMBOL_GPL(logdev_d);
++
++static int logdev_debugfs_init(void)
++{
++	struct dentry *d_switches;
++	struct dentry *d_switch;
++	struct dentry *d_print;
++
++	logdev_d = debugfs_create_dir("logdev", NULL);
++	if (!logdev_d) {
++		printk("can't create logdev debugfs\n");
++		return 0;
++	}
++	if (logdev_d == ERR_PTR(-ENODEV)) {
++		printk("debugfs not configured in. Can't access logdev "
++		       "from userspace\n");
++		logdev_d = NULL;
++		return 0;
++	}
++
++	d_switches = debugfs_create_file("switches", 0444, logdev_d,
++					 &logdev_switches,
++					 &logdev_debug_rdonly_fops);
++	d_switch = debugfs_create_file("switch", 0644, logdev_d,
++				       (void*)LOGDEV_SW_SWITCH_ENABLED,
++				       &logdev_debug_sw_fops);
++	d_print = debugfs_create_file("print", 0644, logdev_d,
++				      (void*)LOGDEV_SW_PRINT_ENABLED,
++				      &logdev_debug_sw_fops);
++	return 0;
++}
++
++extern void logdev_cleanup_priv(struct logdev_dev *dev);
++
++static void __exit logdev_cleanup(void)
++{
++	struct logdev_dev *dev;
++	int i;
++
++	atomic_notifier_chain_unregister(&panic_notifier_list,
++					 &logdev_panic_notifier);
++
++	for (i=0; i < LOGDEV_CPUS; i++) {
++		dev = get_logdev(i);
++		logdev_cleanup_priv(dev);
++	}
++}
++
++extern int initialize_logdev(void);
++
++int __init logdev_init(void)
++{
++	int res = 0;
++	int cpu;
++	struct logdev_dev *dev;
++	static int init = 0;
++
++	if (init)
++		return 0;
++
++	init = 1;
++
++	printk("Logdevice: copyright Steven Rostedt, Kihon Technologies Inc."
++	       " (Version %s)\n",
++	       logdev_version);
++
++	for_each_present_cpu(cpu) {
++
++		if (cpu >= LOGDEV_CPUS) {
++			printk(KERN_WARNING "More present cpus (%d) than "
++			       "NR_CPUS (%d)\n",
++			       cpu,LOGDEV_CPUS);
++			break;
++		}
++
++		printk("Initializing logdev for cpu: %d\n",cpu);
++
++		dev = get_logdev(cpu);
++		spin_lock_init(&dev->lock);
++		dev->init = LOGDEV_DEV_UP;
++	}
++
++	if (initialize_logdev() < 0)
++		goto fail;
++
++	atomic_notifier_chain_register(&panic_notifier_list,
++				       &logdev_panic_notifier);
++
++	register_die_notifier(&logdev_die_notifier);
++
++	res = 0;
++
++#ifdef CONFIG_LOGDEV_PRINT_ENABLED
++	logdev_print_on();
++#endif
++#ifdef CONFIG_LOGDEV_SWITCH_ENABLED
++	logdev_switch_on();
++#endif
++
++out:
++	return res;
++
++fail:
++	logdev_cleanup();
++	goto out;
++}
++
++EXPORT_SYMBOL_GPL(logdev_record_switch);
++EXPORT_SYMBOL_GPL(logdev_print);
++EXPORT_SYMBOL_GPL(logdev_print_time);
++EXPORT_SYMBOL_GPL(logdev_print_time_func);
++EXPORT_SYMBOL_GPL(logdev_record);
++EXPORT_SYMBOL_GPL(logdev_record_write);
++EXPORT_SYMBOL_GPL(logdev_record_read);
++EXPORT_SYMBOL_GPL(logdev_dump);
++
++core_initcall(logdev_init);
++postcore_initcall(logdev_debugfs_init);
+Index: linux-2.6.18/drivers/char/Makefile
+===================================================================
+--- linux-2.6.18.orig/drivers/char/Makefile	2006-09-25 23:38:53.000000000 -0400
++++ linux-2.6.18/drivers/char/Makefile	2006-10-03 23:11:20.000000000 -0400
+@@ -96,6 +96,11 @@ obj-$(CONFIG_DRM)		+= drm/
+ obj-$(CONFIG_PCMCIA)		+= pcmcia/
+ obj-$(CONFIG_IPMI_HANDLER)	+= ipmi/
+ 
++obj-$(CONFIG_LOGDEV)		+= logdev.o
++obj-$(CONFIG_LOGDEV_PROBE)	+= logdev_probe.o
++obj-$(CONFIG_LOGDEV_RINGBUF)	+= logdev_ringbuf.o
++obj-$(CONFIG_LOGDEV_RELAY)	+= logdev_relay.o
++
+ obj-$(CONFIG_HANGCHECK_TIMER)	+= hangcheck-timer.o
+ obj-$(CONFIG_TCG_TPM)		+= tpm/
+ 
+Index: linux-2.6.18/drivers/char/sysrq.c
+===================================================================
+--- linux-2.6.18.orig/drivers/char/sysrq.c	2006-09-25 23:38:53.000000000 -0400
++++ linux-2.6.18/drivers/char/sysrq.c	2006-09-25 23:38:57.000000000 -0400
+@@ -30,6 +30,7 @@
+ #include <linux/suspend.h>
+ #include <linux/writeback.h>
+ #include <linux/buffer_head.h>		/* for fsync_bdev() */
++#include <linux/logdev.h>
+ #include <linux/swap.h>
+ #include <linux/spinlock.h>
+ #include <linux/vt_kern.h>
+@@ -41,6 +42,7 @@
+ /* Whether we react on sysrq keys or just ignore them */
+ int sysrq_enabled = 1;
+ 
++/* Loglevel sysrq handler */
+ static void sysrq_handle_loglevel(int key, struct pt_regs *pt_regs,
+ 				  struct tty_struct *tty)
+ {
+@@ -147,6 +149,41 @@ static struct sysrq_key_op sysrq_mountro
+ 	.enable_mask	= SYSRQ_ENABLE_REMOUNT,
+ };
+ 
++static void sysrq_handle_dumplog(int key, struct pt_regs *pt_regs,
++				 struct tty_struct *tty)
++{
++	logdev_dump();
++}
++
++static struct sysrq_key_op sysrq_dumplog_op = {
++	.handler	= sysrq_handle_dumplog,
++	.help_msg	= "Dumplog",
++	.action_msg	= "Dump logdev to serial",
++};
++
++static void sysrq_handle_togglelogswitch(int key, struct pt_regs *pt_regs,
++                                         struct tty_struct *tty)
++{
++        /*
++         * Not so atomic, but we really don't care!
++         */
++        if (logdev_switch_ison()) {
++                logdev_switch_off();
++                printk("logdev_switch now off\n");
++        } else {
++                logdev_switch_on();
++                printk("logdev_switch now on\n");
++        }
++}
++
++static struct sysrq_key_op sysrq_togglelogdevswitch_op = {
++	.handler	= sysrq_handle_togglelogswitch,
++	.help_msg	= "Togglelogswitch",
++	.action_msg	= "Toggling logdev_switch",
++};
++
++/* END SYNC SYSRQ HANDLERS BLOCK */
++
+ #ifdef CONFIG_LOCKDEP
+ static void sysrq_handle_showlocks(int key, struct pt_regs *pt_regs,
+ 				struct tty_struct *tty)
+@@ -295,8 +332,8 @@ static struct sysrq_key_op *sysrq_key_ta
+ 	&sysrq_crashdump_op,		/* c */
+ 	&sysrq_showlocks_op,		/* d */
+ 	&sysrq_term_op,			/* e */
+-	&sysrq_moom_op,			/* f */
+-	NULL,				/* g */
++        &sysrq_togglelogdevswitch_op,	/* f */
++        &sysrq_dumplog_op,		/* g */
+ 	NULL,				/* h */
+ 	&sysrq_kill_op,			/* i */
+ 	NULL,				/* j */
+@@ -314,7 +351,7 @@ static struct sysrq_key_op *sysrq_key_ta
+ 	&sysrq_mountro_op,		/* u */
+ 	/* May be assigned at init time by SMP VOYAGER */
+ 	NULL,				/* v */
+-	NULL,				/* w */
++	&sysrq_moom_op,			/* w */
+ 	NULL,				/* x */
+ 	NULL,				/* y */
+ 	NULL				/* z */
+Index: linux-2.6.18/arch/i386/mm/fault.c
+===================================================================
+--- linux-2.6.18.orig/arch/i386/mm/fault.c	2006-09-25 23:38:53.000000000 -0400
++++ linux-2.6.18/arch/i386/mm/fault.c	2006-09-25 23:38:57.000000000 -0400
+@@ -28,6 +28,7 @@
+ #include <asm/desc.h>
+ #include <asm/kdebug.h>
+ 
++#include <linux/logdev.h>
+ extern void die(const char *,struct pt_regs *,long);
+ 
+ #ifdef CONFIG_KPROBES
+@@ -547,6 +548,8 @@ no_context:
+ 	bust_spinlocks(1);
+ 
+ 	if (oops_may_print()) {
++		lfnprint("BUG!");
++		logdev_print_off();
+ 	#ifdef CONFIG_X86_PAE
+ 		if (error_code & 16) {
+ 			pte_t *pte = lookup_address(address);
+Index: linux-2.6.18/drivers/char/logdev_priv.h
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ linux-2.6.18/drivers/char/logdev_priv.h	2006-10-03 17:21:26.000000000 -0400
+@@ -0,0 +1,48 @@
++#ifndef _LOG_DEV_PRIV_H
++#define _LOG_DEV_PRIV_H
++
++/* Random numbers out of my head used for MAGIC */
++#define LOGDEV_CUSTOM 0x1afb
++#define LOGDEV_SWITCH_ID 0x2afc
++#define LOGDEV_PRINT 0x4adb
++#define LOGDEV_PRINT_TIME 0x4adc
++#define LOGDEV_PRINT_TIME_FUNC 0x4add
++#define LOGDEV_HDR_DONE 0xbbbb  /* internal use only */
++
++static inline int logdev_valid(int id)
++{
++	switch (id) {
++	case LOGDEV_CUSTOM:
++	case LOGDEV_SWITCH_ID:
++	case LOGDEV_PRINT:
++	case LOGDEV_PRINT_TIME:
++	case LOGDEV_PRINT_TIME_FUNC:
++		return 1;
++	}
++	return 0;
++}
++
++struct logdev_dev {
++	int init;
++	int corrupted;
++	spinlock_t lock;
++	void *priv;
++};
++
++DECLARE_PER_CPU(struct logdev_dev, logdev_dev);
++#define get_logdev(cpu) &per_cpu(logdev_dev, cpu)
++
++#define LOGDEV_CPUS NR_CPUS
++
++#define LOGDEV_DEV_UNINITALIZED 0
++#define LOGDEV_DEV_RUNNING 1
++#define LOGDEV_DEV_SUSPENDED 2
++#define LOGDEV_DEV_UP 3
++
++#define dev_running(dev) ((dev)->init == LOGDEV_DEV_RUNNING)
++#define dev_suspended(dev) ((dev)->init == LOGDEV_DEV_SUSPENDED)
++#define dev_up(dev) ((dev)->init == LOGDEV_DEV_UP)
++
++extern struct dentry *logdev_d;
++
++#endif
+Index: linux-2.6.18/drivers/char/logdev_relay.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ linux-2.6.18/drivers/char/logdev_relay.c	2006-10-03 17:22:07.000000000 -0400
+@@ -0,0 +1,175 @@
++/*
++ * logdev_relay.c
++ *
++ * Copyright (C) 2006 Tom Zanussi (zanussi@us.ibm.com), IBM Corp
++ *
++ * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; version 2 of the License (not later!)
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++ *
++ * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++ */
++#include <linux/init.h>
++#include <linux/spinlock.h>
++#include <linux/slab.h>
++#include <linux/time.h>
++#include <linux/kthread.h>
++#include <linux/syscalls.h>
++#include <linux/cpumask.h>
++#include <linux/notifier.h>
++#include <linux/nmi.h>
++#include <linux/delay.h>
++#include <linux/relay.h>
++#include <linux/logdev.h>
++#include <linux/debugfs.h>
++
++#include "logdev_priv.h"
++
++static int pages = CONFIG_LOGDEV_PAGES;
++
++/*
++ * Relay structures
++ */
++struct logdev_dev_priv {
++	int cpu;
++	struct rchan_buf *buf;
++	loff_t read_pos;
++};
++DEFINE_PER_CPU(struct logdev_dev_priv, logdev_dev_priv);
++#define get_logdev_priv(cpu) &per_cpu(logdev_dev_priv, cpu)
++
++static struct rchan *logdev_chan;
++
++DEFINE_PER_CPU(struct logdev_dev_priv, logdev_dev_priv);
++#define get_logdev_priv(cpu) &per_cpu(logdev_dev_priv, cpu)
++
++int logdev_copy_from_dev(struct logdev_dev *ldev, void *buffer, int size)
++{
++	struct logdev_dev_priv *dev = ldev->priv;
++	struct rchan_buf *buf = dev->buf;
++
++	return relay_kernel_read(buffer, size, &dev->read_pos, buf);
++}
++
++int logdev_copy_to_dev(struct logdev_dev *ldev, const void *dat,
++			      int size)
++{
++	struct logdev_dev_priv *dev = ldev->priv;
++	struct rchan_buf *buf = dev->buf;
++
++	relay_write(buf->chan, dat, size);
++
++	return size;
++}
++
++static int logdev_subbuf_start(struct rchan_buf *buf,
++			       void *subbuf,
++			       void *prev_subbuf,
++			       unsigned int prev_padding)
++{
++	return 1;
++}
++
++
++/*
++ * file_create() callback.  Creates relay file in debugfs.
++ */
++static struct dentry *create_buf_file_handler(const char *filename,
++					      struct dentry *parent,
++					      int mode,
++					      struct rchan_buf *buf,
++					      int *is_global)
++{
++	struct dentry *buf_file;
++
++	buf_file = debugfs_create_file(filename, mode, parent, buf,
++				       &relay_file_operations);
++
++	return buf_file;
++}
++
++/*
++ * file_remove() default callback.  Removes relay file in debugfs.
++ */
++static int remove_buf_file_handler(struct dentry *dentry)
++{
++	debugfs_remove(dentry);
++
++	return 0;
++}
++
++/*
++ * relay callbacks
++ */
++static struct rchan_callbacks logdev_relay_callbacks =
++{
++	.subbuf_start = logdev_subbuf_start,
++	.create_buf_file = create_buf_file_handler,
++	.remove_buf_file = remove_buf_file_handler,
++};
++
++int initialize_logdev(void)
++{
++	/*
++	 * debugfs may not be ready when we initialize
++	 * logdev. So postpone this later.
++	 */
++	return 0;
++}
++
++void logdev_cleanup_priv(struct logdev_dev *ldev)
++{
++	if (logdev_chan)
++		relay_close(logdev_chan);
++}
++
++int __init logdev_misc_init(void)
++{
++	struct logdev_dev *ldev;
++	struct logdev_dev_priv *dev;
++	struct rchan *chan;
++	int subbufs;
++	int cpu;
++
++	/* round up */
++	subbufs = (pages + 1) >> 1;
++
++	chan = relay_open("dev", logdev_d,
++			  PAGE_SIZE * 2,
++			  subbufs,
++			  &logdev_relay_callbacks);
++	if (!chan)
++		return -1;
++
++	for_each_present_cpu(cpu) {
++
++		if (cpu >= LOGDEV_CPUS)
++			break;
++
++		ldev = get_logdev(cpu);
++		dev = get_logdev_priv(cpu);
++		dev->cpu = cpu;
++		ldev->priv = dev;
++
++		dev->cpu = cpu;
++		dev->buf = chan->buf[cpu];
++		ldev->init = LOGDEV_DEV_RUNNING;
++	}
++
++	return 0;
++}
++
++/* just needs to be after postcore init */
++arch_initcall(logdev_misc_init);
++
+Index: linux-2.6.18/drivers/char/logdev_ringbuf.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ linux-2.6.18/drivers/char/logdev_ringbuf.c	2006-10-03 22:12:32.000000000 -0400
+@@ -0,0 +1,637 @@
++/*
++ * logdev_ringbuf.c
++ *
++ * Copyright (C) 2004-2006 Steven Rostedt <steven.rostedt@kihontech.com>
++ *
++ * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; version 2 of the License (not later!)
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++ *
++ * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++ */
++#include <linux/init.h>
++#include <linux/spinlock.h>
++#include <linux/slab.h>
++#include <linux/mutex.h>
++#include <linux/wait.h>
++#include <linux/proc_fs.h>
++#include <linux/time.h>
++#include <linux/netpoll.h>
++#include <linux/miscdevice.h>
++#include <linux/skbuff.h>
++#include <linux/kthread.h>
++#include <linux/syscalls.h>
++#include <linux/cpumask.h>
++#include <linux/notifier.h>
++#include <linux/nmi.h>
++#include <linux/delay.h>
++#include <linux/seq_file.h>
++#include <linux/bootmem.h>
++#include <linux/debugfs.h>
++#include <linux/kprobes.h>
++#include <linux/logdev.h>
++
++#include <asm/uaccess.h>
++
++#include "logdev_priv.h"
++
++/*
++ * If need be, we can be placed really early before memory
++ * is locate, so if a flag is set, use bootmem otherwise use kmalloc.
++ * The earliest we can call logdev_init is just after smp_prepare_boot_cpu.
++ */
++#undef LOGDEV_USE_BOOTMEM
++
++static int pages = CONFIG_LOGDEV_PAGES;
++
++static void *logdev_malloc(int size)
++{
++#ifndef LOGDEV_USE_BOOTMEM
++	return kmalloc(size, GFP_KERNEL);
++#else
++	return alloc_bootmem(sizeof(int));
++#endif
++}
++
++static void *logdev_get_free_pages(int order)
++{
++#ifndef LOGDEV_USE_BOOTMEM
++	return (void*)__get_free_pages(GFP_KERNEL,order);
++#else
++	return alloc_bootmem((1<<order)*PAGE_SIZE);
++#endif
++}
++
++static void logdev_kfree(const void *data)
++{
++#ifndef LOGDEV_USE_BOOTMEM
++	return kfree(data);
++#endif
++}
++
++static void logdev_free_page(unsigned long page)
++{
++#ifndef LOGDEV_USE_BOOTMEM
++	return free_page(page);
++#endif
++}
++
++
++/*
++ * Ring buffer structures
++ */
++struct logdev_entry {
++	unsigned int head;
++	unsigned int tail;
++	char *dat;
++};
++
++struct logdev_dev_priv {
++	struct logdev_entry *entry;
++	int cpu;
++	int size;
++	int len;
++	int start;
++	int end;
++	int corrupted;
++	wait_queue_head_t wait;
++};
++
++DEFINE_PER_CPU(struct logdev_dev_priv, logdev_dev_priv);
++#define get_logdev_priv(cpu) &per_cpu(logdev_dev_priv, cpu)
++
++#define ENTRY_SIZE(e) ((((e)->tail - (e)->head)) & (PAGE_SIZE-1))
++#define ENTRY_FREE(e) ((PAGE_SIZE-1) - ENTRY_SIZE(e))
++#define ENTRY_ADD(e,x) ((e) = ((e) + x) & (PAGE_SIZE-1))
++#define ENTRY_INC(e) ENTRY_ADD(e,1)
++#define ENTRY_MAX (PAGE_SIZE-1)
++
++int __kprobes logdev_copy_from_dev(struct logdev_dev *ldev, void *buf,
++				   int size)
++{
++	struct logdev_dev_priv *dev = ldev->priv;
++	struct logdev_entry *entry = &dev->entry[dev->start];
++	int ret = 0;
++
++	if (size < 0) {
++		printk("logdev_copy_from_dev: size < 0 ???\n");
++		return -1;
++	}
++	if (size > dev->size)
++		size = dev->size;
++
++	while (size && dev->size) {
++		int copy = size;
++		int used;
++
++		if (!ENTRY_SIZE(entry)) {
++			dev->start = (dev->start + 1) % dev->len;
++			entry = &dev->entry[dev->start];
++		}
++
++		if (copy > (used=ENTRY_SIZE(entry)))
++			copy = used;
++		if (entry->head+copy > PAGE_SIZE)
++			copy = PAGE_SIZE - entry->head;
++		memcpy(buf,entry->dat+entry->head,copy);
++		ENTRY_ADD(entry->head,copy);
++		buf += copy;
++		dev->size -= copy;
++		size -= copy;
++		ret += copy;
++
++	}
++
++	return ret;
++}
++
++static void __kprobes move_start_to_next_entry(struct logdev_dev *ldev)
++{
++	struct logdev_dev_priv *dev = ldev->priv;
++	struct logdev_entry *entry = &dev->entry[dev->start];
++	int start = dev->start;
++	int size;
++	struct logdev_header hdr;
++
++	if (dev->corrupted) {
++		/* Don't trust headers, just skip to the next entry */
++		dev->size -= ENTRY_SIZE(entry);
++		entry->head = entry->tail = 0;
++		dev->start = (dev->start+1) % dev->len;
++		return;
++	}
++
++	while (start == dev->start) {
++		logdev_copy_from_dev(ldev,(char*)&hdr,sizeof(hdr));
++		entry = &dev->entry[dev->start];
++
++		if (!logdev_valid(hdr.id)) {
++			dev->corrupted = 1;
++			if (start == dev->start)
++				move_start_to_next_entry(ldev);
++			return;
++		}
++
++		size = sizeof(hdr);
++		while (size < hdr.size) {
++			int count = hdr.size - size;
++			if (count > ENTRY_SIZE(entry))
++				count = ENTRY_SIZE(entry);
++			dev->size -= count;
++			size += count;
++			ENTRY_ADD(entry->head,count);
++			if (ENTRY_SIZE(entry) == 0) {
++				dev->start = (dev->start + 1) % dev->len;
++				entry->head = entry->tail = 0;
++				entry = &dev->entry[dev->start];
++			}
++		}
++	}
++}
++
++int __kprobes logdev_copy_to_dev(struct logdev_dev *ldev, const void *dat,
++				 int size)
++{
++	struct logdev_dev_priv *dev = ldev->priv;
++	struct logdev_entry *entry = &dev->entry[dev->end];
++	const char *buf = dat;
++	int ret = 0;
++
++	while (size) {
++		int copy;
++		int free;
++		if (ENTRY_SIZE(entry) == ENTRY_MAX) {
++			dev->end = (dev->end+1) % dev->len;
++			entry = &dev->entry[dev->end];
++			/* if we wrapped, then clear out this entire
++			 * buffer.
++			 */
++			if (dev->end == dev->start) {
++				move_start_to_next_entry(ldev);
++			}
++		}
++		copy = size;
++		if (copy > (free=ENTRY_FREE(entry)))
++			copy = free;
++		if (entry->tail+copy > PAGE_SIZE)
++			copy = PAGE_SIZE - entry->tail;
++		memcpy(entry->dat+entry->tail,buf,copy);
++		ENTRY_ADD(entry->tail,copy);
++		buf += copy;
++		size -= copy;
++		ret += copy;
++		dev->size += copy;
++
++	}
++#if 0
++	/* wake up those waiting for data */
++	if (waitqueue_active(&dev->wait))
++		wake_up_interruptible(&dev->wait);
++#endif
++
++	return ret;
++
++}
++
++
++/* ---- User land interface ---- */
++
++static DEFINE_MUTEX(user_mutex);
++
++/*
++ * User buffer is used to get data from userland, and this can sleep when
++ * copying.
++ */
++static char user_buffer[PAGE_SIZE];
++
++
++/************************ User Land ******************************/
++
++ssize_t logdev_write(struct file *filp, const char *buf, size_t count,
++		     loff_t *f_pos)
++{
++	struct logdev_dev *ldev = filp->private_data;
++	struct logdev_dev_priv *dev;
++	unsigned long flags;
++
++	if (count > PAGE_SIZE)
++		count = PAGE_SIZE;
++
++	if (mutex_lock_interruptible(&user_mutex))
++		return -EINTR;
++
++	if (!dev_running(ldev))
++		goto out;
++	dev = ldev->priv;
++
++	if (copy_from_user(user_buffer,buf,count)) {
++		count = -EFAULT;
++		goto out;
++	}
++
++	spin_lock_irqsave(&ldev->lock,flags);
++	count = logdev_copy_to_dev(ldev,user_buffer,count);
++	spin_unlock_irqrestore(&ldev->lock,flags);
++
++	/* wake up those waiting for data */
++	if (waitqueue_active(&dev->wait))
++		wake_up_interruptible(&dev->wait);
++
++out:
++	mutex_unlock(&user_mutex);
++	return count;
++}
++
++ssize_t logdev_read(struct file *filp, char *buf, size_t count, loff_t *f_pos)
++{
++	struct logdev_dev *ldev = filp->private_data;
++	struct logdev_dev_priv *dev;
++	unsigned long flags;
++
++	if (mutex_lock_interruptible(&user_mutex))
++		return -EINTR;
++
++	if (!dev_running(ldev))
++		goto out_up;
++
++	dev = ldev->priv;
++
++	spin_lock_irqsave(&ldev->lock,flags);
++
++	if (!dev->size) {
++
++		/* TBD - FIXME */
++#if 1
++
++		count = 0;
++		goto out;
++#endif
++
++		if (filp->f_flags & O_NONBLOCK) {
++			count = -EAGAIN;
++			goto out;
++		}
++
++		do {
++			DECLARE_WAITQUEUE(wait,current);
++			current->state = TASK_INTERRUPTIBLE;
++			add_wait_queue(&dev->wait,&wait);
++			spin_unlock_irqrestore(&ldev->lock,flags);
++			schedule();
++			spin_lock_irqsave(&ldev->lock,flags);
++			remove_wait_queue(&dev->wait,&wait);
++			if (dev->size)
++				break;
++			if (signal_pending(current)) {
++				count = -ERESTARTSYS;
++				goto out;
++			}
++		} while(1);
++	}
++
++	if (count > PAGE_SIZE)
++		count = PAGE_SIZE;
++
++
++	count = logdev_copy_from_dev(ldev,user_buffer,count);
++
++ out:
++	/* We can't be corrupted if we have no data */
++	if (!dev->size)
++		dev->corrupted = 0;
++	spin_unlock_irqrestore(&ldev->lock,flags);
++
++	if (count > 0) {
++		/* Well if we fail here, we just lost the data read :-( */
++		if (copy_to_user(buf,user_buffer,count))
++			count = -EFAULT;
++	}
++ out_up:
++	mutex_unlock(&user_mutex);
++
++	return count;
++}
++
++static int logdev_ioctl(struct inode *inode, struct file *filp,
++			unsigned int cmd, unsigned long arg)
++{
++	return -ENOTTY;
++}
++
++static int logdev_close(struct inode *inode, struct file *filp)
++{
++#if 0
++	int cpu = (int)filp->private_data;
++#endif
++	return 0;
++}
++
++
++static int logdev_open (struct inode *inode, struct file *filp)
++{
++	filp->private_data = inode->u.generic_ip;
++	return 0;
++}
++
++/**
++ *	logdev_poll - poll file op for logdev
++ *	@filp: the file
++ *	@wait: poll table
++ *
++ *	Poll implemention.
++ */
++static unsigned int
++logdev_poll(struct file *filp, poll_table *wait)
++{
++	struct logdev_dev *dev = (struct logdev_dev*)filp->private_data;
++	unsigned int mask = 0;
++
++	(void)dev;
++#if 0
++	if (filp->f_mode & FMODE_READ) {
++		poll_wait(filp, &app->read_wait, wait);
++		if (!empty_channel(dev))
++			mask |= POLLIN | POLLRDNORM;
++	}
++#endif
++
++	return mask;
++}
++
++static struct file_operations logdev_fops = {
++	.read		= logdev_read,
++	.write		= logdev_write,
++	.ioctl		= logdev_ioctl,
++	.open		= logdev_open,
++	.release	= logdev_close,
++	.poll		= logdev_poll,
++	.llseek		= no_llseek,
++};
++
++/************************ End User Land ******************************/
++
++
++/******************* entry debugging interface *****************/
++
++static void __kprobes *s_next(struct seq_file *m, void *v, loff_t *pos)
++{
++	struct logdev_dev *ldev = m->private;
++	struct logdev_dev_priv *dev = ldev->priv;
++	int i = (int)*pos;
++
++	(*pos)++;
++
++	if (i >= dev->len)
++		return NULL;
++
++	return &dev->entry[i];
++}
++
++static void __kprobes *s_start(struct seq_file *m, loff_t *pos)
++	__acquires(logdev_dev.lock)
++{
++	struct logdev_dev *dev = m->private;
++	void *p = NULL;
++	loff_t l = 0;
++
++	/*
++	 * A little strong? Perhaps, but we know that this is bad right
++	 * from the start. Anyway this is for debugging purposes only,
++	 * so it's OK, as well as the big latency we get by turning off
++	 * intrerrupts. But we also never know who will be locking
++	 * this.
++	 */
++	if (irqs_disabled())
++		BUG();
++
++	local_irq_disable();
++	spin_lock(&dev->lock);
++	for (p = (void *)1; p && l < *pos; p = s_next(m,p,&l))
++		;
++
++	return p;
++}
++
++static void __kprobes s_stop(struct seq_file *m, void *p)
++	__releases(logdev_dev.lock)
++{
++	struct logdev_dev *dev = m->private;
++	spin_unlock(&dev->lock);
++	local_irq_enable();
++}
++
++static int __kprobes s_show(struct seq_file *m, void *v)
++{
++	int i = (long)(v);
++	struct logdev_entry *entry = v;
++	struct logdev_dev *ldev;
++	struct logdev_dev_priv *dev;
++
++	ldev = m->private;
++	dev = ldev->priv;
++
++	if (i == 1) {
++		seq_printf(m,"Logdev:\n");
++		seq_printf(m,"\tlen:\t%d\n",dev->len);
++		seq_printf(m,"\tsize:\t%d\n",dev->size);
++		seq_printf(m,"\tstart:\t%d\n",dev->start);
++		seq_printf(m,"\tend:\t%d\n",dev->end);
++		seq_printf(m,"\tcorrupted:%d\n",dev->corrupted);
++		seq_printf(m,"\n\tEntries:\n");
++
++	} else {
++		i = (int)((char*)entry - (char*)dev->entry) /
++			sizeof(struct logdev_entry);
++
++		seq_printf(m,"\t  %d:\t%8u : %8u\tsize: %lu\n", i,
++			   entry->head, entry->tail,
++			   ENTRY_SIZE(entry));
++	}
++
++
++	return 0;
++}
++
++static struct seq_operations logdev_proc_op = {
++	.start = s_start,
++	.next = s_next,
++	.stop = s_stop,
++	.show = s_show,
++};
++
++static int logdev_entries_open (struct inode *inode, struct file *file)
++{
++	int ret;
++
++	ret = seq_open(file, &logdev_proc_op);
++	if (!ret) {
++		struct seq_file *m = file->private_data;
++		m->private = inode->u.generic_ip;
++	}
++
++	return ret;
++}
++
++static struct file_operations logdev_entries_fops = {
++	.open = logdev_entries_open,
++	.read = seq_read,
++	.llseek = seq_lseek,
++	.release = seq_release,
++};
++
++/******************* end entry debugging interface *****************/
++
++int __init initialize_logdev(void)
++{
++	int cpu;
++
++	for_each_present_cpu(cpu) {
++		struct logdev_dev *ldev;
++		struct logdev_dev_priv *dev;
++		struct logdev_entry *entry;
++		int i;
++
++		ldev = get_logdev(cpu);
++		dev = get_logdev_priv(cpu);
++		dev->cpu = cpu;
++		ldev->priv = dev;
++
++		dev->len = pages;
++
++		dev->entry =
++			logdev_malloc(sizeof(struct logdev_entry)*dev->len);
++		if (!dev->entry)
++			return -ENOMEM;
++
++		memset(dev->entry,0,sizeof(*dev->entry)*dev->len);
++
++		for (i=0,entry=dev->entry; i<dev->len; i++,entry++) {
++			entry->dat = logdev_get_free_pages(0);
++			if (!entry->dat)
++				return -ENOMEM;
++		}
++		init_waitqueue_head(&dev->wait);
++
++		ldev->init = LOGDEV_DEV_RUNNING;
++	}
++
++	return 0;
++}
++
++void __init logdev_cleanup_priv(struct logdev_dev *ldev)
++{
++	struct logdev_dev_priv *dev = ldev->priv;
++
++	if (!ldev->init)
++		return;
++
++	if (dev->entry) {
++		struct logdev_entry *entry;
++		int i;
++
++		for (i=0, entry=dev->entry; i<dev->len; i++,entry++)
++			if (entry->dat) {
++				logdev_free_page((unsigned long)entry->dat);
++				entry->dat = NULL;
++			}
++		dev->len = 0;
++		logdev_kfree(dev->entry);
++		dev->entry = NULL;
++		ldev->init = 0;
++	}
++}
++
++int __init logdev_misc_init(void)
++{
++	struct logdev_dev *ldev;
++	struct logdev_dev_priv *dev;
++	struct dentry *entries;
++	int cpu;
++	char buf[16];
++
++	if (!logdev_d)
++		return 0;
++
++	entries = debugfs_create_dir("entry", logdev_d);
++
++	for_each_present_cpu(cpu) {
++
++		if (cpu >= LOGDEV_CPUS)
++			break;
++
++		ldev = get_logdev(cpu);
++		if (!ldev->init)
++			continue;
++
++		dev = ldev->priv;
++
++		/*
++		 * Setup the debugfs.
++		 */
++		sprintf(buf, "dev%d", cpu);
++		debugfs_create_file(buf, 0444, logdev_d,
++				    ldev, &logdev_fops);
++
++		if (entries) {
++			sprintf(buf,"%d",cpu);
++			debugfs_create_file(buf, 0444, entries,
++					    ldev, &logdev_entries_fops);
++		}
++	}
++
++	return 0;
++}
++
++/* just needs to be after postcore init */
++arch_initcall(logdev_misc_init);
+Index: linux-2.6.18/drivers/char/logdev_probe.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ linux-2.6.18/drivers/char/logdev_probe.c	2006-10-04 21:41:08.000000000 -0400
+@@ -0,0 +1,1302 @@
++/*
++ * logdev_probe.c
++ *
++ * Copyright (C) 2004-2006 Steven Rostedt <steven.rostedt@kihontech.com>
++ *
++ * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; version 2 of the License (not later!)
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++ *
++ * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++ */
++#include <linux/init.h>
++#include <linux/module.h>
++#include <linux/spinlock.h>
++#include <linux/logdev.h>
++#include <linux/uaccess.h>
++#include <linux/seq_file.h>
++#include <linux/debugfs.h>
++#include <linux/kprobes.h>
++#include <linux/ptrace.h>
++#include <linux/kallsyms.h>
++#include <linux/list.h>
++
++#include <asm/atomic.h>
++
++#include "logdev_priv.h"
++
++#undef DPRINTK
++#if 1
++#  define DPRINTK(x...) printk(x)
++#else
++#  define DPRINTK(x...) do { } while(0)
++#endif
++
++static atomic_t logdev_probe_next_id = ATOMIC_INIT(1);
++static DEFINE_MUTEX(probe_list_lock);
++enum logprobe_type {
++	LOGPROBE_BP,
++	LOGPROBE_FUNC,
++	LOGPROBE_CURR,
++	LOGPROBE_VAR,
++};
++
++static char *logdev_probe_buffer;
++static int logdev_probe_buffer_sz;
++static DEFINE_SPINLOCK(probe_buffer_lock);
++static DEFINE_PER_CPU(struct jprobe *, jprobe);
++
++/* ---------------- cut here for user space headers -------------------- */
++
++/* "s/user_//" for the below when bringing to user space */
++
++#define LOGPROBE_IOCTL_BASE 'l'
++
++#define PROBE_IOW(nr, type) _IOW(LOGPROBE_IOCTL_BASE, nr, type)
++
++#define LOGPROBE_DELPOINT  PROBE_IOW(0, unsigned long)
++#define LOGPROBE_ADDWATCH  PROBE_IOW(1, struct user_logdev_probe_watch)
++#define LOGPROBE_ADDFUNC   PROBE_IOW(2, struct user_logdev_probe_func)
++#define LOGPROBE_ADDCURR   PROBE_IOW(3, struct user_logdev_probe_curr)
++#define LOGPROBE_ADDVAR    PROBE_IOW(4, struct user_logdev_probe_var)
++
++#define LOGPROBE_ID_WATCH	0x56570001
++#define LOGPROBE_ID_FUNC	0x56570002
++#define LOGPROBE_ID_CURR	0x56570003
++#define LOGPROBE_ID_VAR		0x56570004
++
++#define LOGPROBE_TYPE_PREEMPT 0x1111
++
++struct logdev_probe_hdr_log {
++	unsigned long long t;
++	char comm[TASK_COMM_LEN];
++	int pid;
++	unsigned long addr;
++	unsigned long offset;
++	int func_symbol_size;
++};
++
++struct logdev_probe_watch_log {
++	struct logdev_probe_hdr_log hdr;
++	unsigned long var;
++	unsigned long value;
++	int var_symbol_size;
++	char symbols[];
++};
++
++struct logdev_probe_func_log {
++	struct logdev_probe_hdr_log hdr;
++	int str_size;
++	char symbols[];
++};
++
++struct logdev_probe_curr_log {
++	struct logdev_probe_hdr_log hdr;
++	int index;
++	unsigned long value;
++	int prefix_size;
++	char symbols[];
++};
++
++struct logdev_probe_var_log {
++	struct logdev_probe_hdr_log hdr;
++	int type;
++	unsigned long value;
++	int prefix_size;
++	char symbols[];
++};
++
++struct user_logdev_probe_watch {
++	unsigned long addr;
++	unsigned long watch;
++	const char *func;
++	const char *var;
++	int func_size;
++	int var_size;
++};
++
++struct user_logdev_probe_func {
++	const char *func;
++	const char *fmt1;
++	const char *fmt2;
++	int func_size;
++	int fmt1_size;
++	int fmt2_size;
++};
++
++struct user_logdev_probe_curr {
++	unsigned long addr;
++	const char *func;
++	const char *prefix;
++	int offset;
++	int func_size;
++	int prefix_size;
++};
++
++struct user_logdev_probe_var {
++	unsigned long addr;
++	const char *func;
++	const char *prefix;
++	int type;
++	int func_size;
++	int prefix_size;
++};
++
++/* ---------------- end of user space cut ---------------- */
++
++struct logdev_probe_hdr {
++	unsigned long addr;
++	unsigned long offset;
++	int func_symbol_size;
++	char func_symbol[KSYM_NAME_LEN+1];
++};
++
++struct logdev_probe_watch {
++	struct logdev_probe_hdr hdr;
++	struct kprobe kp;
++	unsigned long var;
++	int var_symbol_size;
++	char var_symbol[KSYM_NAME_LEN+1];
++};
++
++struct logdev_probe_func {
++	struct logdev_probe_hdr hdr;
++	struct jprobe jp;
++	const char *fmt1;
++	const char *fmt2;
++};
++
++struct logdev_probe_curr {
++	struct logdev_probe_hdr hdr;
++	struct kprobe kp;
++	int index;
++	char *prefix;
++	int prefix_size;
++};
++
++struct logdev_probe_var {
++	struct logdev_probe_hdr hdr;
++	struct kprobe kp;
++	int type;
++	char *prefix;
++	int prefix_size;
++};
++
++struct logdev_probe {
++	struct list_head list;
++	unsigned long id;
++	enum logprobe_type type;
++	union {
++		struct logdev_probe_watch watch;
++		struct logdev_probe_func func;
++		struct logdev_probe_curr curr;
++		struct logdev_probe_var var;
++	};
++};
++
++static LIST_HEAD(logdev_probes);
++
++static void logdev_print_time_cpu(unsigned long long t, int cpu)
++{
++	unsigned long usec_rem;
++	unsigned long secs;
++
++	usec_rem = do_div(t, 1000000000)/1000;
++	secs = (unsigned long)t;
++
++	printk("[%5lu.%06lu] cpu:%d ",
++	       secs, usec_rem, cpu);
++}
++
++/*
++ * This is called under a lock, so we can use a static buffer.
++ */
++static char probe_buf[PAGE_SIZE];
++
++/* ------------------- cut here for user space print -------------- */
++
++/* "s/printk/printf" */
++
++static const char *logdev_print_symbol(const char *sym, int size)
++{
++	/* we don't trust not having a null char */
++	while (size) {
++		int sz = size;
++		if (sz > PAGE_SIZE-1)
++			sz = PAGE_SIZE-1;
++		memcpy(probe_buf, sym, sz);
++		probe_buf[sz] = 0;
++		printk("%s", probe_buf);
++		sym += sz;
++		size -= sz;
++	}
++
++	return sym;
++}
++
++static const char * logdev_print_hdr(int cpu,
++				     const char *sym,
++				     struct logdev_probe_hdr_log *hdr)
++{
++	logdev_print_time_cpu(hdr->t, cpu);
++
++	memcpy(probe_buf, hdr->comm, TASK_COMM_LEN);
++	probe_buf[TASK_COMM_LEN] = 0;
++	printk("%s:%d ", probe_buf, hdr->pid);
++
++	printk("func: ");
++	sym = logdev_print_symbol(sym, hdr->func_symbol_size);
++	printk(" (%p) ", (void*)hdr->addr);
++
++	return sym;
++}
++
++static void logdev_probe_watch_print(int cpu, int size,
++				     struct logdev_probe_watch_log *lp)
++{
++	const char *sym;
++
++	if (size < sizeof(*lp) ||
++	    size != sizeof(*lp) + lp->var_symbol_size +
++	    lp->hdr.func_symbol_size) {
++		printk("CPU[%d] Bad probe var record!\n",
++		       cpu);
++		return;
++	}
++
++	sym = logdev_print_hdr(cpu, lp->symbols, &lp->hdr);
++
++	if (lp->var) {
++		printk("var: ");
++		sym = logdev_print_symbol(sym, lp->var_symbol_size);
++		printk(" (%p) = %08lx",
++		       (void*)lp->var,
++		       lp->value);
++	}
++	printk("\n");
++
++}
++
++static void logdev_probe_func_print(int cpu, int size,
++				    struct logdev_probe_func_log *lp)
++{
++	const char *sym;
++
++	if (size < sizeof(*lp) ||
++	    size != sizeof(*lp) + lp->hdr.func_symbol_size +
++	    lp->str_size) {
++		printk("CPU[%d] Bad probe func record!\n",
++		       cpu);
++		return;
++	}
++
++	sym = logdev_print_hdr(cpu, lp->symbols, &lp->hdr);
++
++	if (lp->str_size)
++		logdev_print_symbol(sym, lp->str_size);
++
++	printk("\n");
++
++}
++
++static void logdev_probe_curr_print(int cpu, int size,
++				    struct logdev_probe_curr_log *lp)
++{
++	const char *sym;
++
++	if (size < sizeof(*lp) ||
++	    size != sizeof(*lp) + lp->hdr.func_symbol_size +
++	    lp->prefix_size) {
++		printk("CPU[%d] Bad probe curr record!\n",
++		       cpu);
++		return;
++	}
++
++	sym = logdev_print_hdr(cpu, lp->symbols, &lp->hdr);
++
++	if (lp->prefix_size)
++		logdev_print_symbol(sym, lp->prefix_size);
++
++	printk(" index:%d = %p", lp->index, (void*)lp->value);
++
++	printk("\n");
++
++}
++
++static void logdev_probe_var_print(int cpu, int size,
++				   struct logdev_probe_var_log *lp)
++{
++	const char *sym;
++
++	if (size < sizeof(*lp) ||
++	    size != sizeof(*lp) + lp->hdr.func_symbol_size +
++	    lp->prefix_size) {
++		printk("CPU[%d] Bad probe curr record!\n",
++		       cpu);
++		return;
++	}
++
++	sym = logdev_print_hdr(cpu, lp->symbols, &lp->hdr);
++
++	switch (lp->type) {
++	case LOGPROBE_TYPE_PREEMPT:
++		printk(" preempt_count:");
++		break;
++	}
++
++	if (lp->prefix_size)
++		logdev_print_symbol(sym, lp->prefix_size);
++
++	printk("0x%lx", lp->value);
++
++	printk("\n");
++
++}
++
++static void logdev_probe_callback(struct logdev_header *hdr,
++				  struct logdev_custom *custom,
++				  int cpu,
++				  void *rec)
++{
++	switch (custom->id) {
++	case LOGPROBE_ID_WATCH:
++		logdev_probe_watch_print(cpu, hdr->size, rec);
++		break;
++	case LOGPROBE_ID_FUNC:
++		logdev_probe_func_print(cpu, hdr->size, rec);
++		break;
++	case LOGPROBE_ID_CURR:
++		logdev_probe_curr_print(cpu, hdr->size, rec);
++		break;
++	case LOGPROBE_ID_VAR:
++		logdev_probe_var_print(cpu, hdr->size, rec);
++		break;
++	default:
++		printk("Unknown probe callback id %x\n",
++		       custom->id);
++		break;
++	}
++}
++/* ------------------ end cut for user space printing ------------------- */
++
++
++/************************ Kprobes ******************************/
++
++static void __kprobes logprobe_hdr(struct logdev_probe_hdr_log *lp,
++				   struct logdev_probe_hdr *p)
++{
++	lp->t = sched_clock();
++	memcpy(lp->comm, current->comm, TASK_COMM_LEN);
++	lp->pid = current->pid;
++	lp->addr = p->addr;
++	lp->offset = p->offset;
++	lp->func_symbol_size = p->func_symbol_size;
++}
++
++static int __kprobes logprobe_watch(struct kprobe *kp, struct pt_regs *regs)
++{
++	struct logdev_probe_watch *p =
++		container_of(kp, struct logdev_probe_watch, kp);
++	struct logdev_probe_watch_log lp;
++	int total_sz = sizeof(lp) + p->var_symbol_size +
++		p->hdr.func_symbol_size;
++
++	rcu_read_lock();
++
++	logprobe_hdr(&lp.hdr, &p->hdr);
++
++	lp.var = p->var;
++	if (p->var)
++		lp.value = *(unsigned long*)(p->var);
++	lp.var_symbol_size = p->var_symbol_size;
++	logdev_record(LOGPROBE_ID_WATCH, total_sz,
++		      &lp, sizeof(lp),
++		      p->hdr.func_symbol, p->hdr.func_symbol_size,
++		      p->var_symbol, p->var_symbol_size,
++		      NULL);
++
++	rcu_read_unlock();
++
++	return 0;
++}
++
++
++static asmlinkage long __kprobes logprobe_func(unsigned long param, ...)
++{
++	struct jprobe *jp;
++	struct logdev_probe_func *p;
++	struct logdev_probe_func_log lp;
++	va_list ap;
++	int total_sz;
++	unsigned long flags;
++	int i = -1;
++
++	if (!logdev_probe_buffer)
++		jprobe_return();
++
++	jp = __get_cpu_var(jprobe);
++	if (!jp)
++		jprobe_return();
++
++	p = container_of(jp, struct logdev_probe_func, jp);
++
++	/* find probe */
++	rcu_read_lock();
++
++	logprobe_hdr(&lp.hdr, &p->hdr);
++
++	spin_lock_irqsave(&probe_buffer_lock, flags);
++	if (p->fmt1) {
++		i = snprintf(logdev_probe_buffer, logdev_probe_buffer_sz,
++			     p->fmt1, param);
++
++		if (p->fmt2 && i < logdev_probe_buffer_sz) {
++			va_start(ap, param);
++			i += snprintf(logdev_probe_buffer + i,
++				      logdev_probe_buffer_sz - i,
++				      p->fmt2, ap);
++			va_end(ap);
++		}
++		if (i > logdev_probe_buffer_sz)
++			i = logdev_probe_buffer_sz;
++
++		logdev_probe_buffer[i] = 0;
++	}
++
++	lp.str_size = i+1;
++
++	total_sz = sizeof(lp) + lp.hdr.func_symbol_size + lp.str_size;
++
++	logdev_record(LOGPROBE_ID_FUNC, total_sz,
++		      &lp, sizeof(lp),
++		      p->hdr.func_symbol, p->hdr.func_symbol_size,
++		      logdev_probe_buffer, lp.str_size,
++		      NULL);
++	spin_unlock_irqrestore(&probe_buffer_lock, flags);
++
++	rcu_read_unlock();
++
++	jprobe_return();
++	/* NOT REACHED */
++	return 0;
++}
++
++
++static int __kprobes logprobe_curr(struct kprobe *kp, struct pt_regs *regs)
++{
++	struct logdev_probe_curr *p =
++		container_of(kp, struct logdev_probe_curr, kp);
++	struct logdev_probe_curr_log lp;
++	int total_sz = sizeof(lp) + p->prefix_size +
++		p->hdr.func_symbol_size;
++	unsigned long *ptr;
++
++	rcu_read_lock();
++
++	logprobe_hdr(&lp.hdr, &p->hdr);
++
++	lp.index = p->index;
++
++	ptr = (unsigned long*)((char*)current + p->index);
++	lp.value = *ptr;
++
++	lp.prefix_size = p->prefix_size;
++
++	logdev_record(LOGPROBE_ID_CURR, total_sz,
++		      &lp, sizeof(lp),
++		      p->hdr.func_symbol, p->hdr.func_symbol_size,
++		      p->prefix, p->prefix_size,
++		      NULL);
++
++	rcu_read_unlock();
++
++	return 0;
++}
++
++static int __kprobes logprobe_var(struct kprobe *kp, struct pt_regs *regs)
++{
++	struct logdev_probe_var *p =
++		container_of(kp, struct logdev_probe_var, kp);
++	struct logdev_probe_var_log lp;
++	int total_sz = sizeof(lp) + p->prefix_size +
++		p->hdr.func_symbol_size;
++	unsigned long pc = preempt_count();
++
++	rcu_read_lock();
++
++	logprobe_hdr(&lp.hdr, &p->hdr);
++
++	lp.type = p->type;
++
++	switch(lp.type) {
++	case LOGPROBE_TYPE_PREEMPT:
++		lp.value = pc;
++	default:
++		lp.value = 0;
++	}
++
++	lp.prefix_size = p->prefix_size;
++
++	logdev_record(LOGPROBE_ID_VAR, total_sz,
++		      &lp, sizeof(lp),
++		      p->hdr.func_symbol, p->hdr.func_symbol_size,
++		      p->prefix, p->prefix_size,
++		      NULL);
++
++	rcu_read_unlock();
++
++	return 0;
++}
++
++/*********************** end Kprobes **************************/
++
++static int __kprobes logdev_probe_update_hdr(struct logdev_probe_hdr *p)
++{
++	const char *sym;
++	unsigned long size;
++	char *modname;
++
++	if (p->addr) {
++		sym = kallsyms_lookup(p->addr, &size, &p->offset, &modname,
++				      p->func_symbol);
++		if (sym)
++			p->func_symbol_size = strlen(sym);
++	} else {
++		size = strlen(p->func_symbol);
++		p->func_symbol_size = size;
++		p->addr = kallsyms_lookup_name(p->func_symbol);
++		if (!p->addr) {
++			DPRINTK("func name %s not found", p->func_symbol);
++			return -EINVAL;
++		}
++	}
++
++	return 0;
++}
++
++static int __kprobes logdev_probe_add_watch(struct logdev_probe *lh)
++{
++	struct logdev_probe_watch *p = &lh->watch;
++	const char *sym;
++	char *modname;
++	unsigned long size;
++	unsigned long offset;
++	unsigned long watch = p->var;
++	int ret;
++
++	lh->type = LOGPROBE_BP;
++
++	/* can only have one or the other */
++	if (p->hdr.func_symbol[0] && p->hdr.addr)
++		return -EINVAL;
++	if (p->var_symbol[0] && watch)
++		return -EINVAL;
++
++	/* TBD: check upper limit ?? */
++	if (!p->hdr.func_symbol[0] && p->hdr.addr < PAGE_OFFSET)
++		return -EINVAL;
++
++	/*
++	 * kallsyms requires no scheduling.
++	 */
++	preempt_disable();
++	ret = logdev_probe_update_hdr(&p->hdr);
++	if (ret) {
++		preempt_enable();
++		return ret;
++	}
++
++	if (watch) {
++		sym = kallsyms_lookup(watch, &size, &offset, &modname,
++				      p->var_symbol);
++		if (sym)
++			p->var_symbol_size = strlen(sym);
++	} else if (p->var_symbol) {
++		size = strlen(p->var_symbol);
++		p->var_symbol_size = size;
++		watch = kallsyms_lookup_name(p->var_symbol);
++		if (!watch) {
++			DPRINTK("var name %s not found", p->var_symbol);
++			preempt_enable();
++			return -EINVAL;
++		}
++	}
++	preempt_enable();
++
++	p->var = watch;
++	p->kp.pre_handler = logprobe_watch;
++	p->kp.addr = (kprobe_opcode_t *)p->hdr.addr;
++
++	ret = register_kprobe(&p->kp);
++	if (ret < 0)
++		return ret;
++
++	lh->id = atomic_inc_return(&logdev_probe_next_id);
++
++	return lh->id;
++}
++
++/* Hijack the jprobes registering! */
++
++static int __kprobes logdev_setjmp_pre_handler(struct kprobe *p,
++					       struct pt_regs *regs)
++{
++	__get_cpu_var(jprobe) = container_of(p, struct jprobe, kp);
++	return setjmp_pre_handler(p, regs);
++}
++
++static int __kprobes logdev_longjmp_break_handler(struct kprobe *p,
++						  struct pt_regs *regs)
++{
++	int ret;
++	ret = longjmp_break_handler(p, regs);
++	__get_cpu_var(jprobe) = NULL;
++	return ret;
++}
++
++static int logdev_register_jprobe(struct jprobe *jp)
++{
++	jp->kp.pre_handler = logdev_setjmp_pre_handler;
++	jp->kp.break_handler = logdev_longjmp_break_handler;
++
++	return register_kprobe(&jp->kp);
++}
++
++static int __kprobes logdev_probe_add_func(struct logdev_probe *lh,
++					   const char *fmt1,
++					   const char *fmt2)
++{
++	struct logdev_probe_func *p = &lh->func;
++	int ret;
++
++	lh->type = LOGPROBE_FUNC;
++
++	/*
++	 * kallsyms requires no scheduling.
++	 */
++	preempt_disable();
++
++	ret = logdev_probe_update_hdr(&p->hdr);
++	preempt_enable();
++
++	if (ret)
++		return ret;
++
++	p->fmt1 = fmt1;
++	p->fmt2 = fmt2;
++	p->jp.entry = (kprobe_opcode_t *)logprobe_func;
++	p->jp.kp.addr = (kprobe_opcode_t *)p->hdr.addr;
++
++	ret = logdev_register_jprobe(&p->jp);
++	if (ret < 0)
++		return ret;
++
++	lh->id = atomic_inc_return(&logdev_probe_next_id);
++
++	return lh->id;
++}
++
++static int __kprobes logdev_probe_add_curr(struct logdev_probe *lh)
++{
++	struct logdev_probe_curr *p = &lh->curr;
++	int ret;
++
++	lh->type = LOGPROBE_CURR;
++
++	/*
++	 * kallsyms requires no scheduling.
++	 */
++	preempt_disable();
++	ret = logdev_probe_update_hdr(&p->hdr);
++	preempt_enable();
++	if (ret)
++		return ret;
++
++	p->kp.pre_handler = logprobe_curr;
++	p->kp.addr = (kprobe_opcode_t *)p->hdr.addr;
++
++	ret = register_kprobe(&p->kp);
++	if (ret < 0)
++		return ret;
++
++	lh->id = atomic_inc_return(&logdev_probe_next_id);
++
++	return lh->id;
++}
++
++static int __kprobes logdev_probe_add_var(struct logdev_probe *lh)
++{
++	struct logdev_probe_var *p = &lh->var;
++	int ret;
++
++	lh->type = LOGPROBE_VAR;
++
++	/*
++	 * kallsyms requires no scheduling.
++	 */
++	preempt_disable();
++	ret = logdev_probe_update_hdr(&p->hdr);
++	preempt_enable();
++	if (ret)
++		return ret;
++
++	p->kp.pre_handler = logprobe_var;
++	p->kp.addr = (kprobe_opcode_t *)p->hdr.addr;
++
++	ret = register_kprobe(&p->kp);
++	if (ret < 0)
++		return ret;
++
++	lh->id = atomic_inc_return(&logdev_probe_next_id);
++
++	return lh->id;
++}
++
++/************************ User Land ******************************/
++
++static int logdev_setup_probe_watch(unsigned long __user *arg)
++{
++	struct user_logdev_probe_watch *uprobe;
++	struct logdev_probe *lh = NULL;
++	struct logdev_probe_watch *probe;
++	int ret;
++
++	uprobe = kmalloc(sizeof(*uprobe), GFP_KERNEL);
++
++	if (!uprobe)
++		return -ENOMEM;
++
++	ret = -EFAULT;
++	if(copy_from_user(uprobe, arg, sizeof(*uprobe)))
++		goto fail;
++
++	ret = -ENOMEM;
++	lh = kzalloc(sizeof(*lh), GFP_KERNEL);
++	if (!lh)
++		goto fail;
++
++	probe = &lh->watch;
++
++	ret = -EFAULT;
++	if (uprobe->func) {
++		if (uprobe->func_size > KSYM_NAME_LEN)
++			uprobe->func_size = KSYM_NAME_LEN;
++		if (copy_from_user(probe->hdr.func_symbol, uprobe->func,
++				   uprobe->func_size))
++			goto fail;
++	}
++	if (uprobe->var) {
++		if (uprobe->var_size > KSYM_NAME_LEN)
++			uprobe->var_size = KSYM_NAME_LEN;
++		if (copy_from_user(probe->var_symbol, uprobe->var,
++				   uprobe->var_size))
++			goto fail;
++	}
++	probe->hdr.addr = uprobe->addr;
++	probe->var = uprobe->watch;
++
++	ret = logdev_probe_add_watch(lh);
++	if (ret < 0)
++		goto fail;
++
++	mutex_lock(&probe_list_lock);
++	list_add_tail_rcu(&lh->list, &logdev_probes);
++	mutex_unlock(&probe_list_lock);
++
++	return ret;
++
++ fail:
++	if (uprobe)
++		kfree(uprobe);
++	if (lh)
++		kfree(lh);
++	return ret;
++}
++
++static int logdev_setup_probe_func(unsigned long __user *arg)
++{
++	struct user_logdev_probe_func *uprobe;
++	struct logdev_probe *lh = NULL;
++	struct logdev_probe_func *probe;
++	char *fmt1 = NULL;
++	char *fmt2 = NULL;
++	int ret;
++
++	uprobe = kmalloc(sizeof(*uprobe), GFP_KERNEL);
++
++	if (!uprobe)
++		return -ENOMEM;
++
++	ret = -EFAULT;
++	if(copy_from_user(uprobe, arg, sizeof(*uprobe)))
++		goto fail;
++
++	ret = -EINVAL;
++	if (!uprobe->func || !uprobe->func_size)
++		goto fail;
++
++	ret = -ENOMEM;
++	lh = kzalloc(sizeof(*lh), GFP_KERNEL);
++	if (!lh)
++		goto fail;
++
++	probe = &lh->func;
++
++	if (uprobe->func_size > KSYM_NAME_LEN)
++		uprobe->func_size = KSYM_NAME_LEN;
++	if (copy_from_user(probe->hdr.func_symbol, uprobe->func,
++			   uprobe->func_size))
++		goto fail;
++
++	if (uprobe->fmt1 && uprobe->fmt1_size) {
++		fmt1 = kmalloc(uprobe->fmt1_size+1, GFP_KERNEL);
++		if (!fmt1)
++			goto fail;
++		if (copy_from_user(fmt1, uprobe->fmt1,
++				   uprobe->fmt1_size))
++			goto fail;
++		fmt1[uprobe->fmt1_size] = 0;
++
++		if (uprobe->fmt2 && uprobe->fmt2_size) {
++			fmt2 = kmalloc(uprobe->fmt2_size+1, GFP_KERNEL);
++			if (!fmt2)
++				goto fail;
++			if (copy_from_user(fmt2, uprobe->fmt2,
++					   uprobe->fmt2_size))
++				goto fail;
++			fmt2[uprobe->fmt2_size] = 0;
++		}
++	}
++
++	ret = logdev_probe_add_func(lh, fmt1, fmt2);
++	if (ret < 0)
++		goto fail;
++
++	mutex_lock(&probe_list_lock);
++	list_add_tail_rcu(&lh->list, &logdev_probes);
++	mutex_unlock(&probe_list_lock);
++
++	return ret;
++
++ fail:
++	DPRINTK("%s FAILED\n",__FUNCTION__);
++	if (fmt1)
++		kfree(fmt1);
++	if (fmt2)
++		kfree(fmt2);
++	if (uprobe)
++		kfree(uprobe);
++	if (lh)
++		kfree(lh);
++	return ret;
++}
++
++static int logdev_setup_probe_curr(unsigned long __user *arg)
++{
++	struct user_logdev_probe_curr *uprobe;
++	struct logdev_probe *lh = NULL;
++	struct logdev_probe_curr *probe;
++	int ret;
++
++	uprobe = kmalloc(sizeof(*uprobe), GFP_KERNEL);
++
++	if (!uprobe)
++		return -ENOMEM;
++
++	ret = -EFAULT;
++	if(copy_from_user(uprobe, arg, sizeof(*uprobe)))
++		goto fail;
++
++	ret = -ENOMEM;
++	lh = kzalloc(sizeof(*lh), GFP_KERNEL);
++	if (!lh)
++		goto fail;
++
++	probe = &lh->curr;
++
++	ret = -EFAULT;
++	if (uprobe->func) {
++		if (uprobe->func_size > KSYM_NAME_LEN)
++			uprobe->func_size = KSYM_NAME_LEN;
++		if (copy_from_user(probe->hdr.func_symbol, uprobe->func,
++				   uprobe->func_size))
++			goto fail;
++	}
++	/* yes this can be negative! */
++	probe->index = uprobe->offset;
++
++	if (uprobe->prefix && uprobe->prefix_size > 0) {
++		probe->prefix = kmalloc(uprobe->prefix_size + 1, GFP_KERNEL);
++		if (copy_from_user(probe->prefix, uprobe->prefix,
++				   uprobe->prefix_size))
++			goto fail;
++		probe->prefix[uprobe->prefix_size] = 0;
++		probe->prefix_size = uprobe->prefix_size + 1;
++	}
++	probe->hdr.addr = uprobe->addr;
++
++	ret = logdev_probe_add_curr(lh);
++	if (ret < 0)
++		goto fail;
++
++	mutex_lock(&probe_list_lock);
++	list_add_tail_rcu(&lh->list, &logdev_probes);
++	mutex_unlock(&probe_list_lock);
++
++	return ret;
++
++ fail:
++	if (uprobe)
++		kfree(uprobe);
++	if (lh)
++		kfree(lh);
++	return ret;
++}
++
++static int logdev_setup_probe_var(unsigned long __user *arg)
++{
++	struct user_logdev_probe_var *uprobe;
++	struct logdev_probe *lh = NULL;
++	struct logdev_probe_var *probe;
++	int ret;
++
++	uprobe = kmalloc(sizeof(*uprobe), GFP_KERNEL);
++
++	if (!uprobe)
++		return -ENOMEM;
++
++	ret = -EFAULT;
++	if(copy_from_user(uprobe, arg, sizeof(*uprobe)))
++		goto fail;
++
++	ret = -ENOMEM;
++	lh = kzalloc(sizeof(*lh), GFP_KERNEL);
++	if (!lh)
++		goto fail;
++
++	probe = &lh->var;
++
++	probe->type = uprobe->type;
++	switch(probe->type) {
++		case LOGPROBE_TYPE_PREEMPT:
++			break;
++	default:
++		ret = -EINVAL;
++		goto fail;
++	}
++
++	ret = -EFAULT;
++	if (uprobe->func) {
++		if (uprobe->func_size > KSYM_NAME_LEN)
++			uprobe->func_size = KSYM_NAME_LEN;
++		if (copy_from_user(probe->hdr.func_symbol, uprobe->func,
++				   uprobe->func_size))
++			goto fail;
++	}
++
++	if (uprobe->prefix && uprobe->prefix_size > 0) {
++		probe->prefix = kmalloc(uprobe->prefix_size + 1, GFP_KERNEL);
++		if (copy_from_user(probe->prefix, uprobe->prefix,
++				   uprobe->prefix_size))
++			goto fail;
++		probe->prefix[uprobe->prefix_size] = 0;
++		probe->prefix_size = uprobe->prefix_size + 1;
++	}
++	probe->hdr.addr = uprobe->addr;
++
++	ret = logdev_probe_add_var(lh);
++	if (ret < 0)
++		goto fail;
++
++	mutex_lock(&probe_list_lock);
++	list_add_tail_rcu(&lh->list, &logdev_probes);
++	mutex_unlock(&probe_list_lock);
++
++	return ret;
++
++ fail:
++	if (uprobe)
++		kfree(uprobe);
++	if (lh)
++		kfree(lh);
++	return ret;
++}
++
++static int logdev_probe_ioctl(struct inode *inode, struct file *filp,
++			      unsigned int cmd, unsigned long arg)
++{
++	int ret = 0;
++
++	switch (cmd) {
++	case LOGPROBE_ADDWATCH:
++
++		ret = logdev_setup_probe_watch((unsigned long __user *)arg);
++
++		break;
++
++	case LOGPROBE_ADDFUNC:
++
++		ret = logdev_setup_probe_func((unsigned long __user *)arg);
++
++		break;
++
++	case LOGPROBE_ADDCURR:
++
++		ret = logdev_setup_probe_curr((unsigned long __user *)arg);
++
++		break;
++
++	case LOGPROBE_ADDVAR:
++
++		ret = logdev_setup_probe_var((unsigned long __user *)arg);
++
++		break;
++
++	case LOGPROBE_DELPOINT:
++	{
++		struct logdev_probe *lp;
++		unsigned long id = arg;
++
++		mutex_lock(&probe_list_lock);
++		list_for_each_entry_rcu(lp, &logdev_probes, list)
++			if (lp->id == id)
++				break;
++		if (&lp->list != &logdev_probes)
++			list_del_rcu(&lp->list);
++		else
++			lp = NULL;
++		mutex_unlock(&probe_list_lock);
++
++		if (!lp)
++			return -EINVAL;
++
++		switch (lp->type) {
++		case LOGPROBE_BP:
++			unregister_kprobe(&lp->watch.kp);
++			synchronize_rcu();
++			break;
++		case LOGPROBE_FUNC:
++			unregister_jprobe(&lp->func.jp);
++			synchronize_rcu();
++
++			if (lp->func.fmt1)
++				kfree(lp->func.fmt1);
++			if (lp->func.fmt2)
++				kfree(lp->func.fmt2);
++			break;
++		case LOGPROBE_CURR:
++			unregister_kprobe(&lp->curr.kp);
++			synchronize_rcu();
++			if (lp->curr.prefix)
++				kfree(lp->curr.prefix);
++			break;
++		case LOGPROBE_VAR:
++			unregister_kprobe(&lp->var.kp);
++			synchronize_rcu();
++			if (lp->var.prefix)
++				kfree(lp->var.prefix);
++			break;
++		default:
++			printk(KERN_WARNING "unregistering logdev probe of"
++			       "unknown type %d\n",
++			       lp->type);
++			/*
++			 * Don't even free this. We don't know where it
++			 * is registered, and this is most certainly a bug!
++			 */
++			return -EINVAL;
++		}
++
++		kfree(lp);
++
++		break;
++	}
++	default:
++		ret = -ENOTTY;
++	}
++
++	return ret;
++}
++
++
++/******************* List kprobe entries *****************/
++
++static void __kprobes *s_next(struct seq_file *m, void *v, loff_t *pos)
++{
++	struct logdev_probe *p = NULL;
++	int l = 0;
++
++	list_for_each_entry(p, &logdev_probes, list) {
++		if (l++ >= *pos)
++			break;
++	}
++
++	(*pos)++;
++
++	if (&p->list == &logdev_probes)
++		return NULL;
++
++	return p;
++}
++
++static void __kprobes *s_start(struct seq_file *m, loff_t *pos)
++	__acquires(logdev_dev.lock)
++{
++	struct logdev_probe *p = NULL;
++	loff_t l = 0;
++
++	rcu_read_lock();
++
++	list_for_each_entry(p, &logdev_probes, list) {
++		if (l++ >= *pos)
++			break;
++	}
++
++	if (&p->list == &logdev_probes)
++		return NULL;
++
++	(*pos)++;
++
++	return p;
++}
++
++static void __kprobes s_stop(struct seq_file *m, void *p)
++	__releases(logdev_dev.lock)
++{
++	rcu_read_unlock();
++}
++
++static void hdr_show(struct seq_file *m, struct logdev_probe_hdr *p)
++{
++	seq_printf(m,"%s : %p\n",
++		   p->func_symbol,
++		   (void*)p->addr);
++}
++
++static int __kprobes s_show(struct seq_file *m, void *v)
++{
++	struct logdev_probe *lh = v;
++	struct logdev_probe_watch *watch = &lh->watch;
++	struct logdev_probe_func *func = &lh->func;
++	struct logdev_probe_curr *curr = &lh->curr;
++	struct logdev_probe_var *var = &lh->var;
++
++	seq_printf(m, "%ld:\t", lh->id);
++	switch (lh->type) {
++	case LOGPROBE_BP:
++		hdr_show(m, &watch->hdr);
++		if (watch->var)
++			seq_printf(m,"\t%s : %p\n",
++				   watch->var_symbol,
++				   (void*)watch->var);
++		break;
++	case LOGPROBE_FUNC:
++		hdr_show(m, &func->hdr);
++		if (func->fmt1)
++			seq_printf(m,"\tfmt1: %s\n",
++				   func->fmt1);
++		if (func->fmt2)
++			seq_printf(m,"\tfmt2: %s\n",
++				   func->fmt2);
++		break;
++
++	case LOGPROBE_CURR:
++		hdr_show(m, &curr->hdr);
++		seq_printf(m,"\tindex: %d (0x%x)\n",
++			   curr->index, curr->index);
++		if (curr->prefix)
++			seq_printf(m,"\tprefix: %s\n",
++				   curr->prefix);
++		break;
++
++	case LOGPROBE_VAR:
++		hdr_show(m, &var->hdr);
++		switch (var->type) {
++		case LOGPROBE_TYPE_PREEMPT:
++			seq_printf(m,"\tpreempt_count\n");
++			break;
++		default:
++			seq_printf(m,"\tunknown type\n");
++		}
++		if (curr->prefix)
++			seq_printf(m,"\tprefix: %s\n",
++				   curr->prefix);
++		break;
++
++	default:
++		seq_printf(m,"tunknown type %d\n",
++			   lh->type);
++	}
++	return 0;
++}
++
++static struct seq_operations logdev_seq_op = {
++	.start = s_start,
++	.next = s_next,
++	.stop = s_stop,
++	.show = s_show,
++};
++
++/******************* end list kprobes *****************/
++
++static int logdev_probe_open (struct inode *inode, struct file *filp)
++{
++	int ret;
++
++	ret = seq_open(filp, &logdev_seq_op);
++	if (!ret) {
++		struct seq_file *m = filp->private_data;
++		m->private = inode->u.generic_ip;
++	}
++
++	return ret;
++}
++
++
++static struct file_operations logdev_probe_fops = {
++	.read		= seq_read,
++	.ioctl		= logdev_probe_ioctl,
++	.open		= logdev_probe_open,
++	.llseek		= seq_lseek,
++	.release	= seq_release,
++};
++
++/************************ End User Land ******************************/
++
++
++
++static int __init logdev_probe_init(void)
++{
++	debugfs_create_file("probe", 0600, logdev_d,
++			    NULL, &logdev_probe_fops);
++
++	logdev_register_callback(LOGPROBE_ID_WATCH, logdev_probe_callback);
++	logdev_register_callback(LOGPROBE_ID_FUNC, logdev_probe_callback);
++	logdev_register_callback(LOGPROBE_ID_CURR, logdev_probe_callback);
++	logdev_register_callback(LOGPROBE_ID_VAR, logdev_probe_callback);
++
++	/* just some decent number */
++	logdev_probe_buffer_sz = 256;
++	logdev_probe_buffer = kmalloc(logdev_probe_buffer_sz, GFP_KERNEL);
++
++	/* If we fail, really no harm done */
++	if (!logdev_probe_buffer) {
++		logdev_probe_buffer_sz = 0;
++		printk("logdev_probe: Warning, couldn't allocate func buffer\n");
++	}
++
++	return 0;
++}
++
++module_init(logdev_probe_init);
