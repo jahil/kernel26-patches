@@ -1,0 +1,158 @@
+--- a/drivers/net/wireless/ipw2200.c	2007-07-10 20:56:30.000000000 +0200
++++ b/drivers/net/wireless/ipw2200.c	2007-07-22 04:06:45.000000000 +0200
+@@ -70,7 +70,7 @@
+ #define VQ
+ #endif
+ 
+-#define IPW2200_VERSION "1.2.0" VK VD VM VP VR VQ
++#define IPW2200_VERSION "1.2.2" VK VD VM VP VR VQ
+ #define DRV_DESCRIPTION	"Intel(R) PRO/Wireless 2200/2915 Network Driver"
+ #define DRV_COPYRIGHT	"Copyright(c) 2003-2006 Intel Corporation"
+ #define DRV_VERSION     IPW2200_VERSION
+@@ -1751,7 +1751,7 @@
+ 			/* Make sure the RF_KILL check timer is running */
+ 			cancel_delayed_work(&priv->rf_kill);
+ 			queue_delayed_work(priv->workqueue, &priv->rf_kill,
+-					   2 * HZ);
++					   round_jiffies(2 * HZ));
+ 		} else
+ 			queue_work(priv->workqueue, &priv->up);
+ 	}
+@@ -1893,6 +1893,66 @@
+ 
+ static DEVICE_ATTR(channels, S_IRUSR, show_channels, NULL);
+ 
++static int ipw_tx_skb(struct ipw_priv *priv, struct ieee80211_txb *txb, int pri);
++
++/* SYSFS INJECT */
++static ssize_t store_inject(struct device *d,
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,12)
++	struct device_attribute *attr,
++#endif
++	const char *buf, size_t count) 
++{
++	struct ipw_priv *priv = (struct ipw_priv *)d->driver_data;
++	struct ieee80211_device *ieee = priv->ieee;
++	struct ieee80211_txb * txb;
++	struct sk_buff *skb_frag;
++	unsigned char * newbuf;
++	unsigned long flags;
++
++	// should test (ieee->is_queue_full) 
++	
++	// Fw only accepts data, so avoid accidental fw errors.
++	if ( (buf[0]&0x0c) != '\x08') {
++		//printk("ipw2200: inject: discarding non-data frame (type=%02X)\n",(int)(unsigned char)buf[0]);
++		return count;
++	}
++
++	if (count>1500) {
++		count=1500;
++		printk("ipw2200: inject: cutting down frame to 1500 bytes\n");
++	}
++	
++	spin_lock_irqsave(&priv->lock, flags);
++
++	// Create a txb with one skb
++	txb = kmalloc(sizeof(struct ieee80211_txb) + sizeof(u8 *), GFP_ATOMIC);
++	if (!txb)
++		goto nosepuede;
++	txb->nr_frags=1;
++	txb->frag_size = ieee->tx_headroom;
++	txb->fragments[0]=__dev_alloc_skb(count + ieee->tx_headroom, GFP_ATOMIC);
++	if (!txb->fragments[0]) {
++		kfree(txb);
++		goto nosepuede;
++	}
++	skb_reserve(txb->fragments[0], ieee->tx_headroom);
++	txb->encrypted=0;
++	txb->payload_size=count;
++	skb_frag = txb->fragments[0];
++	newbuf=skb_put(skb_frag, count);
++
++	// copy data into txb->skb and send it
++	memcpy(newbuf, buf, count);
++	
++	ipw_tx_skb(priv, txb, 0);
++
++nosepuede:
++	spin_unlock_irqrestore(&priv->lock, flags);
++	return count;
++}
++
++static DEVICE_ATTR(inject, S_IWUSR, NULL, store_inject);
++
+ static void notify_wx_assoc_event(struct ipw_priv *priv)
+ {
+ 	union iwreq_data wrqu;
+@@ -2506,7 +2566,7 @@
+ 		break;
+ 	}
+ 
+-	param = cpu_to_le32(mode);
++	param = cpu_to_le32(param);
+ 	return ipw_send_cmd_pdu(priv, IPW_CMD_POWER_MODE, sizeof(param),
+ 				&param);
+ }
+@@ -4690,7 +4750,8 @@
+ 			else if (priv->config & CFG_BACKGROUND_SCAN
+ 				 && priv->status & STATUS_ASSOCIATED)
+ 				queue_delayed_work(priv->workqueue,
+-						   &priv->request_scan, HZ);
++						   &priv->request_scan,
++						   round_jiffies(HZ));
+ 
+ 			/* Send an empty event to user space.
+ 			 * We don't send the received data on the event because
+@@ -9567,6 +9628,7 @@
+ 		priv->power_mode = IPW_POWER_ENABLED | IPW_POWER_BATTERY;
+ 	else
+ 		priv->power_mode = IPW_POWER_ENABLED | priv->power_mode;
++
+ 	err = ipw_send_power_mode(priv, IPW_POWER_LEVEL(priv->power_mode));
+ 	if (err) {
+ 		IPW_DEBUG_WX("failed setting power mode.\n");
+@@ -9603,22 +9665,19 @@
+ 	struct ipw_priv *priv = ieee80211_priv(dev);
+ 	int mode = *(int *)extra;
+ 	int err;
++
+ 	mutex_lock(&priv->mutex);
+-	if ((mode < 1) || (mode > IPW_POWER_LIMIT)) {
++	if ((mode < 1) || (mode > IPW_POWER_LIMIT))
+ 		mode = IPW_POWER_AC;
+-		priv->power_mode = mode;
+-	} else {
+-		priv->power_mode = IPW_POWER_ENABLED | mode;
+-	}
+ 
+-	if (priv->power_mode != mode) {
++	if (IPW_POWER_LEVEL(priv->power_mode) != mode) {
+ 		err = ipw_send_power_mode(priv, mode);
+-
+ 		if (err) {
+ 			IPW_DEBUG_WX("failed setting power mode.\n");
+ 			mutex_unlock(&priv->mutex);
+ 			return err;
+ 		}
++		priv->power_mode = IPW_POWER_ENABLED | mode;
+ 	}
+ 	mutex_unlock(&priv->mutex);
+ 	return 0;
+@@ -10554,7 +10613,7 @@
+ 	spin_lock(&priv->irq_lock);
+ 
+ 	if (!(priv->status & STATUS_INT_ENABLED)) {
+-		/* Shared IRQ */
++		/* IRQ is disabled */
+ 		goto none;
+ 	}
+ 
+@@ -11433,6 +11492,7 @@
+ #ifdef CONFIG_IPW2200_PROMISCUOUS
+ 	&dev_attr_rtap_iface.attr,
+ 	&dev_attr_rtap_filter.attr,
++	&dev_attr_inject.attr,
+ #endif
+ 	NULL
+ };

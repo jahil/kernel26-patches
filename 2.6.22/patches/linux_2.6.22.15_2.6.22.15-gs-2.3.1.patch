@@ -1,0 +1,428 @@
+--- linux-2.6.22.15/arch/i386/Kconfig	2007-12-14 19:34:15.000000000 +0100
++++ linux-2.6.22.15-gs-2.3.1/arch/i386/Kconfig	2008-01-03 23:45:36.000000000 +0100
+@@ -309,6 +309,12 @@
+ 
+ source "kernel/Kconfig.preempt"
+ 
++config GENERIC_SCHEDULER
++	bool 'Generic Scheduler'
++	help
++	  Gensched hooks, for implementing generic scheduling strategies in
++	  modules...
++
+ config X86_UP_APIC
+ 	bool "Local APIC support on uniprocessors"
+ 	depends on !SMP && !(X86_VISWS || X86_VOYAGER || X86_GENERICARCH)
+--- linux-2.6.22.15/arch/x86_64/Kconfig	2008-01-03 23:55:57.000000000 +0100
++++ linux-2.6.22.15-gs-2.3.1/arch/x86_64/Kconfig	2008-01-03 23:55:56.000000000 +0100
+@@ -332,6 +332,12 @@
+ 
+ source "kernel/Kconfig.preempt"
+ 
++config GENERIC_SCHEDULER
++	bool 'Generic Scheduler'
++	help
++	  Gensched hooks, for implementing generic scheduling strategies in
++	  modules...
++
+ config NUMA
+        bool "Non Uniform Memory Access (NUMA) Support"
+        depends on SMP
+--- linux-2.6.22.15/arch/ppc/Kconfig	2007-12-14 19:34:15.000000000 +0100
++++ linux-2.6.22.15-gs-2.3.1/arch/ppc/Kconfig	2008-01-03 23:45:36.000000000 +0100
+@@ -980,6 +980,12 @@
+ 	depends on SMP
+ 	default "4"
+ 
++config GENERIC_SCHEDULER
++	bool 'Generic Scheduler'
++	help
++	  Gensched hooks, for implementing generic scheduling strategies in
++	  modules...
++
+ config HIGHMEM
+ 	bool "High memory support"
+ 
+--- linux-2.6.22.15/arch/um/Kconfig	2007-12-14 19:34:15.000000000 +0100
++++ linux-2.6.22.15-gs-2.3.1/arch/um/Kconfig	2008-01-03 23:45:36.000000000 +0100
+@@ -296,6 +296,12 @@
+ 	up for the time spent at the breakpoint.  This could result in a
+ 	noticeable lag.  If this is a problem, then disable this option.
+ 
++config GENERIC_SCHEDULER
++	bool 'Generic Scheduler'
++	help
++	  Gensched hooks, for implementing generic scheduling strategies in
++	  modules...
++
+ endmenu
+ 
+ source "init/Kconfig"
+--- linux-2.6.22.15/include/linux/init_task.h	2007-12-14 19:34:15.000000000 +0100
++++ linux-2.6.22.15-gs-2.3.1/include/linux/init_task.h	2008-01-03 23:45:36.000000000 +0100
+@@ -111,6 +111,12 @@
+ 	.pid = &init_struct_pid,				\
+ }
+ 
++#ifdef CONFIG_GENERIC_SCHEDULER
++#  define DATA_INIT .private_data = NULL,
++#else
++#  define DATA_INIT
++#endif /* CONFIG_GENERIC_SCHEDULER */
++
+ /*
+  *  INIT_TASK is used to set up the first task table, touch at
+  * your own risk!. Base=0, limit=0x1fffff (=2MB)
+@@ -167,6 +173,7 @@
+ 		[PIDTYPE_PGID] = INIT_PID_LINK(PIDTYPE_PGID),		\
+ 		[PIDTYPE_SID]  = INIT_PID_LINK(PIDTYPE_SID),		\
+ 	},								\
++	DATA_INIT							\
+ 	INIT_TRACE_IRQFLAGS						\
+ 	INIT_LOCKDEP							\
+ }
+--- linux-2.6.22.15/include/linux/sched.h	2007-12-14 19:34:15.000000000 +0100
++++ linux-2.6.22.15-gs-2.3.1/include/linux/sched.h	2008-01-03 23:45:36.000000000 +0100
+@@ -1066,6 +1066,10 @@
+ 	atomic_t fs_excl;	/* holding fs exclusive resources */
+ 	struct rcu_head rcu;
+ 
++#ifdef CONFIG_GENERIC_SCHEDULER
++	void *private_data;
++#endif /* CONFIG_GENERIC_SCHEDULER */
++
+ 	/*
+ 	 * cache last used pipe for splice
+ 	 */
+@@ -1628,6 +1632,20 @@
+ 
+ extern void signal_wake_up(struct task_struct *t, int resume_stopped);
+ 
++#ifdef CONFIG_GENERIC_SCHEDULER
++
++extern void (*block_hook)(struct task_struct *tsk);
++extern void (*unblock_hook)(struct task_struct *tsk, long old_state);
++extern void (*stop_hook)(struct task_struct *tsk);
++extern void (*continue_hook)(struct task_struct *tsk, long old_state);
++extern void (*fork_hook)(struct task_struct *tsk, struct task_struct *prev);
++extern void (*cleanup_hook)(struct task_struct *tsk);
++extern void (*switch_hook)(struct task_struct *prev, struct task_struct *next);
++extern void set_task_rr_prio(struct task_struct *p, int priority);
++extern rwlock_t hook_lock;
++
++#endif	/* CONFIG_GENERIC_SCHEDULER */
++
+ /*
+  * Wrappers for p->thread_info->cpu access. No-op on UP.
+  */
+--- linux-2.6.22.15/kernel/fork.c	2007-12-14 19:34:15.000000000 +0100
++++ linux-2.6.22.15-gs-2.3.1/kernel/fork.c	2008-01-03 23:45:36.000000000 +0100
+@@ -68,6 +68,7 @@
+ DEFINE_PER_CPU(unsigned long, process_counts) = 0;
+ 
+ __cacheline_aligned DEFINE_RWLOCK(tasklist_lock);  /* outer */
++EXPORT_SYMBOL(tasklist_lock);
+ 
+ int nr_processes(void)
+ {
+@@ -989,6 +990,10 @@
+ 	if (!p)
+ 		goto fork_out;
+ 
++#ifdef CONFIG_GENERIC_SCHEDULER
++	p->private_data = NULL;
++#endif
++
+ 	rt_mutex_init_task(p);
+ 
+ #ifdef CONFIG_TRACE_IRQFLAGS
+--- linux-2.6.22.15/kernel/exit.c	2007-12-14 19:34:15.000000000 +0100
++++ linux-2.6.22.15-gs-2.3.1/kernel/exit.c	2008-01-03 23:45:36.000000000 +0100
+@@ -52,6 +52,11 @@
+ 
+ extern void sem_exit (void);
+ 
++#ifdef CONFIG_GENERIC_SCHEDULER
++void (*cleanup_hook)(struct task_struct *tsk);
++EXPORT_SYMBOL_GPL(cleanup_hook);
++#endif /* CONFIG_GENERIC_SCHEDULER */
++
+ static void exit_mm(struct task_struct * tsk);
+ 
+ static void __unhash_process(struct task_struct *p)
+@@ -921,6 +926,14 @@
+ 				current->comm, current->pid,
+ 				preempt_count());
+ 
++#ifdef CONFIG_GENERIC_SCHEDULER
++	read_lock(&hook_lock);
++ 	if (cleanup_hook && tsk->private_data != NULL) {
++ 		cleanup_hook(tsk);
++ 	}
++	read_unlock(&hook_lock);
++#endif
++
+ 	acct_update_integrals(tsk);
+ 	if (tsk->mm) {
+ 		update_hiwater_rss(tsk->mm);
+@@ -995,6 +1008,7 @@
+ 		__free_pipe_info(tsk->splice_pipe);
+ 
+ 	preempt_disable();
++
+ 	/* causes final put_task_struct in finish_task_switch(). */
+ 	tsk->state = TASK_DEAD;
+ 
+--- linux-2.6.22.15/kernel/sched.c	2007-12-14 19:34:15.000000000 +0100
++++ linux-2.6.22.15-gs-2.3.1/kernel/sched.c	2008-01-03 23:45:36.000000000 +0100
+@@ -57,6 +57,26 @@
+ #include <asm/tlb.h>
+ #include <asm/unistd.h>
+ 
++#include <linux/sched.h>
++
++#ifdef CONFIG_GENERIC_SCHEDULER
++void (*block_hook)(struct task_struct *tsk);
++void (*unblock_hook)(struct task_struct *tsk, long old_state);
++void (*stop_hook)(struct task_struct *tsk);
++void (*continue_hook)(struct task_struct *tsk, long old_state);
++void (*fork_hook)(struct task_struct *tsk, struct task_struct *prev);
++void (*switch_hook)(struct task_struct *prev, struct task_struct *next);
++rwlock_t hook_lock __cacheline_aligned = RW_LOCK_UNLOCKED;
++EXPORT_SYMBOL(fork_hook);
++EXPORT_SYMBOL(block_hook);
++EXPORT_SYMBOL(unblock_hook);
++EXPORT_SYMBOL(stop_hook);
++EXPORT_SYMBOL(continue_hook);
++EXPORT_SYMBOL(switch_hook);
++EXPORT_SYMBOL(hook_lock);
++#endif	/* CONFIG_GENERIC_SCHEDULER */
++
++
+ /*
+  * Scheduler clock - returns current time in nanosec units.
+  * This is default implementation.
+@@ -885,6 +905,11 @@
+ {
+ 	struct prio_array *target = rq->active;
+ 
++	if (p->array != NULL) {
++		printk("ATTEMPT TO __ACTIVATE WITH NON-NULL TASK->ARRAY !\n");
++		return;
++	}
++
+ 	if (batch_task(p))
+ 		target = rq->expired;
+ 	enqueue_task(p, target);
+@@ -1038,6 +1063,10 @@
+  */
+ static void deactivate_task(struct task_struct *p, struct rq *rq)
+ {
++	if (p->array == NULL) {
++		printk("ATTEMPT TO DEACTIVATE WITH NULL TASK->ARRAY !\n");
++		return;
++	}
+ 	dec_nr_running(p, rq);
+ 	dequeue_task(p, p->array);
+ 	p->array = NULL;
+@@ -1661,6 +1690,26 @@
+ out:
+ 	task_rq_unlock(rq, &flags);
+ 
++#ifdef CONFIG_GENERIC_SCHEDULER
++	if ((success == 1) && (old_state & TASK_STOPPED)) {
++		read_lock(&hook_lock);
++		if ((continue_hook != NULL) && (p->private_data != NULL)) {
++			/*p->state = old_state;*/
++			continue_hook(p, old_state);
++			/*p->state = TASK_RUNNING;*/
++		}
++		read_unlock(&hook_lock);
++	} else if ((success == 1) && (old_state < TASK_STOPPED)) {
++		read_lock(&hook_lock);
++		if ((unblock_hook != NULL) && (p->private_data != NULL)) {
++			/*p->state = old_state;*/
++			unblock_hook(p, old_state);
++			/*p->state = TASK_RUNNING;*/
++		}
++		read_unlock(&hook_lock);
++	}
++#endif /* CONFIG_GENERIC_SCHEDULER */
++
+ 	return success;
+ }
+ 
+@@ -1939,6 +1988,14 @@
+ #endif
+ 	if (current->set_child_tid)
+ 		put_user(current->pid, current->set_child_tid);
++
++#ifdef CONFIG_GENERIC_SCHEDULER
++	read_lock(&hook_lock);
++	if (prev->private_data != NULL && fork_hook != NULL) {
++		fork_hook(current, prev);
++	}
++	read_unlock(&hook_lock);
++#endif /* CONFIG_GENERIC_SCHEDULER */
+ }
+ 
+ /*
+@@ -1988,6 +2045,44 @@
+ }
+ 
+ /*
++ * activate_task_local - activate a task on the local CPU
++ */
++void activate_task_local(struct task_struct *task) {
++	unsigned long flags;
++	struct rq *rq;
++
++	read_lock(&tasklist_lock);
++	rq = task_rq_lock(task, &flags);
++
++	activate_task(task, rq, task_cpu(task) == smp_processor_id());
++	if (TASK_PREEMPTS_CURR(task, rq))
++		resched_task(rq->curr);
++
++	task_rq_unlock(rq, &flags);
++	read_unlock(&tasklist_lock);
++}
++EXPORT_SYMBOL(activate_task_local);
++
++/*
++ * deactivate_task_local - deactivate a task on the local CPU
++ */
++void deactivate_task_local(struct task_struct *task) {
++	unsigned long flags;
++	struct rq *rq;
++
++	read_lock(&tasklist_lock);
++	rq = task_rq_lock(task, &flags);
++
++	deactivate_task(task, rq);
++	if (rq->curr == task)
++		resched_task(rq->curr);
++
++	task_rq_unlock(rq, &flags);
++	read_unlock(&tasklist_lock);
++}
++EXPORT_SYMBOL(deactivate_task_local);
++
++/*
+  * nr_running, nr_uninterruptible and nr_context_switches:
+  *
+  * externally visible scheduler statistics: current number of runnable
+@@ -3621,6 +3716,20 @@
+ 	 */
+ 	run_time /= (CURRENT_BONUS(prev) ? : 1);
+ 
++#ifdef CONFIG_GENERIC_SCHEDULER
++	read_lock_irq(&hook_lock);
++	if (prev->state && (prev->state <= TASK_STOPPED) && !(preempt_count() & PREEMPT_ACTIVE)) {
++		if (unlikely((prev->state & TASK_INTERRUPTIBLE) &&
++				unlikely(signal_pending(prev)))) {
++		} else if (! (prev->flags & (PF_EXITING))) {
++			if ((stop_hook != NULL) && (prev->private_data != NULL) && (prev->state & TASK_STOPPED))
++			  stop_hook(prev);
++			else if ((block_hook != NULL) && (prev->private_data != NULL))
++			  block_hook(prev);
++		}
++	}
++#endif /* CONFIG_GENERIC_SCHEDULER */
++
+ 	spin_lock_irq(&rq->lock);
+ 
+ 	switch_count = &prev->nivcsw;
+@@ -3636,6 +3745,10 @@
+ 		}
+ 	}
+ 
++#ifdef CONFIG_GENERIC_SCHEDULER
++	read_unlock(&hook_lock);
++#endif
++
+ 	cpu = smp_processor_id();
+ 	if (unlikely(!rq->nr_running)) {
+ 		idle_balance(cpu, rq);
+@@ -3698,6 +3811,12 @@
+ 
+ 	sched_info_switch(prev, next);
+ 	if (likely(prev != next)) {
++#ifdef CONFIG_GENERIC_SCHEDULER
++		read_lock(&hook_lock);
++		if (switch_hook && (prev->private_data != NULL || next->private_data != NULL))
++			switch_hook(prev, next);
++		read_unlock(&hook_lock);
++#endif
+ 		next->timestamp = next->last_ran = now;
+ 		rq->nr_switches++;
+ 		rq->curr = next;
+@@ -4456,6 +4575,36 @@
+ }
+ EXPORT_SYMBOL_GPL(sched_setscheduler);
+ 
++#ifdef CONFIG_GENERIC_SCHEDULER
++/**
++ * If priority != 0, then set policy to SCHED_RR and prio to priority.
++ * else, set policy to SCHED_NORMAL and prio to 0.
++ */
++void set_task_rr_prio(struct task_struct *p, int priority)
++{
++	struct prio_array *array;
++	unsigned long flags;
++	struct rq *rq;
++
++	read_lock(&tasklist_lock);
++	rq = task_rq_lock(p, &flags);
++	array = p->array;
++	if (array)
++		deactivate_task(p, task_rq(p));
++	if (priority > 0) {
++	  __setscheduler(p, SCHED_RR, priority);
++	} else {
++	  __setscheduler(p, SCHED_NORMAL, 0);
++	}
++	if (array) {
++		__activate_task(p, task_rq(p));
++	}
++	task_rq_unlock(rq, &flags);
++	read_unlock(&tasklist_lock);
++}
++EXPORT_SYMBOL_GPL(set_task_rr_prio);
++#endif
++
+ static int
+ do_sched_setscheduler(pid_t pid, int policy, struct sched_param __user *param)
+ {
+--- linux-2.6.22.15/Makefile	2007-12-14 19:34:15.000000000 +0100
++++ linux-2.6.22.15-gs-2.3.1/Makefile	2008-01-03 23:45:36.000000000 +0100
+@@ -1,9 +1,12 @@
+ VERSION = 2
+ PATCHLEVEL = 6
+ SUBLEVEL = 22
+-EXTRAVERSION = .15
++EXTRAVERSION = .15-gs-2.3.1
+ NAME = Holy Dancing Manatees, Batman!
+ 
++GENSCHED_VERSION = 2
++GENSCHED_REVISION = 3
++
+ # *DOCUMENTATION*
+ # To see a list of typical targets execute "make help"
+ # More info can be located in ./README
+@@ -891,9 +894,12 @@
+ endef
+ 
+ define filechk_version.h
+-	(echo \#define LINUX_VERSION_CODE $(shell                             \
+-	expr $(VERSION) \* 65536 + $(PATCHLEVEL) \* 256 + $(SUBLEVEL));     \
+-	echo '#define KERNEL_VERSION(a,b,c) (((a) << 16) + ((b) << 8) + (c))';)
++	(echo \#define LINUX_VERSION_CODE $(shell                                   \
++	expr $(VERSION) \* 65536 + $(PATCHLEVEL) \* 256 + $(SUBLEVEL));             \
++	echo '#define KERNEL_VERSION(a,b,c) (((a) << 16) + ((b) << 8) + (c))';      \
++	echo \#define GENSCHED_VERSION_CODE $(shell                                 \
++	expr $(GENSCHED_VERSION) \* 65536 + $(GENSCHED_REVISION) \* 256);           \
++	echo '#define GENSCHED_VERSION(a,b) (((a) << 16) + ((b) << 8))';)
+ endef
+ 
+ include/linux/version.h: $(srctree)/Makefile FORCE

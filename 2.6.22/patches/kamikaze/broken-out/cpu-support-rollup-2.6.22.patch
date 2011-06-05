@@ -1,0 +1,333 @@
+---
+ arch/i386/kernel/cpu/Makefile      |   16 ++++-----
+ arch/i386/kernel/cpu/common.c      |   21 ++++++++++++
+ arch/i386/kernel/cpu/mtrr/Makefile |    5 +-
+ arch/i386/kernel/cpu/mtrr/cyrix.c  |    2 -
+ arch/i386/kernel/cpu/mtrr/main.c   |   14 +++++++-
+ arch/i386/lib/usercopy.c           |    2 -
+ arch/i386/mm/init.c                |   12 ++++++-
+ arch/i386/kernel/process.c         |    5 +-
+ init/Kconfig                       |   63 +++++++++++++++++++++++++++++++++++++
+ 9 files changed, 125 insertions(+), 15 deletions(-)
+
+Index: linux-2.6.20-dev/arch/i386/kernel/cpu/Makefile
+===================================================================
+--- linux-2.6.20-dev.orig/arch/i386/kernel/cpu/Makefile
++++ linux-2.6.20-dev/arch/i386/kernel/cpu/Makefile
+@@ -4,14 +4,14 @@
+ 
+ obj-y	:=	common.o proc.o
+ 
+-obj-y	+=	amd.o
+-obj-y	+=	cyrix.o
+-obj-y	+=	centaur.o
+-obj-y	+=	transmeta.o
+-obj-y	+=	intel.o intel_cacheinfo.o
+-obj-y	+=	rise.o
+-obj-y	+=	nexgen.o
+-obj-y	+=	umc.o
++obj-$(CONFIG_CPU_SUP_AMD)	+=	amd.o
++obj-$(CONFIG_CPU_SUP_CYRIX)	+=	cyrix.o
++obj-$(CONFIG_CPU_SUP_CENTAUR)	+=	centaur.o
++obj-$(CONFIG_CPU_SUP_TRANSMETA)	+=	transmeta.o
++obj-$(CONFIG_CPU_SUP_INTEL)	+=	intel.o intel_cacheinfo.o
++obj-$(CONFIG_CPU_SUP_RISE)	+=	rise.o
++obj-$(CONFIG_CPU_SUP_NEXGEN)	+=	nexgen.o
++obj-$(CONFIG_CPU_SUP_UMC)	+=	umc.o
+ 
+ obj-$(CONFIG_X86_MCE)	+=	mcheck/
+ 
+Index: linux-2.6.20-dev/arch/i386/kernel/cpu/common.c
+===================================================================
+--- linux-2.6.20-dev.orig/arch/i386/kernel/cpu/common.c
++++ linux-2.6.20-dev/arch/i386/kernel/cpu/common.c
+@@ -13,6 +13,7 @@
+ #include <asm/mmu_context.h>
+ #include <asm/mtrr.h>
+ #include <asm/mce.h>
++#include <asm/uaccess.h>
+ #ifdef CONFIG_X86_LOCAL_APIC
+ #include <asm/mpspec.h>
+ #include <asm/apic.h>
+@@ -333,7 +334,9 @@ static void __cpuinit generic_identify(s
+ 		}
+ 	}
+ 
++#ifdef CONFIG_CPU_SUP_INTEL
+ 	early_intel_workaround(c);
++#endif
+ 
+ #ifdef CONFIG_X86_HT
+ 	c->phys_proc_id = (cpuid_ebx(1) >> 24) & 0xff;
+@@ -588,15 +591,33 @@ extern int umc_init_cpu(void);
+ 
+ void __init early_cpu_init(void)
+ {
++#ifdef CONFIG_CPU_SUP_INTEL
+ 	intel_cpu_init();
++#endif
++#ifdef CONFIG_CPU_SUP_CYRIX
+ 	cyrix_init_cpu();
++#endif
++#ifdef CONFIG_CPU_SUP_NSC
+ 	nsc_init_cpu();
++#endif
++#ifdef CONFIG_CPU_SUP_AMD
+ 	amd_init_cpu();
++#endif
++#ifdef CONFIG_CPU_SUP_CENTAUR
+ 	centaur_init_cpu();
++#endif
++#ifdef CONFIG_CPU_SUP_TRANSMETA
+ 	transmeta_init_cpu();
++#endif
++#ifdef CONFIG_CPU_SUP_RISE
+ 	rise_init_cpu();
++#endif
++#ifdef CONFIG_CPU_SUP_NEXGEN
+ 	nexgen_init_cpu();
++#endif
++#ifdef CONFIG_CPU_SUP_UMC
+ 	umc_init_cpu();
++#endif
+ 	early_cpu_detect();
+ 
+ #ifdef CONFIG_DEBUG_PAGEALLOC
+Index: linux-2.6.20-dev/arch/i386/kernel/cpu/mtrr/Makefile
+===================================================================
+--- linux-2.6.20-dev.orig/arch/i386/kernel/cpu/mtrr/Makefile
++++ linux-2.6.20-dev/arch/i386/kernel/cpu/mtrr/Makefile
+@@ -1,3 +1,4 @@
+ obj-y		:= main.o if.o generic.o state.o
+-obj-$(CONFIG_X86_32) += amd.o cyrix.o centaur.o
+-
++obj-$(CONFIG_CPU_SUP_AMD)     += amd.o
++obj-$(CONFIG_CPU_SUP_CYRIX)   += cyrix.o
++obj-$(CONFIG_CPU_SUP_CENTAUR) += centaur.o
+Index: linux-2.6.20-dev/arch/i386/kernel/cpu/mtrr/cyrix.c
+===================================================================
+--- linux-2.6.20-dev.orig/arch/i386/kernel/cpu/mtrr/cyrix.c
++++ linux-2.6.20-dev/arch/i386/kernel/cpu/mtrr/cyrix.c
+@@ -5,7 +5,7 @@
+ #include <asm/io.h>
+ #include "mtrr.h"
+ 
+-int arr3_protected;
++extern int arr3_protected;
+ 
+ static void
+ cyrix_get_arr(unsigned int reg, unsigned long *base,
+Index: linux-2.6.20-dev/arch/i386/kernel/cpu/mtrr/main.c
+===================================================================
+--- linux-2.6.20-dev.orig/arch/i386/kernel/cpu/mtrr/main.c
++++ linux-2.6.20-dev/arch/i386/kernel/cpu/mtrr/main.c
+@@ -60,7 +60,7 @@ static void set_mtrr(unsigned int reg, u
+ 		     unsigned long size, mtrr_type type);
+ 
+ #ifndef CONFIG_X86_64
+-extern int arr3_protected;
++int arr3_protected;
+ #else
+ #define arr3_protected 0
+ #endif
+@@ -574,10 +574,16 @@ extern void centaur_init_mtrr(void);
+ static void __init init_ifs(void)
+ {
+ #ifndef CONFIG_X86_64
++#ifdef CONFIG_CPU_SUP_AMD
+ 	amd_init_mtrr();
++#endif
++#ifdef CONFIG_CPU_SUP_CYRIX
+ 	cyrix_init_mtrr();
++#endif
++#ifdef CONFIG_CPU_SUP_CENTAUR
+ 	centaur_init_mtrr();
+ #endif
++#endif
+ }
+ 
+ /* The suspend/resume methods are only for CPU without MTRR. CPU using generic
+@@ -673,6 +679,7 @@ void __init mtrr_bp_init(void)
+ 		}
+ 	} else {
+ 		switch (boot_cpu_data.x86_vendor) {
++#ifdef CONFIG_CPU_SUP_AMD
+ 		case X86_VENDOR_AMD:
+ 			if (cpu_has_k6_mtrr) {
+ 				/* Pre-Athlon (K6) AMD CPU MTRRs */
+@@ -681,6 +688,8 @@ void __init mtrr_bp_init(void)
+ 				size_and_mask = 0;
+ 			}
+ 			break;
++#endif
++#ifdef CONFIG_CPU_SUP_CENTAUR
+ 		case X86_VENDOR_CENTAUR:
+ 			if (cpu_has_centaur_mcr) {
+ 				mtrr_if = mtrr_ops[X86_VENDOR_CENTAUR];
+@@ -688,6 +697,8 @@ void __init mtrr_bp_init(void)
+ 				size_and_mask = 0;
+ 			}
+ 			break;
++#endif
++#ifdef CONFIG_CPU_SUP_CYRIX
+ 		case X86_VENDOR_CYRIX:
+ 			if (cpu_has_cyrix_arr) {
+ 				mtrr_if = mtrr_ops[X86_VENDOR_CYRIX];
+@@ -695,6 +706,7 @@ void __init mtrr_bp_init(void)
+ 				size_and_mask = 0;
+ 			}
+ 			break;
++#endif
+ 		default:
+ 			break;
+ 		}
+Index: linux-2.6.20-dev/arch/i386/lib/usercopy.c
+===================================================================
+--- linux-2.6.20-dev.orig/arch/i386/lib/usercopy.c
++++ linux-2.6.20-dev/arch/i386/lib/usercopy.c
+@@ -16,7 +16,7 @@
+ 
+ static inline int __movsl_is_ok(unsigned long a1, unsigned long a2, unsigned long n)
+ {
+-#ifdef CONFIG_X86_INTEL_USERCOPY
++#if defined(CONFIG_CPU_SUP_INTEL) && defined(CONFIG_X86_INTEL_USERCOPY)
+ 	if (n >= 64 && ((a1 ^ a2) & movsl_mask.mask))
+ 		return 0;
+ #endif
+Index: linux-2.6.20-dev/arch/i386/mm/init.c
+===================================================================
+--- linux-2.6.20-dev.orig/arch/i386/mm/init.c
++++ linux-2.6.20-dev/arch/i386/mm/init.c
+@@ -185,12 +185,14 @@ static void __init kernel_physical_mappi
+ 	}
+ }
+ 
++#ifdef CONFIG_CPU_SUP_INTEL
+ static inline int page_kills_ppro(unsigned long pagenr)
+ {
+ 	if (pagenr >= 0x70000 && pagenr <= 0x7003F)
+ 		return 1;
+ 	return 0;
+ }
++#endif
+ 
+ int page_is_ram(unsigned long pagenr)
+ {
+@@ -276,7 +278,11 @@ static void __meminit free_new_highpage(
+ 
+ void __init add_one_highpage_init(struct page *page, int pfn, int bad_ppro)
+ {
+-	if (page_is_ram(pfn) && !(bad_ppro && page_kills_ppro(pfn))) {
++	if (page_is_ram(pfn)
++#ifdef CONFIG_CPU_SUP_INTEL
++		&& !(bad_ppro && page_kills_ppro(pfn))
++#endif
++		) {
+ 		ClearPageReserved(page);
+ 		free_new_highpage(page);
+ 	} else
+@@ -574,7 +580,11 @@ void __init mem_init(void)
+ 	BUG_ON(!mem_map);
+ #endif
+ 	
++#ifdef CONFIG_CPU_SUP_INTEL
+ 	bad_ppro = ppro_with_ram_bug();
++#else
++	bad_ppro = 0;
++#endif
+ 
+ #ifdef CONFIG_HIGHMEM
+ 	/* check that fixmap and pkmap do not overlap */
+Index: linux-2.6.20-dev/arch/i386/kernel/process.c
+===================================================================
+--- linux-2.6.20-dev.orig/arch/i386/kernel/process.c
++++ linux-2.6.20-dev/arch/i386/kernel/process.c
+@@ -287,10 +287,13 @@
+ 		if (smp_num_siblings > 1)
+ 			printk("WARNING: polling idle and HT enabled, performance may degrade.\n");
+ #endif
+-	} else if (!strcmp(str, "mwait"))
++	} else if (!strcmp(str, "mwait")) {
++#ifdef CONFIG_CPU_SUP_AMD
+		force_mwait = 1;
++#endif
++	}
+ 	else
+		return -1;
+
+        boot_option_idle_override = 1;
+        return 0;
+Index: linux-2.6.20-dev/init/Kconfig
+===================================================================
+--- linux-2.6.20-dev.orig/init/Kconfig
++++ linux-2.6.20-dev/init/Kconfig
+@@ -474,6 +474,69 @@ config EXECSHIELD_DISABLE
+           Say Y here to disable Exec Shield by default, otherwise it will
+           be enabled by default.
+ 
++menuconfig PROCESSOR_SELECT
++	depends X86_32
++	default y
++	bool "Supported processor vendors" if EMBEDDED
++	help
++	  This lets you choose what x86 vendor support code your kernel
++	  will include.
++
++config CPU_SUP_INTEL
++       default y if X86_32
++       bool "Support Intel processors" if PROCESSOR_SELECT
++       help
++         This enables extended support for Intel processors
++
++config CPU_SUP_CYRIX
++       default y if X86_32
++       bool "Support Cyrix processors" if PROCESSOR_SELECT
++       help
++         This enables extended support for Cyrix processors
++
++config CPU_SUP_NSC
++       default y if X86_32
++       bool "Support NSC processors" if PROCESSOR_SELECT
++       help
++         This enables extended support for NSC processors
++
++config CPU_SUP_AMD
++       default y if X86_32
++       depends on CPU_SUP_INTEL
++       bool "Support AMD processors" if PROCESSOR_SELECT
++       help
++         This enables extended support for AMD processors
++
++config CPU_SUP_CENTAUR
++       default y if X86_32
++       bool "Support Centaur processors" if PROCESSOR_SELECT
++       help
++         This enables extended support for Centaur processors
++
++config CPU_SUP_TRANSMETA
++       default y if X86_32
++       bool "Support Transmeta processors" if PROCESSOR_SELECT
++       help
++         This enables extended support for Transmeta processors
++
++config CPU_SUP_RISE
++       default y if X86_32
++       bool "Support Rise processors" if PROCESSOR_SELECT
++       help
++         This enables extended support for Rise processors
++
++config CPU_SUP_NEXGEN
++       default y if X86_32
++       bool "Support NexGen processors" if PROCESSOR_SELECT
++       help
++         This enables extended support for NexGen processors
++
++config CPU_SUP_UMC
++       default y if X86_32
++       bool "Support UMC processors" if PROCESSOR_SELECT
++       help
++         This enables extended support for UMC processors
++
+ endmenu		# General setup
+ 
+ config RT_MUTEXES

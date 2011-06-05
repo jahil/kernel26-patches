@@ -1,0 +1,2113 @@
+Index: linux-2.6.22/include/linux/sched.h
+===================================================================
+--- linux-2.6.22.orig/include/linux/sched.h
++++ linux-2.6.22/include/linux/sched.h
+@@ -37,6 +37,9 @@
+ 
+ #ifdef __KERNEL__
+ 
++#define SCHED_MAX		SCHED_BATCH
++#define SCHED_RANGE(policy)	((policy) <= SCHED_MAX)
++
+ struct sched_param {
+ 	int sched_priority;
+ };
+@@ -761,6 +765,22 @@ extern unsigned int max_cache_size;
+ 
+ #endif	/* CONFIG_SMP */
+ 
++/*
++ * A runqueue laden with a single nice 0 task scores a weighted_cpuload of
++ * SCHED_LOAD_SCALE. This function returns 1 if any cpu is laden with a
++ * task of nice 0 or enough lower priority tasks to bring up the
++ * weighted_cpuload
++ */
++static inline int above_background_load(void)
++{
++	unsigned long cpu;
++
++	for_each_online_cpu(cpu) {
++		if (weighted_cpuload(cpu) >= SCHED_LOAD_SCALE)
++			return 1;
++	}
++	return 0;
++}
+ 
+ struct io_context;			/* See blkdev.h */
+ struct cpuset;
+Index: linux-2.6.22/kernel/sched.c
+===================================================================
+--- linux-2.6.22.orig/kernel/sched.c
++++ linux-2.6.22/kernel/sched.c
+@@ -4365,9 +4365,7 @@ recheck:
+ 	/* double check policy once rq lock held */
+ 	if (policy < 0)
+ 		policy = oldpolicy = p->policy;
+-	else if (policy != SCHED_FIFO && policy != SCHED_RR &&
+-			policy != SCHED_NORMAL && policy != SCHED_BATCH &&
+-			policy != SCHED_ISO && policy != SCHED_IDLE)
++	else if (!SCHED_RANGE(policy))
+ 		return -EINVAL;
+ 	/*
+ 	 * Valid priorities for SCHED_FIFO and SCHED_RR are
+@@ -4401,6 +4400,31 @@ recheck:
+ 			if (param->sched_priority > p->rt_priority &&
+ 			    param->sched_priority > rlim_rtprio)
+ 				return -EPERM;
++		} else {
++			switch (p->policy) {
++				/*
++				 * Can only downgrade policies but not back to
++				 * SCHED_NORMAL
++				 */
++				case SCHED_ISO:
++					if (policy == SCHED_ISO)
++						goto out;
++					if (policy == SCHED_NORMAL)
++						return -EPERM;
++					break;
++				case SCHED_BATCH:
++					if (policy == SCHED_BATCH)
++						goto out;
++					if (policy != SCHED_IDLE)
++					    	return -EPERM;
++					break;
++				case SCHED_IDLE:
++					if (policy == SCHED_IDLE)
++						goto out;
++					return -EPERM;
++				default:
++					break;
++			}
+ 		}
+ 
+ 		/* can't change other user's priorities */
+@@ -4452,6 +4476,7 @@ recheck:
+ 
+ 	rt_mutex_adjust_pi(p);
+ 
++out:
+ 	return 0;
+ }
+ EXPORT_SYMBOL_GPL(sched_setscheduler);
+Index: linux-2.6.22/block/cfq-iosched.c
+===================================================================
+--- linux-2.6.22.orig/block/cfq-iosched.c
++++ linux-2.6.22/block/cfq-iosched.c
+@@ -1276,12 +1276,12 @@ static void cfq_init_prio_data(struct cf
+ 			printk(KERN_ERR "cfq: bad prio %x\n", ioprio_class);
+ 		case IOPRIO_CLASS_NONE:
+ 			/*
+-			 * no prio set, place us in the middle of the BE classes
++			 * Select class and ioprio according to policy and nice
+ 			 */
+ 			if (tsk->policy == SCHED_IDLE)
+ 				goto set_class_idle;
++			cfqq->ioprio_class = task_policy_ioprio_class(tsk);
+ 			cfqq->ioprio = task_nice_ioprio(tsk);
+-			cfqq->ioprio_class = IOPRIO_CLASS_BE;
+ 			break;
+ 		case IOPRIO_CLASS_RT:
+ 			cfqq->ioprio = task_ioprio(tsk);
+Index: linux-2.6.22/include/linux/ioprio.h
+===================================================================
+--- linux-2.6.22.orig/include/linux/ioprio.h
++++ linux-2.6.22/include/linux/ioprio.h
+@@ -22,7 +22,7 @@
+  * class, the default for any process. IDLE is the idle scheduling class, it
+  * is only served when no one else is using the disk.
+  */
+-enum {
++enum ioprio_class {
+ 	IOPRIO_CLASS_NONE,
+ 	IOPRIO_CLASS_RT,
+ 	IOPRIO_CLASS_BE,
+@@ -51,8 +51,19 @@ static inline int task_ioprio(struct tas
+ 	return IOPRIO_PRIO_DATA(task->ioprio);
+ }
+ 
++static inline enum ioprio_class
++	task_policy_ioprio_class(struct task_struct *task)
++{
++	if (rt_task(task))
++		return IOPRIO_CLASS_RT;
++	return IOPRIO_CLASS_BE;
++}
++
+ static inline int task_nice_ioprio(struct task_struct *task)
+ {
++	if (rt_task(task))
++		return (MAX_RT_PRIO - task->rt_priority) * IOPRIO_BE_NR /
++			(MAX_RT_PRIO + 1);
+ 	return (task_nice(task) + 20) / 5;
+ }
+ 
+Index: linux-2.6.22/Documentation/sysctl/vm.txt
+===================================================================
+--- linux-2.6.22.orig/Documentation/sysctl/vm.txt
++++ linux-2.6.22/Documentation/sysctl/vm.txt
+@@ -22,6 +22,8 @@ Currently, these files are in /proc/sys/
+ - dirty_background_ratio
+ - dirty_expire_centisecs
+ - dirty_writeback_centisecs
++- hardmaplimit
++- mapped
+ - max_map_count
+ - min_free_kbytes
+ - laptop_mode
+@@ -31,12 +33,15 @@ Currently, these files are in /proc/sys/
+ - min_unmapped_ratio
+ - min_slab_ratio
+ - panic_on_oom
++- swap_prefetch
++- swap_prefetch_delay
++- swap_prefetch_sleep
+ 
+ ==============================================================
+ 
+ dirty_ratio, dirty_background_ratio, dirty_expire_centisecs,
+ dirty_writeback_centisecs, vfs_cache_pressure, laptop_mode,
+-block_dump, swap_token_timeout, drop-caches:
++block_dump, swap_token_timeout, drop-caches, tail_largefiles:
+ 
+ See Documentation/filesystems/proc.txt
+ 
+@@ -86,6 +91,27 @@ for swap because we only cluster swap da
+ 
+ ==============================================================
+ 
++hardmaplimit:
++
++This flag makes the vm adhere to the mapped value as closely as possible
++except in the most extreme vm stress where doing so would provoke an out
++of memory condition (see mapped below).
++
++Enabled by default.
++
++==============================================================
++
++mapped:
++
++This is the percentage ram that is filled with mapped pages (applications)
++before the vm will start reclaiming mapped pages by moving them to swap.
++It is altered by the relative stress of the vm at the time so is not
++strictly adhered to to prevent provoking out of memory kills.
++
++Set to 66 by default.
++
++==============================================================
++
+ max_map_count:
+ 
+ This file contains the maximum number of memory map areas a process
+@@ -216,3 +242,37 @@ above-mentioned.
+ The default value is 0.
+ 1 and 2 are for failover of clustering. Please select either
+ according to your policy of failover.
++
++==============================================================
++
++swap_prefetch
++
++This enables or disables the swap prefetching feature. When the virtual
++memory subsystem has been extremely idle for at least swap_prefetch_sleep
++seconds it will start copying back pages from swap into the swapcache and keep
++a copy in swap. Valid values are 0 - 3. A value of 0 disables swap
++prefetching, 1 enables it unless laptop_mode is enabled, 2 enables it in the
++presence of laptop_mode, and 3 enables it unconditionally, ignoring whether
++the system is idle or not. If set to 0, swap prefetch wil not even try to keep
++record of ram swapped out to have the most minimal impact on performance.
++
++The default value is 1.
++
++==============================================================
++
++swap_prefetch_delay
++
++This is the time in seconds that swap prefetching is delayed upon finding
++the system is not idle (ie the vm is busy or non-niced cpu load is present).
++
++The default value is 1.
++
++==============================================================
++
++swap_prefetch_sleep
++
++This is the time in seconds that the swap prefetch kernel thread is put to
++sleep for when the ram is found to be full and it is unable to prefetch
++further.
++
++The default value is 5.
+Index: linux-2.6.22/include/linux/swap.h
+===================================================================
+--- linux-2.6.22.orig/include/linux/swap.h
++++ linux-2.6.22/include/linux/swap.h
+@@ -180,6 +180,7 @@ extern unsigned int nr_free_pagecache_pa
+ /* linux/mm/swap.c */
+ extern void FASTCALL(lru_cache_add(struct page *));
+ extern void FASTCALL(lru_cache_add_active(struct page *));
++extern void FASTCALL(lru_cache_add_tail(struct page *));
+ extern void FASTCALL(activate_page(struct page *));
+ extern void FASTCALL(mark_page_accessed(struct page *));
+ extern void lru_add_drain(void);
+@@ -188,9 +189,11 @@ extern int rotate_reclaimable_page(struc
+ extern void swap_setup(void);
+ 
+ /* linux/mm/vmscan.c */
+-extern unsigned long try_to_free_pages(struct zone **, gfp_t);
++extern unsigned long try_to_free_pages(struct zone **, gfp_t,
++				       struct task_struct *p);
+ extern unsigned long shrink_all_memory(unsigned long nr_pages);
+-extern int vm_swappiness;
++extern int vm_mapped;
++extern int vm_hardmaplimit;
+ extern int remove_mapping(struct address_space *mapping, struct page *page);
+ extern long vm_total_pages;
+ 
+@@ -237,6 +240,7 @@ extern void free_pages_and_swap_cache(st
+ extern struct page * lookup_swap_cache(swp_entry_t);
+ extern struct page * read_swap_cache_async(swp_entry_t, struct vm_area_struct *vma,
+ 					   unsigned long addr);
++extern int add_to_swap_cache(struct page *page, swp_entry_t entry);
+ /* linux/mm/swapfile.c */
+ extern long total_swap_pages;
+ extern unsigned int nr_swapfiles;
+Index: linux-2.6.22/init/Kconfig
+===================================================================
+--- linux-2.6.22.orig/init/Kconfig
++++ linux-2.6.22/init/Kconfig
+@@ -105,6 +105,28 @@ config SWAP
+ 	  used to provide more virtual memory than the actual RAM present
+ 	  in your computer.  If unsure say Y.
+ 
++config SWAP_PREFETCH
++	bool "Support for prefetching swapped memory"
++	depends on SWAP
++	default y
++	---help---
++	  This option will allow the kernel to prefetch swapped memory pages
++	  when idle. The pages will be kept on both swap and in swap_cache
++	  thus avoiding the need for further I/O if either ram or swap space
++	  is required.
++
++	  What this will do on workstations is slowly bring back applications
++	  that have swapped out after memory intensive workloads back into
++	  physical ram if you have free ram at a later stage and the machine
++	  is relatively idle. This means that when you come back to your
++	  computer after leaving it idle for a while, applications will come
++	  to life faster. Note that your swap usage will appear to increase
++	  but these are cached pages, can be dropped freely by the vm, and it
++	  should stabilise around 50% swap usage maximum.
++
++	  Workstations and multiuser workstation servers will most likely want
++	  to say Y.
++
+ config SYSVIPC
+ 	bool "System V IPC"
+ 	---help---
+Index: linux-2.6.22/kernel/sysctl.c
+===================================================================
+--- linux-2.6.22.orig/kernel/sysctl.c
++++ linux-2.6.22/kernel/sysctl.c
+@@ -22,6 +22,7 @@
+ #include <linux/mm.h>
+ #include <linux/swap.h>
+ #include <linux/slab.h>
++#include <linux/swap-prefetch.h>
+ #include <linux/sysctl.h>
+ #include <linux/proc_fs.h>
+ #include <linux/capability.h>
+@@ -70,6 +71,7 @@ extern int suid_dumpable;
+ extern char core_pattern[];
+ extern int pid_max;
+ extern int min_free_kbytes;
++extern int vm_tail_largefiles;
+ extern int printk_ratelimit_jiffies;
+ extern int printk_ratelimit_burst;
+ extern int pid_max_min, pid_max_max;
+@@ -627,6 +629,14 @@ static int one_hundred = 100;
+ 
+ static ctl_table vm_table[] = {
+ 	{
++		.ctl_name	= CTL_UNNUMBERED,
++		.procname	= "tail_largefiles",
++		.data		= &vm_tail_largefiles,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++	},
++	{
+ 		.ctl_name	= VM_OVERCOMMIT_MEMORY,
+ 		.procname	= "overcommit_memory",
+ 		.data		= &sysctl_overcommit_memory,
+@@ -705,16 +715,24 @@ static ctl_table vm_table[] = {
+ 		.proc_handler	= &proc_dointvec,
+ 	},
+ 	{
+-		.ctl_name	= VM_SWAPPINESS,
+-		.procname	= "swappiness",
+-		.data		= &vm_swappiness,
+-		.maxlen		= sizeof(vm_swappiness),
++		.ctl_name	= CTL_UNNUMBERED,
++		.procname	= "mapped",
++		.data		= &vm_mapped,
++		.maxlen		= sizeof(vm_mapped),
+ 		.mode		= 0644,
+ 		.proc_handler	= &proc_dointvec_minmax,
+ 		.strategy	= &sysctl_intvec,
+ 		.extra1		= &zero,
+ 		.extra2		= &one_hundred,
+ 	},
++	{
++		.ctl_name	= CTL_UNNUMBERED,
++		.procname	= "hardmaplimit",
++		.data		= &vm_hardmaplimit,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++	},
+ #ifdef CONFIG_HUGETLB_PAGE
+ 	 {
+ 		.ctl_name	= VM_HUGETLB_PAGES,
+@@ -882,6 +900,32 @@ static ctl_table vm_table[] = {
+ 		.extra1		= &zero,
+ 	},
+ #endif
++#ifdef CONFIG_SWAP_PREFETCH
++	{
++		.ctl_name	= CTL_UNNUMBERED,
++		.procname	= "swap_prefetch",
++		.data		= &swap_prefetch,
++		.maxlen		= sizeof(swap_prefetch),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++	},
++	{
++		.ctl_name	= CTL_UNNUMBERED,
++		.procname	= "swap_prefetch_delay",
++		.data		= &swap_prefetch_delay,
++		.maxlen		= sizeof(swap_prefetch_delay),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++	},
++	{
++		.ctl_name	= CTL_UNNUMBERED,
++		.procname	= "swap_prefetch_sleep",
++		.data		= &swap_prefetch_sleep,
++		.maxlen		= sizeof(swap_prefetch_sleep),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++	},
++#endif
+ 	{ .ctl_name = 0 }
+ };
+ 
+Index: linux-2.6.22/mm/Makefile
+===================================================================
+--- linux-2.6.22.orig/mm/Makefile
++++ linux-2.6.22/mm/Makefile
+@@ -17,6 +17,7 @@ ifeq ($(CONFIG_MMU)$(CONFIG_BLOCK),yy)
+ obj-y			+= bounce.o
+ endif
+ obj-$(CONFIG_SWAP)	+= page_io.o swap_state.o swapfile.o thrash.o
++obj-$(CONFIG_SWAP_PREFETCH) += swap_prefetch.o
+ obj-$(CONFIG_HUGETLBFS)	+= hugetlb.o
+ obj-$(CONFIG_NUMA) 	+= mempolicy.o
+ obj-$(CONFIG_SPARSEMEM)	+= sparse.o
+Index: linux-2.6.22/mm/swap.c
+===================================================================
+--- linux-2.6.22.orig/mm/swap.c
++++ linux-2.6.22/mm/swap.c
+@@ -17,6 +17,7 @@
+ #include <linux/sched.h>
+ #include <linux/kernel_stat.h>
+ #include <linux/swap.h>
++#include <linux/swap-prefetch.h>
+ #include <linux/mman.h>
+ #include <linux/pagemap.h>
+ #include <linux/pagevec.h>
+@@ -176,6 +177,7 @@ EXPORT_SYMBOL(mark_page_accessed);
+  */
+ static DEFINE_PER_CPU(struct pagevec, lru_add_pvecs) = { 0, };
+ static DEFINE_PER_CPU(struct pagevec, lru_add_active_pvecs) = { 0, };
++static DEFINE_PER_CPU(struct pagevec, lru_add_tail_pvecs) = { 0, };
+ 
+ void fastcall lru_cache_add(struct page *page)
+ {
+@@ -197,6 +199,31 @@ void fastcall lru_cache_add_active(struc
+ 	put_cpu_var(lru_add_active_pvecs);
+ }
+ 
++static void __pagevec_lru_add_tail(struct pagevec *pvec)
++{
++	int i;
++	struct zone *zone = NULL;
++
++	for (i = 0; i < pagevec_count(pvec); i++) {
++		struct page *page = pvec->pages[i];
++		struct zone *pagezone = page_zone(page);
++
++		if (pagezone != zone) {
++			if (zone)
++				spin_unlock_irq(&zone->lru_lock);
++			zone = pagezone;
++			spin_lock_irq(&zone->lru_lock);
++		}
++		BUG_ON(PageLRU(page));
++		SetPageLRU(page);
++		add_page_to_inactive_list_tail(zone, page);
++	}
++	if (zone)
++		spin_unlock_irq(&zone->lru_lock);
++	release_pages(pvec->pages, pvec->nr, pvec->cold);
++	pagevec_reinit(pvec);
++}
++
+ static void __lru_add_drain(int cpu)
+ {
+ 	struct pagevec *pvec = &per_cpu(lru_add_pvecs, cpu);
+@@ -207,6 +234,9 @@ static void __lru_add_drain(int cpu)
+ 	pvec = &per_cpu(lru_add_active_pvecs, cpu);
+ 	if (pagevec_count(pvec))
+ 		__pagevec_lru_add_active(pvec);
++	pvec = &per_cpu(lru_add_tail_pvecs, cpu);
++	if (pagevec_count(pvec))
++		__pagevec_lru_add_tail(pvec);
+ }
+ 
+ void lru_add_drain(void)
+@@ -403,6 +433,20 @@ void __pagevec_lru_add_active(struct pag
+ }
+ 
+ /*
++ * Function used uniquely to put pages back to the lru at the end of the
++ * inactive list to preserve the lru order.
++ */
++void fastcall lru_cache_add_tail(struct page *page)
++{
++	struct pagevec *pvec = &get_cpu_var(lru_add_tail_pvecs);
++
++	page_cache_get(page);
++	if (!pagevec_add(pvec, page))
++		__pagevec_lru_add_tail(pvec);
++	put_cpu_var(lru_add_pvecs);
++}
++
++/*
+  * Try to drop buffers from the pages in a pagevec
+  */
+ void pagevec_strip(struct pagevec *pvec)
+@@ -514,6 +558,9 @@ void __init swap_setup(void)
+ 	 * Right now other parts of the system means that we
+ 	 * _really_ don't want to cluster much more
+ 	 */
++
++	prepare_swap_prefetch();
++
+ #ifdef CONFIG_HOTPLUG_CPU
+ 	hotcpu_notifier(cpu_swap_callback, 0);
+ #endif
+Index: linux-2.6.22/mm/swap_prefetch.c
+===================================================================
+--- /dev/null
++++ linux-2.6.22/mm/swap_prefetch.c
+@@ -0,0 +1,542 @@
++/*
++ * linux/mm/swap_prefetch.c
++ *
++ * Copyright (C) 2005-2007 Con Kolivas
++ *
++ * Written by Con Kolivas <kernel@kolivas.org>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ */
++
++#include <linux/fs.h>
++#include <linux/mm.h>
++#include <linux/swap.h>
++#include <linux/swap-prefetch.h>
++#include <linux/ioprio.h>
++#include <linux/kthread.h>
++#include <linux/pagemap.h>
++#include <linux/syscalls.h>
++#include <linux/writeback.h>
++#include <linux/vmstat.h>
++#include <linux/freezer.h>
++
++/*
++ * sysctls:
++ * swap_prefetch:	0. Disable swap prefetching
++ *			1. Prefetch only when idle and not with laptop_mode
++ *			2. Prefetch when idle and with laptop_mode
++ *			3. Prefetch at all times.
++ * swap_prefetch_delay:	Number of seconds to delay prefetching when system
++ *			is not idle.
++ * swap_prefetch_sleep:	Number of seconds to put kprefetchd to sleep when
++ *			unable to prefetch.
++ */
++int swap_prefetch __read_mostly = 1;
++int swap_prefetch_delay __read_mostly = 1;
++int swap_prefetch_sleep __read_mostly = 5;
++
++#define PREFETCH_DELAY		(HZ * swap_prefetch_delay)
++#define PREFETCH_SLEEP		((HZ * swap_prefetch_sleep) ? : 1)
++
++struct swapped_root {
++	unsigned long		busy;		/* vm busy */
++	spinlock_t		lock;		/* protects all data */
++	struct list_head	list;		/* MRU list of swapped pages */
++	struct radix_tree_root	swap_tree;	/* Lookup tree of pages */
++	unsigned int		count;		/* Number of entries */
++	unsigned int		maxcount;	/* Maximum entries allowed */
++	struct kmem_cache	*cache;		/* Of struct swapped_entry */
++};
++
++static struct swapped_root swapped = {
++	.lock		= SPIN_LOCK_UNLOCKED,
++	.list  		= LIST_HEAD_INIT(swapped.list),
++	.swap_tree	= RADIX_TREE_INIT(GFP_ATOMIC),
++};
++
++static struct task_struct *kprefetchd_task;
++
++/*
++ * We check to see no part of the vm is busy. If it is this will interrupt
++ * trickle_swap and wait another PREFETCH_DELAY. Purposefully racy.
++ */
++inline void delay_swap_prefetch(void)
++{
++	if (!test_bit(0, &swapped.busy))
++		__set_bit(0, &swapped.busy);
++}
++
++/*
++ * If laptop_mode is enabled don't prefetch to avoid hard drives
++ * doing unnecessary spin-ups unless swap_prefetch is explicitly
++ * set to a higher value.
++ */
++static inline int prefetch_enabled(void)
++{
++	if (swap_prefetch <= laptop_mode)
++		return 0;
++	return 1;
++}
++
++static int kprefetchd_awake;
++
++/*
++ * Drop behind accounting which keeps a list of the most recently used swap
++ * entries. Entries are removed lazily by kprefetchd.
++ */
++void add_to_swapped_list(struct page *page)
++{
++	struct swapped_entry *entry;
++	unsigned long index, flags;
++
++	if (!prefetch_enabled())
++		goto out;
++
++	spin_lock_irqsave(&swapped.lock, flags);
++	if (swapped.count >= swapped.maxcount) {
++		/*
++		 * Once the number of entries exceeds maxcount we start
++		 * removing the least recently used entries.
++		 */
++		entry = list_entry(swapped.list.next,
++			struct swapped_entry, swapped_list);
++		radix_tree_delete(&swapped.swap_tree, entry->swp_entry.val);
++		list_del(&entry->swapped_list);
++		swapped.count--;
++	} else {
++		entry = kmem_cache_alloc(swapped.cache, GFP_ATOMIC);
++		if (unlikely(!entry))
++			/* bad, can't allocate more mem */
++			goto out_locked;
++	}
++
++	index = page_private(page);
++	entry->swp_entry.val = index;
++	/*
++	 * On numa we need to store the node id to ensure that we prefetch to
++	 * the same node it came from.
++	 */
++	store_swap_entry_node(entry, page);
++
++	if (likely(!radix_tree_insert(&swapped.swap_tree, index, entry))) {
++		list_add(&entry->swapped_list, &swapped.list);
++		swapped.count++;
++	} else
++		kmem_cache_free(swapped.cache, entry);
++
++out_locked:
++	spin_unlock_irqrestore(&swapped.lock, flags);
++out:
++	if (!kprefetchd_awake)
++		wake_up_process(kprefetchd_task);
++	return;
++}
++
++/*
++ * Removes entries from the swapped_list. The radix tree allows us to quickly
++ * look up the entry from the index without having to iterate over the whole
++ * list.
++ */
++static void remove_from_swapped_list(const unsigned long index)
++{
++	struct swapped_entry *entry;
++	unsigned long flags;
++
++	spin_lock_irqsave(&swapped.lock, flags);
++	entry = radix_tree_delete(&swapped.swap_tree, index);
++	if (likely(entry)) {
++		list_del(&entry->swapped_list);
++		swapped.count--;
++		kmem_cache_free(swapped.cache, entry);
++	}
++	spin_unlock_irqrestore(&swapped.lock, flags);
++}
++
++enum trickle_return {
++	TRICKLE_SUCCESS,
++	TRICKLE_FAILED,
++	TRICKLE_DELAY,
++};
++
++struct node_stats {
++	/* Free ram after a cycle of prefetching */
++	unsigned long	last_free;
++	/* Free ram on this cycle of checking prefetch_suitable */
++	unsigned long	current_free;
++	/* The amount of free ram before we start prefetching */
++	unsigned long	highfree[MAX_NR_ZONES];
++	/* The amount of free ram where we will stop prefetching */
++	unsigned long	lowfree[MAX_NR_ZONES];
++	/* highfree or lowfree depending on whether we've hit a watermark */
++	unsigned long	*pointfree[MAX_NR_ZONES];
++};
++
++/*
++ * prefetch_stats stores the free ram data of each node and this is used to
++ * determine if a node is suitable for prefetching into.
++ */
++struct prefetch_stats {
++	/* Which nodes are currently suited to prefetching */
++	nodemask_t	prefetch_nodes;
++	/* Total pages we've prefetched on this wakeup of kprefetchd */
++	unsigned long	prefetched_pages;
++	struct node_stats node[MAX_NUMNODES];
++};
++
++static struct prefetch_stats sp_stat;
++
++/*
++ * This tries to read a swp_entry_t into swap cache for swap prefetching.
++ * If it returns TRICKLE_DELAY we should delay further prefetching.
++ */
++static enum trickle_return trickle_swap_cache_async(const swp_entry_t entry,
++	const int node)
++{
++	enum trickle_return ret = TRICKLE_FAILED;
++	unsigned long flags;
++	struct page *page;
++
++	read_lock_irqsave(&swapper_space.tree_lock, flags);
++	/* Entry may already exist */
++	page = radix_tree_lookup(&swapper_space.page_tree, entry.val);
++	read_unlock_irqrestore(&swapper_space.tree_lock, flags);
++	if (page)
++		goto out;
++
++	/*
++	 * Get a new page to read from swap. We have already checked the
++	 * watermarks so __alloc_pages will not call on reclaim.
++	 */
++	page = alloc_pages_node(node, GFP_HIGHUSER & ~__GFP_WAIT, 0);
++	if (unlikely(!page)) {
++		ret = TRICKLE_DELAY;
++		goto out;
++	}
++
++	if (add_to_swap_cache(page, entry)) {
++		/* Failed to add to swap cache */
++		goto out_release;
++	}
++
++	/* Add them to the tail of the inactive list to preserve LRU order */
++	lru_cache_add_tail(page);
++	if (unlikely(swap_readpage(NULL, page)))
++		goto out_release;
++
++	sp_stat.prefetched_pages++;
++	sp_stat.node[node].last_free--;
++
++	ret = TRICKLE_SUCCESS;
++out_release:
++	page_cache_release(page);
++out:
++	/*
++	 * All entries are removed here lazily. This avoids the cost of
++	 * remove_from_swapped_list during normal swapin. Thus there are
++	 * usually many stale entries.
++	 */
++	remove_from_swapped_list(entry.val);
++	return ret;
++}
++
++static void clear_last_prefetch_free(void)
++{
++	int node;
++
++	/*
++	 * Reset the nodes suitable for prefetching to all nodes. We could
++	 * update the data to take into account memory hotplug if desired..
++	 */
++	sp_stat.prefetch_nodes = node_online_map;
++	for_each_node_mask(node, sp_stat.prefetch_nodes) {
++		struct node_stats *ns = &sp_stat.node[node];
++
++		ns->last_free = 0;
++	}
++}
++
++static void clear_current_prefetch_free(void)
++{
++	int node;
++
++	sp_stat.prefetch_nodes = node_online_map;
++	for_each_node_mask(node, sp_stat.prefetch_nodes) {
++		struct node_stats *ns = &sp_stat.node[node];
++
++		ns->current_free = 0;
++	}
++}
++
++/*
++ * This updates the high and low watermarks of amount of free ram in each
++ * node used to start and stop prefetching. We prefetch from pages_high * 4
++ * down to pages_high * 3.
++ */
++static void examine_free_limits(void)
++{
++	struct zone *z;
++
++	for_each_zone(z) {
++		struct node_stats *ns;
++		int idx;
++
++		if (!populated_zone(z))
++			continue;
++
++		ns = &sp_stat.node[zone_to_nid(z)];
++		idx = zone_idx(z);
++		ns->lowfree[idx] = z->pages_high * 3;
++		ns->highfree[idx] = ns->lowfree[idx] + z->pages_high;
++
++		if (zone_page_state(z, NR_FREE_PAGES) > ns->highfree[idx]) {
++			/*
++			 * We've gotten above the high watermark of free pages
++			 * so we can start prefetching till we get to the low
++			 * watermark.
++			 */
++			ns->pointfree[idx] = &ns->lowfree[idx];
++		}
++	}
++}
++
++/*
++ * We want to be absolutely certain it's ok to start prefetching.
++ */
++static enum trickle_return prefetch_suitable(void)
++{
++	enum trickle_return ret = TRICKLE_DELAY;
++	struct zone *z;
++	int node;
++
++	/*
++	 * If swap_prefetch is set to a high value we can ignore load
++	 * and prefetch whenever we can. Otherwise we test for vm and
++	 * cpu activity.
++	 */
++	if (swap_prefetch < 3) {
++		/* Purposefully racy, may return false positive */
++		if (test_bit(0, &swapped.busy)) {
++			__clear_bit(0, &swapped.busy);
++			goto out;
++		}
++
++		/*
++		 * above_background_load is expensive so we only perform it
++		 * every SWAP_CLUSTER_MAX prefetched_pages.
++		 * We test to see if we're above_background_load as disk
++		 * activity even at low priority can cause interrupt induced
++		 * scheduling latencies.
++		 */
++		if (!(sp_stat.prefetched_pages % SWAP_CLUSTER_MAX) &&
++		    above_background_load())
++			goto out;
++	}
++	clear_current_prefetch_free();
++
++	/*
++	 * Have some hysteresis between where page reclaiming and prefetching
++	 * will occur to prevent ping-ponging between them.
++	 */
++	for_each_zone(z) {
++		struct node_stats *ns;
++		unsigned long free;
++		int idx;
++
++		if (!populated_zone(z))
++			continue;
++
++		node = zone_to_nid(z);
++		ns = &sp_stat.node[node];
++		idx = zone_idx(z);
++
++		free = zone_page_state(z, NR_FREE_PAGES);
++		if (free < *ns->pointfree[idx]) {
++			/*
++			 * Free pages have dropped below the low watermark so
++			 * we won't start prefetching again till we hit the
++			 * high watermark of free pages.
++			 */
++			ns->pointfree[idx] = &ns->highfree[idx];
++			node_clear(node, sp_stat.prefetch_nodes);
++			continue;
++		}
++		ns->current_free += free;
++	}
++
++	/*
++	 * We iterate over each node testing to see if it is suitable for
++	 * prefetching and clear the nodemask if it is not.
++	 */
++	for_each_node_mask(node, sp_stat.prefetch_nodes) {
++		struct node_stats *ns = &sp_stat.node[node];
++
++		/*
++		 * We check to see that pages are not being allocated
++		 * elsewhere at any significant rate implying any
++		 * degree of memory pressure (eg during file reads)
++		 */
++		if (ns->last_free) {
++			if (ns->current_free + SWAP_CLUSTER_MAX <
++			    ns->last_free) {
++				ns->last_free = ns->current_free;
++				node_clear(node,
++					sp_stat.prefetch_nodes);
++				continue;
++			}
++		} else
++			ns->last_free = ns->current_free;
++
++		/* We shouldn't prefetch when we are doing writeback */
++		if (node_page_state(node, NR_WRITEBACK))
++			node_clear(node, sp_stat.prefetch_nodes);
++	}
++
++	/* Nothing suitable, put kprefetchd back to sleep */
++	if (nodes_empty(sp_stat.prefetch_nodes))
++		return TRICKLE_FAILED;
++
++	/* Survived all that? Hooray we can prefetch! */
++	ret = TRICKLE_SUCCESS;
++out:
++	return ret;
++}
++
++/*
++ * trickle_swap is the main function that initiates the swap prefetching. It
++ * first checks to see if the busy flag is set, and does not prefetch if it
++ * is, as the flag implied we are low on memory or swapping in currently.
++ * Otherwise it runs until prefetch_suitable fails which occurs when the
++ * vm is busy, we prefetch to the watermark, the list is empty or we have
++ * iterated over all entries once.
++ */
++static enum trickle_return trickle_swap(void)
++{
++	enum trickle_return suitable, ret = TRICKLE_DELAY;
++	struct swapped_entry *pos, *n;
++	unsigned long flags;
++
++	if (!prefetch_enabled())
++		return ret;
++
++	examine_free_limits();
++	suitable = prefetch_suitable();
++	if (suitable != TRICKLE_SUCCESS)
++		return suitable;
++	if (list_empty(&swapped.list)) {
++		kprefetchd_awake = 0;
++		return TRICKLE_FAILED;
++	}
++
++	spin_lock_irqsave(&swapped.lock, flags);
++	list_for_each_entry_safe_reverse(pos, n, &swapped.list, swapped_list) {
++		swp_entry_t swp_entry;
++		int node;
++
++		spin_unlock_irqrestore(&swapped.lock, flags);
++		cond_resched();
++		suitable = prefetch_suitable();
++		if (suitable != TRICKLE_SUCCESS) {
++			ret = suitable;
++			goto out_unlocked;
++		}
++
++		spin_lock_irqsave(&swapped.lock, flags);
++		if (unlikely(!pos))
++			continue;
++		node = get_swap_entry_node(pos);
++		if (!node_isset(node, sp_stat.prefetch_nodes)) {
++			/*
++			 * We found an entry that belongs to a node that is
++			 * not suitable for prefetching so skip it.
++			 */
++			continue;
++		}
++		swp_entry = pos->swp_entry;
++		spin_unlock_irqrestore(&swapped.lock, flags);
++
++		if (trickle_swap_cache_async(swp_entry, node) == TRICKLE_DELAY)
++			goto out_unlocked;
++		spin_lock_irqsave(&swapped.lock, flags);
++	}
++	spin_unlock_irqrestore(&swapped.lock, flags);
++
++out_unlocked:
++	if (sp_stat.prefetched_pages) {
++		lru_add_drain();
++		sp_stat.prefetched_pages = 0;
++	}
++	return ret;
++}
++
++static int kprefetchd(void *__unused)
++{
++	struct sched_param param = { .sched_priority = 0 };
++
++	sched_setscheduler(current, SCHED_BATCH, &param);
++	set_user_nice(current, 19);
++	/* Set ioprio to lowest if supported by i/o scheduler */
++	sys_ioprio_set(IOPRIO_WHO_PROCESS, IOPRIO_BE_NR - 1, IOPRIO_CLASS_BE);
++
++	while (!kthread_should_stop()) {
++		try_to_freeze();
++
++		if (!kprefetchd_awake) {
++			set_current_state(TASK_INTERRUPTIBLE);
++			schedule();
++			kprefetchd_awake = 1;
++		}
++
++		if (trickle_swap() == TRICKLE_FAILED)
++			schedule_timeout_interruptible(PREFETCH_SLEEP);
++		else
++			schedule_timeout_interruptible(PREFETCH_DELAY);
++		clear_last_prefetch_free();
++	}
++	return 0;
++}
++
++/*
++ * Create kmem cache for swapped entries
++ */
++void __init prepare_swap_prefetch(void)
++{
++	struct zone *zone;
++
++	swapped.cache = kmem_cache_create("swapped_entry",
++		sizeof(struct swapped_entry), 0, SLAB_PANIC, NULL, NULL);
++
++	/*
++	 * We set the limit to more entries than the physical ram.
++	 * We remove entries lazily so we need some headroom.
++	 */
++	swapped.maxcount = nr_free_pagecache_pages() * 2;
++
++	for_each_zone(zone) {
++		struct node_stats *ns;
++		int idx;
++
++		if (!populated_zone(zone))
++			continue;
++
++		ns = &sp_stat.node[zone_to_nid(zone)];
++		idx = zone_idx(zone);
++		ns->pointfree[idx] = &ns->highfree[idx];
++	}
++}
++
++static int __init kprefetchd_init(void)
++{
++	kprefetchd_task = kthread_run(kprefetchd, NULL, "kprefetchd");
++
++	return 0;
++}
++
++static void __exit kprefetchd_exit(void)
++{
++	kthread_stop(kprefetchd_task);
++}
++
++module_init(kprefetchd_init);
++module_exit(kprefetchd_exit);
+Index: linux-2.6.22/mm/swap_state.c
+===================================================================
+--- linux-2.6.22.orig/mm/swap_state.c
++++ linux-2.6.22/mm/swap_state.c
+@@ -10,6 +10,7 @@
+ #include <linux/mm.h>
+ #include <linux/kernel_stat.h>
+ #include <linux/swap.h>
++#include <linux/swap-prefetch.h>
+ #include <linux/init.h>
+ #include <linux/pagemap.h>
+ #include <linux/buffer_head.h>
+@@ -95,7 +96,7 @@ static int __add_to_swap_cache(struct pa
+ 	return error;
+ }
+ 
+-static int add_to_swap_cache(struct page *page, swp_entry_t entry)
++int add_to_swap_cache(struct page *page, swp_entry_t entry)
+ {
+ 	int error;
+ 
+@@ -148,6 +149,9 @@ int add_to_swap(struct page * page, gfp_
+ 	swp_entry_t entry;
+ 	int err;
+ 
++	/* Swap prefetching is delayed if we're swapping pages */
++	delay_swap_prefetch();
++
+ 	BUG_ON(!PageLocked(page));
+ 
+ 	for (;;) {
+@@ -320,6 +324,9 @@ struct page *read_swap_cache_async(swp_e
+ 	struct page *found_page, *new_page = NULL;
+ 	int err;
+ 
++	/* Swap prefetching is delayed if we're already reading from swap */
++	delay_swap_prefetch();
++
+ 	do {
+ 		/*
+ 		 * First check the swap cache.  Since this is normally
+Index: linux-2.6.22/mm/vmscan.c
+===================================================================
+--- linux-2.6.22.orig/mm/vmscan.c
++++ linux-2.6.22/mm/vmscan.c
+@@ -16,6 +16,7 @@
+ #include <linux/slab.h>
+ #include <linux/kernel_stat.h>
+ #include <linux/swap.h>
++#include <linux/swap-prefetch.h>
+ #include <linux/pagemap.h>
+ #include <linux/init.h>
+ #include <linux/highmem.h>
+@@ -36,6 +37,7 @@
+ #include <linux/rwsem.h>
+ #include <linux/delay.h>
+ #include <linux/kthread.h>
++#include <linux/timer.h>
+ #include <linux/freezer.h>
+ 
+ #include <asm/tlbflush.h>
+@@ -63,7 +65,7 @@ struct scan_control {
+ 	 * whole list at once. */
+ 	int swap_cluster_max;
+ 
+-	int swappiness;
++	int mapped;
+ 
+ 	int all_unreclaimable;
+ };
+@@ -110,9 +112,10 @@ struct shrinker {
+ #endif
+ 
+ /*
+- * From 0 .. 100.  Higher means more swappy.
++ * From 0 .. 100.  Lower means more swappy.
+  */
+-int vm_swappiness = 60;
++int vm_mapped __read_mostly = 66;
++int vm_hardmaplimit __read_mostly = 1;
+ long vm_total_pages;	/* The total number of pages which the VM controls */
+ 
+ static LIST_HEAD(shrinker_list);
+@@ -803,10 +806,14 @@ static void shrink_active_list(unsigned 
+ 		 * The distress ratio is important - we don't want to start
+ 		 * going oom.
+ 		 *
+-		 * A 100% value of vm_swappiness overrides this algorithm
+-		 * altogether.
++		 * This distress value is ignored if we apply a hardmaplimit except
++		 * in extreme distress.
++		 *
++		 * A 0% value of vm_mapped overrides this algorithm altogether.
+ 		 */
+-		swap_tendency = mapped_ratio / 2 + distress + sc->swappiness;
++		swap_tendency = mapped_ratio * 100 / (sc->mapped + 1);
++		if (!vm_hardmaplimit || distress == 100)
++			swap_tendency += distress;
+ 
+ 		/*
+ 		 * Now use this metric to decide whether to start moving mapped
+@@ -955,6 +962,39 @@ static unsigned long shrink_zone(int pri
+ }
+ 
+ /*
++ * Helper functions to adjust nice level of kswapd, based on the priority of
++ * the task (p) that called it. If it is already higher priority we do not
++ * demote its nice level since it is still working on behalf of a higher
++ * priority task. With kernel threads we leave it at nice 0.
++ *
++ * We don't ever run kswapd real time, so if a real time task calls kswapd we
++ * set it to highest SCHED_NORMAL priority.
++ */
++static int effective_sc_prio(struct task_struct *p)
++{
++	if (likely(p->mm)) {
++		if (rt_task(p))
++			return -20;
++		return task_nice(p);
++	}
++	return 0;
++}
++
++static void set_kswapd_nice(struct task_struct *kswapd, struct task_struct *p,
++			    int active)
++{
++	long nice = effective_sc_prio(p);
++
++	if (task_nice(kswapd) > nice || !active)
++		set_user_nice(kswapd, nice);
++}
++
++static int sc_priority(struct task_struct *p)
++{
++	return (DEF_PRIORITY + (DEF_PRIORITY * effective_sc_prio(p) / 40));
++}
++
++/*
+  * This is the direct reclaim path, for page-allocating processes.  We only
+  * try to reclaim pages from zones which will satisfy the caller's allocation
+  * request.
+@@ -1011,7 +1051,8 @@ static unsigned long shrink_zones(int pr
+  * holds filesystem locks which prevent writeout this might not work, and the
+  * allocation attempt will fail.
+  */
+-unsigned long try_to_free_pages(struct zone **zones, gfp_t gfp_mask)
++unsigned long try_to_free_pages(struct zone **zones, gfp_t gfp_mask,
++				struct task_struct *p)
+ {
+ 	int priority;
+ 	int ret = 0;
+@@ -1019,15 +1060,20 @@ unsigned long try_to_free_pages(struct z
+ 	unsigned long nr_reclaimed = 0;
+ 	struct reclaim_state *reclaim_state = current->reclaim_state;
+ 	unsigned long lru_pages = 0;
+-	int i;
++	int i, scan_priority = DEF_PRIORITY;
+ 	struct scan_control sc = {
+ 		.gfp_mask = gfp_mask,
+ 		.may_writepage = !laptop_mode,
+ 		.swap_cluster_max = SWAP_CLUSTER_MAX,
+ 		.may_swap = 1,
+-		.swappiness = vm_swappiness,
++		.mapped = vm_mapped,
+ 	};
+ 
++	if (p)
++		scan_priority = sc_priority(p);
++
++	delay_swap_prefetch();
++
+ 	count_vm_event(ALLOCSTALL);
+ 
+ 	for (i = 0; zones[i] != NULL; i++) {
+@@ -1040,7 +1086,7 @@ unsigned long try_to_free_pages(struct z
+ 				+ zone_page_state(zone, NR_INACTIVE);
+ 	}
+ 
+-	for (priority = DEF_PRIORITY; priority >= 0; priority--) {
++	for (priority = scan_priority; priority >= 0; priority--) {
+ 		sc.nr_scanned = 0;
+ 		if (!priority)
+ 			disable_swap_token();
+@@ -1070,7 +1116,7 @@ unsigned long try_to_free_pages(struct z
+ 		}
+ 
+ 		/* Take a nap, wait for some writeback to complete */
+-		if (sc.nr_scanned && priority < DEF_PRIORITY - 2)
++		if (sc.nr_scanned && priority < scan_priority - 2)
+ 			congestion_wait(WRITE, HZ/10);
+ 	}
+ 	/* top priority shrink_caches still had more to do? don't OOM, then */
+@@ -1120,9 +1166,9 @@ out:
+  */
+ static unsigned long balance_pgdat(pg_data_t *pgdat, int order)
+ {
+-	int all_zones_ok;
++	int all_zones_ok = 0;
+ 	int priority;
+-	int i;
++	int i, scan_priority;
+ 	unsigned long total_scanned;
+ 	unsigned long nr_reclaimed;
+ 	struct reclaim_state *reclaim_state = current->reclaim_state;
+@@ -1130,7 +1176,7 @@ static unsigned long balance_pgdat(pg_da
+ 		.gfp_mask = GFP_KERNEL,
+ 		.may_swap = 1,
+ 		.swap_cluster_max = SWAP_CLUSTER_MAX,
+-		.swappiness = vm_swappiness,
++		.mapped = vm_mapped,
+ 	};
+ 	/*
+ 	 * temp_priority is used to remember the scanning priority at which
+@@ -1138,6 +1184,8 @@ static unsigned long balance_pgdat(pg_da
+ 	 */
+ 	int temp_priority[MAX_NR_ZONES];
+ 
++	scan_priority = sc_priority(pgdat->kswapd);
++
+ loop_again:
+ 	total_scanned = 0;
+ 	nr_reclaimed = 0;
+@@ -1145,9 +1193,9 @@ loop_again:
+ 	count_vm_event(PAGEOUTRUN);
+ 
+ 	for (i = 0; i < pgdat->nr_zones; i++)
+-		temp_priority[i] = DEF_PRIORITY;
++		temp_priority[i] = scan_priority;
+ 
+-	for (priority = DEF_PRIORITY; priority >= 0; priority--) {
++	for (priority = scan_priority; priority >= 0; priority--) {
+ 		int end_zone = 0;	/* Inclusive.  0 = ZONE_DMA */
+ 		unsigned long lru_pages = 0;
+ 
+@@ -1163,15 +1211,22 @@ loop_again:
+ 		 */
+ 		for (i = pgdat->nr_zones - 1; i >= 0; i--) {
+ 			struct zone *zone = pgdat->node_zones + i;
++			unsigned long watermark;
+ 
+ 			if (!populated_zone(zone))
+ 				continue;
+ 
+-			if (zone->all_unreclaimable && priority != DEF_PRIORITY)
++			if (zone->all_unreclaimable && priority != scan_priority)
+ 				continue;
+ 
+-			if (!zone_watermark_ok(zone, order, zone->pages_high,
+-					       0, 0)) {
++			/*
++			 * The watermark is relaxed depending on the
++			 * level of "priority" till it drops to
++			 * pages_high.
++			 */
++			watermark = zone->pages_high + (zone->pages_high *
++				    priority / scan_priority);
++			if (!zone_watermark_ok(zone, order, watermark, 0, 0)) {
+ 				end_zone = i;
+ 				break;
+ 			}
+@@ -1198,14 +1253,18 @@ loop_again:
+ 		for (i = 0; i <= end_zone; i++) {
+ 			struct zone *zone = pgdat->node_zones + i;
+ 			int nr_slab;
++			unsigned long watermark;
+ 
+ 			if (!populated_zone(zone))
+ 				continue;
+ 
+-			if (zone->all_unreclaimable && priority != DEF_PRIORITY)
++			if (zone->all_unreclaimable && priority != scan_priority)
+ 				continue;
+ 
+-			if (!zone_watermark_ok(zone, order, zone->pages_high,
++			watermark = zone->pages_high + (zone->pages_high *
++				    priority / scan_priority);
++
++			if (!zone_watermark_ok(zone, order, watermark,
+ 					       end_zone, 0))
+ 				all_zones_ok = 0;
+ 			temp_priority[i] = priority;
+@@ -1238,7 +1297,7 @@ loop_again:
+ 		 * OK, kswapd is getting into trouble.  Take a nap, then take
+ 		 * another pass across the zones.
+ 		 */
+-		if (total_scanned && priority < DEF_PRIORITY - 2)
++		if (total_scanned && priority < scan_priority - 2)
+ 			congestion_wait(WRITE, HZ/10);
+ 
+ 		/*
+@@ -1272,6 +1331,8 @@ out:
+ 	return nr_reclaimed;
+ }
+ 
++#define WT_EXPIRY	(HZ * 5)	/* Time to wakeup watermark_timer */
++
+ /*
+  * The background pageout daemon, started as a kernel thread
+  * from the init process. 
+@@ -1319,6 +1380,8 @@ static int kswapd(void *p)
+ 	for ( ; ; ) {
+ 		unsigned long new_order;
+ 
++		/* kswapd has been busy so delay watermark_timer */
++		mod_timer(&pgdat->watermark_timer, jiffies + WT_EXPIRY);
+ 		prepare_to_wait(&pgdat->kswapd_wait, &wait, TASK_INTERRUPTIBLE);
+ 		new_order = pgdat->kswapd_max_order;
+ 		pgdat->kswapd_max_order = 0;
+@@ -1332,6 +1395,7 @@ static int kswapd(void *p)
+ 			if (!freezing(current))
+ 				schedule();
+ 
++			set_user_nice(tsk, 0);
+ 			order = pgdat->kswapd_max_order;
+ 		}
+ 		finish_wait(&pgdat->kswapd_wait, &wait);
+@@ -1349,9 +1413,10 @@ static int kswapd(void *p)
+ /*
+  * A zone is low on free memory, so wake its kswapd task to service it.
+  */
+-void wakeup_kswapd(struct zone *zone, int order)
++void wakeup_kswapd(struct zone *zone, int order, struct task_struct *p)
+ {
+ 	pg_data_t *pgdat;
++	int active;
+ 
+ 	if (!populated_zone(zone))
+ 		return;
+@@ -1363,7 +1428,9 @@ void wakeup_kswapd(struct zone *zone, in
+ 		pgdat->kswapd_max_order = order;
+ 	if (!cpuset_zone_allowed_hardwall(zone, GFP_KERNEL))
+ 		return;
+-	if (!waitqueue_active(&pgdat->kswapd_wait))
++	active = waitqueue_active(&pgdat->kswapd_wait);
++	set_kswapd_nice(pgdat->kswapd, p, active);
++	if (!active)
+ 		return;
+ 	wake_up_interruptible(&pgdat->kswapd_wait);
+ }
+@@ -1382,6 +1449,8 @@ static unsigned long shrink_all_zones(un
+ 	struct zone *zone;
+ 	unsigned long nr_to_scan, ret = 0;
+ 
++	delay_swap_prefetch();
++
+ 	for_each_zone(zone) {
+ 
+ 		if (!populated_zone(zone))
+@@ -1441,7 +1510,7 @@ unsigned long shrink_all_memory(unsigned
+ 		.may_swap = 0,
+ 		.swap_cluster_max = nr_pages,
+ 		.may_writepage = 1,
+-		.swappiness = vm_swappiness,
++		.mapped = vm_mapped,
+ 	};
+ 
+ 	current->reclaim_state = &reclaim_state;
+@@ -1476,7 +1545,7 @@ unsigned long shrink_all_memory(unsigned
+ 		/* Force reclaiming mapped pages in the passes #3 and #4 */
+ 		if (pass > 2) {
+ 			sc.may_swap = 1;
+-			sc.swappiness = 100;
++			sc.mapped = 0;
+ 		}
+ 
+ 		for (prio = DEF_PRIORITY; prio >= 0; prio--) {
+@@ -1540,20 +1609,57 @@ static int __devinit cpu_callback(struct
+ }
+ 
+ /*
++ * We wake up kswapd every WT_EXPIRY till free ram is above pages_lots
++ */
++static void watermark_wakeup(unsigned long data)
++{
++	pg_data_t *pgdat = (pg_data_t *)data;
++	struct timer_list *wt = &pgdat->watermark_timer;
++	int i;
++
++	if (!waitqueue_active(&pgdat->kswapd_wait) || above_background_load())
++		goto out;
++	for (i = pgdat->nr_zones - 1; i >= 0; i--) {
++		struct zone *z = pgdat->node_zones + i;
++
++		if (!populated_zone(z) || is_highmem(z)) {
++			/* We are better off leaving highmem full */
++			continue;
++		}
++		if (!zone_watermark_ok(z, 0, z->pages_lots, 0, 0)) {
++			wake_up_interruptible(&pgdat->kswapd_wait);
++			goto out;
++		}
++	}
++out:
++	mod_timer(wt, jiffies + WT_EXPIRY);
++	return;
++}
++
++/*
+  * This kswapd start function will be called by init and node-hot-add.
+  * On node-hot-add, kswapd will moved to proper cpus if cpus are hot-added.
+  */
+ int kswapd_run(int nid)
+ {
+ 	pg_data_t *pgdat = NODE_DATA(nid);
++	struct timer_list *wt;
+ 	int ret = 0;
+ 
+ 	if (pgdat->kswapd)
+ 		return 0;
+ 
++	wt = &pgdat->watermark_timer;
++	init_timer(wt);
++	wt->data = (unsigned long)pgdat;
++	wt->function = watermark_wakeup;
++	wt->expires = jiffies + WT_EXPIRY;
++	add_timer(wt);
++
+ 	pgdat->kswapd = kthread_run(kswapd, pgdat, "kswapd%d", nid);
+ 	if (IS_ERR(pgdat->kswapd)) {
+ 		/* failure at boot is fatal */
++		del_timer(wt);
+ 		BUG_ON(system_state == SYSTEM_BOOTING);
+ 		printk("Failed to start kswapd on node %d\n",nid);
+ 		ret = -1;
+@@ -1624,7 +1730,7 @@ static int __zone_reclaim(struct zone *z
+ 		.swap_cluster_max = max_t(unsigned long, nr_pages,
+ 					SWAP_CLUSTER_MAX),
+ 		.gfp_mask = gfp_mask,
+-		.swappiness = vm_swappiness,
++		.mapped = vm_mapped,
+ 	};
+ 	unsigned long slab_reclaimable;
+ 
+Index: linux-2.6.22/include/linux/mm_inline.h
+===================================================================
+--- linux-2.6.22.orig/include/linux/mm_inline.h
++++ linux-2.6.22/include/linux/mm_inline.h
+@@ -13,6 +13,13 @@ add_page_to_inactive_list(struct zone *z
+ }
+ 
+ static inline void
++add_page_to_inactive_list_tail(struct zone *zone, struct page *page)
++{
++	list_add_tail(&page->lru, &zone->inactive_list);
++	__inc_zone_state(zone, NR_INACTIVE);
++}
++
++static inline void
+ del_page_from_active_list(struct zone *zone, struct page *page)
+ {
+ 	list_del(&page->lru);
+Index: linux-2.6.22/include/linux/swap-prefetch.h
+===================================================================
+--- /dev/null
++++ linux-2.6.22/include/linux/swap-prefetch.h
+@@ -0,0 +1,53 @@
++#ifndef SWAP_PREFETCH_H_INCLUDED
++#define SWAP_PREFETCH_H_INCLUDED
++
++#ifdef CONFIG_SWAP_PREFETCH
++/* mm/swap_prefetch.c */
++extern int swap_prefetch;
++extern int swap_prefetch_delay;
++extern int swap_prefetch_sleep;
++
++struct swapped_entry {
++	swp_entry_t		swp_entry;	/* The actual swap entry */
++	struct list_head	swapped_list;	/* Linked list of entries */
++#if MAX_NUMNODES > 1
++	int			node;		/* Node id */
++#endif
++} __attribute__((packed));
++
++static inline void store_swap_entry_node(struct swapped_entry *entry,
++	struct page *page)
++{
++#if MAX_NUMNODES > 1
++	entry->node = page_to_nid(page);
++#endif
++}
++
++static inline int get_swap_entry_node(struct swapped_entry *entry)
++{
++#if MAX_NUMNODES > 1
++	return entry->node;
++#else
++	return 0;
++#endif
++}
++
++extern void add_to_swapped_list(struct page *page);
++extern void delay_swap_prefetch(void);
++extern void prepare_swap_prefetch(void);
++
++#else	/* CONFIG_SWAP_PREFETCH */
++static inline void add_to_swapped_list(struct page *__unused)
++{
++}
++
++static inline void prepare_swap_prefetch(void)
++{
++}
++
++static inline void delay_swap_prefetch(void)
++{
++}
++#endif	/* CONFIG_SWAP_PREFETCH */
++
++#endif		/* SWAP_PREFETCH_H_INCLUDED */
+Index: linux-2.6.22/mm/page_io.c
+===================================================================
+--- linux-2.6.22.orig/mm/page_io.c
++++ linux-2.6.22/mm/page_io.c
+@@ -17,6 +17,7 @@
+ #include <linux/bio.h>
+ #include <linux/swapops.h>
+ #include <linux/writeback.h>
++#include <linux/swap-prefetch.h>
+ #include <asm/pgtable.h>
+ 
+ static struct bio *get_swap_bio(gfp_t gfp_flags, pgoff_t index,
+@@ -118,6 +119,7 @@ int swap_writepage(struct page *page, st
+ 		ret = -ENOMEM;
+ 		goto out;
+ 	}
++	add_to_swapped_list(page);
+ 	if (wbc->sync_mode == WB_SYNC_ALL)
+ 		rw |= (1 << BIO_RW_SYNC);
+ 	count_vm_event(PSWPOUT);
+Index: linux-2.6.22/include/linux/sysctl.h
+===================================================================
+--- linux-2.6.22.orig/include/linux/sysctl.h
++++ linux-2.6.22/include/linux/sysctl.h
+@@ -190,7 +190,7 @@ enum
+ 	VM_OVERCOMMIT_RATIO=16, /* percent of RAM to allow overcommit in */
+ 	VM_PAGEBUF=17,		/* struct: Control pagebuf parameters */
+ 	VM_HUGETLB_PAGES=18,	/* int: Number of available Huge Pages */
+-	VM_SWAPPINESS=19,	/* Tendency to steal mapped memory */
++	VM_UNUSED19=19,		/* was: Tendency to steal mapped memory */
+ 	VM_LOWMEM_RESERVE_RATIO=20,/* reservation ratio for lower memory zones */
+ 	VM_MIN_FREE_KBYTES=21,	/* Minimum free kilobytes to maintain */
+ 	VM_MAX_MAP_COUNT=22,	/* int: Maximum number of mmaps/address-space */
+Index: linux-2.6.22/include/linux/mmzone.h
+===================================================================
+--- linux-2.6.22.orig/include/linux/mmzone.h
++++ linux-2.6.22/include/linux/mmzone.h
+@@ -13,6 +13,7 @@
+ #include <linux/init.h>
+ #include <linux/seqlock.h>
+ #include <linux/nodemask.h>
++#include <linux/timer.h>
+ #include <asm/atomic.h>
+ #include <asm/page.h>
+ 
+@@ -181,7 +182,7 @@ enum zone_type {
+ 
+ struct zone {
+ 	/* Fields commonly accessed by the page allocator */
+-	unsigned long		pages_min, pages_low, pages_high;
++	unsigned long		pages_min, pages_low, pages_high, pages_lots;
+ 	/*
+ 	 * We don't know if the memory that we're going to allocate will be freeable
+ 	 * or/and it will be released eventually, so to avoid totally wasting several
+@@ -452,6 +453,7 @@ typedef struct pglist_data {
+ 	wait_queue_head_t kswapd_wait;
+ 	struct task_struct *kswapd;
+ 	int kswapd_max_order;
++	struct timer_list watermark_timer;
+ } pg_data_t;
+ 
+ #define node_present_pages(nid)	(NODE_DATA(nid)->node_present_pages)
+@@ -468,7 +470,7 @@ typedef struct pglist_data {
+ void get_zone_counts(unsigned long *active, unsigned long *inactive,
+ 			unsigned long *free);
+ void build_all_zonelists(void);
+-void wakeup_kswapd(struct zone *zone, int order);
++void wakeup_kswapd(struct zone *zone, int order, struct task_struct *p);
+ int zone_watermark_ok(struct zone *z, int order, unsigned long mark,
+ 		int classzone_idx, int alloc_flags);
+ enum memmap_context {
+Index: linux-2.6.22/mm/page_alloc.c
+===================================================================
+--- linux-2.6.22.orig/mm/page_alloc.c
++++ linux-2.6.22/mm/page_alloc.c
+@@ -1250,7 +1250,7 @@ restart:
+ 		goto nopage;
+ 
+ 	for (z = zonelist->zones; *z; z++)
+-		wakeup_kswapd(*z, order);
++		wakeup_kswapd(*z, order, p);
+ 
+ 	/*
+ 	 * OK, we're below the kswapd watermark and have kicked background
+@@ -1314,7 +1314,7 @@ nofail_alloc:
+ 	reclaim_state.reclaimed_slab = 0;
+ 	p->reclaim_state = &reclaim_state;
+ 
+-	did_some_progress = try_to_free_pages(zonelist->zones, gfp_mask);
++	did_some_progress = try_to_free_pages(zonelist->zones, gfp_mask, p);
+ 
+ 	p->reclaim_state = NULL;
+ 	p->flags &= ~PF_MEMALLOC;
+@@ -1570,6 +1570,7 @@ void show_free_areas(void)
+ 			" min:%lukB"
+ 			" low:%lukB"
+ 			" high:%lukB"
++			" lots:%lukB"
+ 			" active:%lukB"
+ 			" inactive:%lukB"
+ 			" present:%lukB"
+@@ -1581,6 +1582,7 @@ void show_free_areas(void)
+ 			K(zone->pages_min),
+ 			K(zone->pages_low),
+ 			K(zone->pages_high),
++			K(zone->pages_lots),
+ 			K(zone_page_state(zone, NR_ACTIVE)),
+ 			K(zone_page_state(zone, NR_INACTIVE)),
+ 			K(zone->present_pages),
+@@ -3142,6 +3144,7 @@ void setup_per_zone_pages_min(void)
+ 
+ 		zone->pages_low   = zone->pages_min + (tmp >> 2);
+ 		zone->pages_high  = zone->pages_min + (tmp >> 1);
++		zone->pages_lots  = zone->pages_min + tmp;
+ 		spin_unlock_irqrestore(&zone->lru_lock, flags);
+ 	}
+ 
+Index: linux-2.6.22/fs/buffer.c
+===================================================================
+--- linux-2.6.22.orig/fs/buffer.c
++++ linux-2.6.22/fs/buffer.c
+@@ -356,7 +356,7 @@ static void free_more_memory(void)
+ 	for_each_online_pgdat(pgdat) {
+ 		zones = pgdat->node_zonelists[gfp_zone(GFP_NOFS)].zones;
+ 		if (*zones)
+-			try_to_free_pages(zones, GFP_NOFS);
++			try_to_free_pages(zones, GFP_NOFS, NULL);
+ 	}
+ }
+ 
+Index: linux-2.6.22/mm/filemap.c
+===================================================================
+--- linux-2.6.22.orig/mm/filemap.c
++++ linux-2.6.22/mm/filemap.c
+@@ -466,6 +466,16 @@ int add_to_page_cache_lru(struct page *p
+ 	return ret;
+ }
+ 
++int add_to_page_cache_lru_tail(struct page *page,
++	struct address_space *mapping, pgoff_t offset, gfp_t gfp_mask)
++{
++	int ret = add_to_page_cache(page, mapping, offset, gfp_mask);
++
++	if (ret == 0)
++		lru_cache_add_tail(page);
++	return ret;
++}
++
+ #ifdef CONFIG_NUMA
+ struct page *__page_cache_alloc(gfp_t gfp)
+ {
+@@ -839,6 +849,34 @@ static void shrink_readahead_size_eio(st
+ 	ra->ra_pages /= 4;
+ }
+ 
++/*
++ * Sysctl which determines whether we should read from large files to the
++ * tail of the inactive lru list.
++ */
++int vm_tail_largefiles __read_mostly = 1;
++
++static inline int nr_mapped(void)
++{
++	return global_page_state(NR_FILE_MAPPED) +
++		global_page_state(NR_ANON_PAGES);
++}
++
++/*
++ * This examines how large in pages a file size is and returns 1 if it is
++ * more than half the unmapped ram. Avoid doing read_page_state which is
++ * expensive unless we already know it is likely to be large enough.
++ */
++static int large_isize(unsigned long nr_pages)
++{
++	if (nr_pages * 6 > vm_total_pages) {
++		 unsigned long unmapped_ram = vm_total_pages - nr_mapped();
++
++		if (nr_pages * 2 > unmapped_ram)
++			return 1;
++	}
++	return 0;
++}
++
+ /**
+  * do_generic_mapping_read - generic file read routine
+  * @mapping:	address_space to be read
+@@ -1051,8 +1089,19 @@ no_cached_page:
+ 				goto out;
+ 			}
+ 		}
+-		error = add_to_page_cache_lru(cached_page, mapping,
+-						index, GFP_KERNEL);
++
++		/*
++		 * If we know the file is large we add the pages read to the
++		 * end of the lru as we're unlikely to be able to cache the
++		 * whole file in ram so make those pages the first to be
++		 * dropped if not referenced soon.
++		 */
++		if (vm_tail_largefiles && large_isize(end_index))
++			error = add_to_page_cache_lru_tail(cached_page,
++						mapping, index, GFP_KERNEL);
++		else
++			error = add_to_page_cache_lru(cached_page, mapping,
++							index, GFP_KERNEL);
+ 		if (error) {
+ 			if (error == -EEXIST)
+ 				goto find_page;
+Index: linux-2.6.22/Documentation/filesystems/proc.txt
+===================================================================
+--- linux-2.6.22.orig/Documentation/filesystems/proc.txt
++++ linux-2.6.22/Documentation/filesystems/proc.txt
+@@ -1333,6 +1333,14 @@ To free pagecache, dentries and inodes:
+ As this is a non-destructive operation and dirty objects are not freeable, the
+ user should run `sync' first.
+ 
++tail_largefiles
++---------------
++
++When enabled reads from large files to the tail end of the inactive lru list.
++This means that any cache from reading large files is dropped very quickly,
++preventing loss of mapped ram and useful pagecache when large files are read.
++This does, however, make caching less effective when working with large files.
++
+ 
+ 2.5 /proc/sys/dev - Device specific parameters
+ ----------------------------------------------
+Index: linux-2.6.22/arch/i386/Kconfig
+===================================================================
+--- linux-2.6.22.orig/arch/i386/Kconfig
++++ linux-2.6.22/arch/i386/Kconfig
+@@ -550,7 +550,7 @@ endchoice
+ 
+ choice
+ 	depends on EXPERIMENTAL
+-	prompt "Memory split" if EMBEDDED
++	prompt "Memory split"
+ 	default VMSPLIT_3G
+ 	help
+ 	  Select the desired split between kernel and user memory.
+@@ -569,17 +569,17 @@ choice
+ 	  option alone!
+ 
+ 	config VMSPLIT_3G
+-		bool "3G/1G user/kernel split"
++		bool "Default 896MB lowmem (3G/1G user/kernel split)"
+ 	config VMSPLIT_3G_OPT
+ 		depends on !HIGHMEM
+-		bool "3G/1G user/kernel split (for full 1G low memory)"
++		bool "1GB lowmem (3G/1G user/kernel split)"
+ 	config VMSPLIT_2G
+-		bool "2G/2G user/kernel split"
++		bool "2GB lowmem (2G/2G user/kernel split)"
+ 	config VMSPLIT_2G_OPT
+ 		depends on !HIGHMEM
+-		bool "2G/2G user/kernel split (for full 2G low memory)"
++		bool "2GB lowmem (2G/2G user/kernel split)"
+ 	config VMSPLIT_1G
+-		bool "1G/3G user/kernel split"
++		bool "3GB lowmem (1G/3G user/kernel split)"
+ endchoice
+ 
+ config PAGE_OFFSET
+Index: linux-2.6.22/kernel/Kconfig.hz
+===================================================================
+--- linux-2.6.22.orig/kernel/Kconfig.hz
++++ linux-2.6.22/kernel/Kconfig.hz
+@@ -4,7 +4,7 @@
+ 
+ choice
+ 	prompt "Timer frequency"
+-	default HZ_250
++	default HZ_1000
+ 	help
+ 	 Allows the configuration of the timer frequency. It is customary
+ 	 to have the timer interrupt run at 1000 Hz but 100 Hz may be more
+@@ -13,8 +13,7 @@ choice
+ 	 contention and cacheline bounces as a result of timer interrupts.
+ 	 Note that the timer interrupt occurs on each processor in an SMP
+ 	 environment leading to NR_CPUS * HZ number of timer interrupts
+-	 per second.
+-
++	 per second.Laptops may also show improved battery life.
+ 
+ 	config HZ_100
+ 		bool "100 HZ"
+@@ -23,13 +22,14 @@ choice
+ 	  with lots of processors that may show reduced performance if
+ 	  too many timer interrupts are occurring.
+ 
+-	config HZ_250
++	config HZ_250_NODEFAULT
+ 		bool "250 HZ"
+ 	help
+-	 250 Hz is a good compromise choice allowing server performance
+-	 while also showing good interactive responsiveness even
+-	 on SMP and NUMA systems. If you are going to be using NTSC video
+-	 or multimedia, selected 300Hz instead.
++	 250 HZ is a lousy compromise choice allowing server interactivity
++	 while also showing desktop throughput and no extra power saving on
++	 laptops. Good for when you can't make up your mind.
++
++	 Recommend 100 or 1000 instead.
+ 
+ 	config HZ_300
+ 		bool "300 HZ"
+@@ -45,12 +45,76 @@ choice
+ 	 1000 Hz is the preferred choice for desktop systems and other
+ 	 systems requiring fast interactive responses to events.
+ 
++	config HZ_1500
++		bool "1500 HZ"
++	help
++	 1500 Hz is an insane value to use to run broken software that is Hz
++	 limited.
++
++	 Being over 1000, driver breakage is likely.
++
++	config HZ_2000
++		bool "2000 HZ"
++	help
++	 2000 Hz is an insane value to use to run broken software that is Hz
++	 limited.
++
++	 Being over 1000, driver breakage is likely.
++
++	config HZ_3000
++		bool "3000 HZ"
++	help
++	 3000 Hz is an insane value to use to run broken software that is Hz
++	 limited.
++
++	 Being over 1000, driver breakage is likely.
++
++	config HZ_4000
++		bool "4000 HZ"
++	help
++	 4000 Hz is an insane value to use to run broken software that is Hz
++	 limited.
++
++	 Being over 1000, driver breakage is likely.
++
++	config HZ_5000
++		bool "5000 HZ"
++	help
++	 5000 Hz is an obscene value to use to run broken software that is Hz
++	 limited.
++
++	 Being over 1000, driver breakage is likely.
++
++	config HZ_7500
++		bool "7500 HZ"
++	help
++	 7500 Hz is an obscene value to use to run broken software that is Hz
++	 limited.
++
++	 Being over 1000, driver breakage is likely.
++
++	config HZ_10000
++		bool "10000 HZ"
++	help
++	 10000 Hz is an obscene value to use to run broken software that is Hz
++	 limited.
++
++	 Being over 1000, driver breakage is likely.
++
++
+ endchoice
+ 
+ config HZ
+ 	int
+ 	default 100 if HZ_100
+-	default 250 if HZ_250
++	default 250 if HZ_250_NODEFAULT
+ 	default 300 if HZ_300
+ 	default 1000 if HZ_1000
++	default 1500 if HZ_1500
++	default 2000 if HZ_2000
++	default 3000 if HZ_3000
++	default 4000 if HZ_4000
++	default 5000 if HZ_5000
++	default 7500 if HZ_7500
++	default 10000 if HZ_10000
+ 
+Index: linux-2.6.22/arch/i386/defconfig
+===================================================================
+--- linux-2.6.22.orig/arch/i386/defconfig
++++ linux-2.6.22/arch/i386/defconfig
+@@ -226,10 +226,10 @@ CONFIG_MTRR=y
+ # CONFIG_IRQBALANCE is not set
+ CONFIG_SECCOMP=y
+ # CONFIG_HZ_100 is not set
+-CONFIG_HZ_250=y
++# CONFIG_HZ_250 is not set
+ # CONFIG_HZ_300 is not set
+-# CONFIG_HZ_1000 is not set
+-CONFIG_HZ=250
++CONFIG_HZ_1000=y
++CONFIG_HZ=1000
+ # CONFIG_KEXEC is not set
+ # CONFIG_CRASH_DUMP is not set
+ CONFIG_PHYSICAL_START=0x100000
+Index: linux-2.6.22/arch/x86_64/defconfig
+===================================================================
+--- linux-2.6.22.orig/arch/x86_64/defconfig
++++ linux-2.6.22/arch/x86_64/defconfig
+@@ -185,10 +185,10 @@ CONFIG_PHYSICAL_START=0x200000
+ CONFIG_SECCOMP=y
+ # CONFIG_CC_STACKPROTECTOR is not set
+ # CONFIG_HZ_100 is not set
+-CONFIG_HZ_250=y
++# CONFIG_HZ_250 is not set
+ # CONFIG_HZ_300 is not set
+-# CONFIG_HZ_1000 is not set
+-CONFIG_HZ=250
++CONFIG_HZ_1000=y
++CONFIG_HZ=1000
+ CONFIG_K8_NB=y
+ CONFIG_GENERIC_HARDIRQS=y
+ CONFIG_GENERIC_IRQ_PROBE=y
+Index: linux-2.6.22/include/linux/jiffies.h
+===================================================================
+--- linux-2.6.22.orig/include/linux/jiffies.h
++++ linux-2.6.22/include/linux/jiffies.h
+@@ -29,6 +29,12 @@
+ # define SHIFT_HZ	9
+ #elif HZ >= 768 && HZ < 1536
+ # define SHIFT_HZ	10
++#elif HZ >= 1536 && HZ < 3072
++# define SHIFT_HZ	11
++#elif HZ >= 3072 && HZ < 6144
++# define SHIFT_HZ	12
++#elif HZ >= 6144 && HZ < 12288
++# define SHIFT_HZ	13
+ #else
+ # error You lose.
+ #endif
+Index: linux-2.6.22/include/net/inet_timewait_sock.h
+===================================================================
+--- linux-2.6.22.orig/include/net/inet_timewait_sock.h
++++ linux-2.6.22/include/net/inet_timewait_sock.h
+@@ -38,8 +38,8 @@ struct inet_hashinfo;
+  * If time > 4sec, it is "slow" path, no recycling is required,
+  * so that we select tick to get range about 4 seconds.
+  */
+-#if HZ <= 16 || HZ > 4096
+-# error Unsupported: HZ <= 16 or HZ > 4096
++#if HZ <= 16 || HZ > 16384
++# error Unsupported: HZ <= 16 or HZ > 16384
+ #elif HZ <= 32
+ # define INET_TWDR_RECYCLE_TICK (5 + 2 - INET_TWDR_RECYCLE_SLOTS_LOG)
+ #elif HZ <= 64
+@@ -54,8 +54,12 @@ struct inet_hashinfo;
+ # define INET_TWDR_RECYCLE_TICK (10 + 2 - INET_TWDR_RECYCLE_SLOTS_LOG)
+ #elif HZ <= 2048
+ # define INET_TWDR_RECYCLE_TICK (11 + 2 - INET_TWDR_RECYCLE_SLOTS_LOG)
+-#else
++#elif HZ <= 4096
+ # define INET_TWDR_RECYCLE_TICK (12 + 2 - INET_TWDR_RECYCLE_SLOTS_LOG)
++#elif HZ <= 8192
++# define INET_TWDR_RECYCLE_TICK (13 + 2 - INET_TWDR_RECYCLE_SLOTS_LOG)
++#else
++# define INET_TWDR_RECYCLE_TICK (14 + 2 - INET_TWDR_RECYCLE_SLOTS_LOG)
+ #endif
+ 
+ /* TIME_WAIT reaping mechanism. */
+Index: linux-2.6.22/init/calibrate.c
+===================================================================
+--- linux-2.6.22.orig/init/calibrate.c
++++ linux-2.6.22/init/calibrate.c
+@@ -122,12 +122,12 @@ void __devinit calibrate_delay(void)
+ 		printk("Calibrating delay loop (skipped)... "
+ 			"%lu.%02lu BogoMIPS preset\n",
+ 			loops_per_jiffy/(500000/HZ),
+-			(loops_per_jiffy/(5000/HZ)) % 100);
++			(loops_per_jiffy * 10/(50000/HZ)) % 100);
+ 	} else if ((loops_per_jiffy = calibrate_delay_direct()) != 0) {
+ 		printk("Calibrating delay using timer specific routine.. ");
+ 		printk("%lu.%02lu BogoMIPS (lpj=%lu)\n",
+ 			loops_per_jiffy/(500000/HZ),
+-			(loops_per_jiffy/(5000/HZ)) % 100,
++			(loops_per_jiffy * 10/(50000/HZ)) % 100,
+ 			loops_per_jiffy);
+ 	} else {
+ 		loops_per_jiffy = (1<<12);
+@@ -166,7 +166,7 @@ void __devinit calibrate_delay(void)
+ 		/* Round the value and print it */
+ 		printk("%lu.%02lu BogoMIPS (lpj=%lu)\n",
+ 			loops_per_jiffy/(500000/HZ),
+-			(loops_per_jiffy/(5000/HZ)) % 100,
++			(loops_per_jiffy * 10/(50000/HZ)) % 100,
+ 			loops_per_jiffy);
+ 	}
+ 
+Index: linux-2.6.22/arch/i386/kernel/cpu/proc.c
+===================================================================
+--- linux-2.6.22.orig/arch/i386/kernel/cpu/proc.c
++++ linux-2.6.22/arch/i386/kernel/cpu/proc.c
+@@ -157,7 +157,7 @@ static int show_cpuinfo(struct seq_file 
+ 
+ 	seq_printf(m, "\nbogomips\t: %lu.%02lu\n",
+ 		     c->loops_per_jiffy/(500000/HZ),
+-		     (c->loops_per_jiffy/(5000/HZ)) % 100);
++		     (c->loops_per_jiffy * 10/(50000/HZ)) % 100);
+ 	seq_printf(m, "clflush size\t: %u\n\n", c->x86_clflush_size);
+ 
+ 	return 0;
+Index: linux-2.6.22/arch/i386/kernel/smpboot.c
+===================================================================
+--- linux-2.6.22.orig/arch/i386/kernel/smpboot.c
++++ linux-2.6.22/arch/i386/kernel/smpboot.c
+@@ -1094,7 +1094,7 @@ static void __init smp_boot_cpus(unsigne
+ 		"Total of %d processors activated (%lu.%02lu BogoMIPS).\n",
+ 		cpucount+1,
+ 		bogosum/(500000/HZ),
+-		(bogosum/(5000/HZ))%100);
++		(bogosum * 10/(50000/HZ))%100);
+ 	
+ 	Dprintk("Before bogocount - setting activated=1.\n");
+ 
+Index: linux-2.6.22/include/linux/nfsd/stats.h
+===================================================================
+--- linux-2.6.22.orig/include/linux/nfsd/stats.h
++++ linux-2.6.22/include/linux/nfsd/stats.h
+@@ -35,8 +35,8 @@ struct nfsd_stats {
+ 
+ };
+ 
+-/* thread usage wraps very million seconds (approx one fortnight) */
+-#define	NFSD_USAGE_WRAP	(HZ*1000000)
++/* thread usage wraps every one hundred thousand seconds (approx one day) */
++#define	NFSD_USAGE_WRAP	(HZ*100000)
+ 
+ #ifdef __KERNEL__
+ 
+Index: linux-2.6.22/arch/x86_64/kernel/setup.c
+===================================================================
+--- linux-2.6.22.orig/arch/x86_64/kernel/setup.c
++++ linux-2.6.22/arch/x86_64/kernel/setup.c
+@@ -1047,7 +1047,7 @@ static int show_cpuinfo(struct seq_file 
+ 		
+ 	seq_printf(m, "\nbogomips\t: %lu.%02lu\n",
+ 		   c->loops_per_jiffy/(500000/HZ),
+-		   (c->loops_per_jiffy/(5000/HZ)) % 100);
++		   (c->loops_per_jiffy * 10/(50000/HZ)) % 100);
+ 
+ 	if (c->x86_tlbsize > 0) 
+ 		seq_printf(m, "TLB size\t: %d 4K pages\n", c->x86_tlbsize);

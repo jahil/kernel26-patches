@@ -1,0 +1,157 @@
+Index: linux-2.6.21-cfs/init/Kconfig
+===================================================================
+--- linux-2.6.21-cfs.orig/init/Kconfig
++++ linux-2.6.21-cfs/init/Kconfig
+@@ -1,3 +1,5 @@
++source "init/Kconfig.cfs"
++
+ config DEFCONFIG_LIST
+ 	string
+ 	depends on !UML
+Index: linux-2.6.21-cfs/init/Kconfig.cfs
+===================================================================
+--- linux-2.6.21-cfs.orig/init/Kconfig.cfs
++++ linux-2.6.21-cfs/init/Kconfig.cfs
+@@ -0,0 +1,83 @@
++menu "Completely Fair Scheduler Tunables"
++
++choice
++	prompt "CFS predefined setups"
++	default CFS_INTERACTIVE_DESKTOP
++
++config CFS_FAIR_DESKTOP
++	bool "Fair Desktop/Server"
++	help
++	  Fair Desktop.
++	  Use this option if you want a stable and fair desktop.
++
++	  Privileged tasks won't be reniced and "preemption granularity" won't be
++	  modified.
++
++config CFS_INTERACTIVE_DESKTOP
++	bool "Interactive Desktop (Recommended)"
++	help
++	  Interactive Desktop.
++	  Use this option if you want a interactive desktop.
++
++	  Privileged tasks will be reniced to -10 value and "preemption granularity"
++	  will be decreased in 0.5 msec.
++
++config CFS_HIGHLY_INTERACTIVE_DESKTOP	
++	bool "Highly Interactive Desktop"
++	help
++	  Highly Interactive Desktop.
++	  Use this option if you want a very high interactive desktop.
++
++	  Privileged tasks will be reniced to -19 value and "preemption granularity"
++	  will be decreased in 1 msec.
++
++	  This option is not recommended, because it can be unstable.
++
++config CFS_CUSTOM_SETUP
++	bool "Custom Setup"
++	help
++	  Custom setup.
++	  Manual setup of "Completely Fair Scheduler" by user.
++
++endchoice
++
++config CFS_CUSTOM_NICE_VALUE
++	int "Custom nice value for privileged tasks"
++	depends CFS_CUSTOM_SETUP
++	range -20 20
++	default -5
++	help
++	  Privileged tasks will be reniced to value typed here.
++
++config CFS_CUSTOM_SCHED_GRANULARITY
++	int "Custom preemption granularity"
++	depends CFS_CUSTOM_SETUP
++	range 0 10000
++	default 3000
++	help
++	  Preemption granularity value (in milliseconds) will be set to value typed here.
++
++config CFS_SYSCTL_PRIVILEGED_NICE_LEVEL
++	bool "Change nice value for privileged tasks through sysctl"
++	default n
++	help
++	  If this option is enabled, a file called "sched_privileged_nice_level" will be created
++	  on /proc/sys/kernel that will allow to modify the nice value for privileged tasks.
++
++	  This *ONLY* will take effect on privileged tasks that are executed after the change.
++
++endmenu
++
++config CFS_PRIVILEGED_NICE_LEVEL
++	int
++	default 0 if CFS_FAIR_DESKTOP
++	default -10 if CFS_INTERACTIVE_DESKTOP
++	default -19 if CFS_HIGHLY_INTERACTIVE_DESKTOP
++	default CFS_CUSTOM_NICE_VALUE if CFS_CUSTOM_SETUP
++
++config CFS_SCHED_GRANULARITY
++	int
++	default 3000 if CFS_FAIR_DESKTOP
++	default 2500 if CFS_INTERACTIVE_DESKTOP
++	default 2000 if CFS_HIGHLY_INTERACTIVE_DESKTOP
++	default CFS_CUSTOM_SCHED_GRANULARITY if CFS_CUSTOM_SETUP
+Index: linux-2.6.21-cfs/kernel/sched.c
+===================================================================
+--- linux-2.6.21-cfs.orig/kernel/sched.c
++++ linux-2.6.21-cfs/kernel/sched.c
+@@ -3326,7 +3326,7 @@
+  * Nice level for privileged tasks. (can be set to 0 for this
+  * to be turned off)
+  */
+-int sysctl_sched_privileged_nice_level __read_mostly = 0;
++int sysctl_sched_privileged_nice_level __read_mostly = CONFIG_CFS_PRIVILEGED_NICE_LEVEL;
+ 
+ static int __init privileged_nice_level_setup(char *str)
+ {
+Index: linux-2.6.21-cfs/kernel/sched_fair.c
+===================================================================
+--- linux-2.6.21-cfs.orig/kernel/sched_fair.c
++++ linux-2.6.21-cfs/kernel/sched_fair.c
+@@ -16,7 +16,7 @@
+  * number of CPUs. (i.e. factor 2x on 2-way systems, 3x on 4-way
+  * systems, 4x on 8-way systems, 5x on 16-way systems, etc.)
+  */
+-unsigned int sysctl_sched_granularity __read_mostly = 2000000000ULL/HZ;
++unsigned int sysctl_sched_granularity __read_mostly = (CONFIG_CFS_SCHED_GRANULARITY * 1000000ULL)/HZ;
+
+
+ /*
+ * SCHED_BATCH wake-up granularity.
+Index: linux-2.6.21-cfs/kernel/sysctl.c
+===================================================================
+--- linux-2.6.21-cfs.orig/kernel/sysctl.c
++++ linux-2.6.21-cfs/kernel/sysctl.c
+@@ -123,5 +123,9 @@
+ #ifdef CONFIG_RT_MUTEXES
+ extern int max_lock_depth;
+ #endif
++ 
++#ifdef CONFIG_CFS_SYSCTL_PRIVILEGED_NICE_LEVEL
++extern int sysctl_sched_privileged_nice_level;
++#endif
+ 
+ #ifdef CONFIG_SYSCTL_SYSCALL
+@@ -594,6 +598,17 @@
+ 		.mode		= 0444,
+ 		.proc_handler	= &proc_dointvec,
+ 	},
++#if defined(CONFIG_CFS_SYSCTL_PRIVILEGED_NICE_LEVEL)
++	{
++		.ctl_name	= CTL_UNNUMBERED,
++		.procname       = "sched_privileged_nice_level",
++		.data           = &sysctl_sched_privileged_nice_level,
++		.maxlen         = sizeof (int),
++		.mode           = 0644,
++		.proc_handler   = &proc_dointvec_minmax,
++		.strategy       = &sysctl_intvec,
++	},
++#endif
+ #if defined(CONFIG_X86_LOCAL_APIC) && defined(CONFIG_X86)
+ 	{
+ 		.ctl_name       = KERN_UNKNOWN_NMI_PANIC,

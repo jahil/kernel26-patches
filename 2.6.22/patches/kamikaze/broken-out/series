@@ -1,0 +1,74 @@
+patch-2.6.22.1
+
+# Completely fair scheduler
+sched-cfs-v2.6.22-v19.1.patch
+sched-cfs-v2.6.22-v19.1-boost.patch
+sched-cfs-v2.6.22-v19.1-boost-tunables.patch
+
+# Con Kolivas patchset
+ckpatches-2.6.22.patch
+
+# gentoo-sources patchset
+genpatches-2.6.22-3.patch
+uvesafb-0.1-rc3-2.6.22.patch
+
+# High Resolution Timers
+hrtimers-2.6.22.patch
+
+hz-864-kconfig-option.patch
+
+# Suspend2
+suspend2-2.2.10.2-for-2.6.22.patch
+
+# Linux-PHC
+linux-phc-0.2.10-2.6.22.patch
+
+realtime-lsm-2.6.22.patch
+
+# Powersaving patches
+powertop-2.6.22.patch
+
+# ACPI patches
+acer-acpi-2.6.22.patch
+thinkpad-2.6.22-2.patch
+
+# ALSA CVS
+alsa-cvs-20070721-2.6.22.patch
+
+# Filesystems patches
+reiser4-2.6.22-1.patch
+ext4-updates-2.6.22.patch
+udf-2.50-2.6.22.patch
+unionfs-2.6.22.patch
+aufs-cvs-071807-2.6.22.patch
+
+# Adaptive readahead
+adaptive+ondemand-readahead-2.6.22.patch
+
+# ATA/SATA patches
+ahci-link-power-management-2.6.22.patch
+atapi-asynchronous-notification-2.6.22.patch
+sata_nv-sw-ncq-support-2.6.22.patch
+
+cpu-support-rollup-2.6.22.patch
+
+# Mactel
+mactel-patches-2.6.22-1.patch
+
+# Video4Linux
+gspca-20070508-2.6.22.patch
+
+# Network/Wireless
+ipw2200-1.2.2-2.6.22.patch
+ipw3945-1.2.2-2.6.22.patch
+iwlwifi-0.1.6-2.6.22.patch
+
+# MMC/SD devices
+ene-cardreader-support-2.6.22.patch
+
+# Input devices
+xpad-360-support-2.6.22.patch
+
+# Misc patches
+enable-4k-stacks-default-2.6.22.patch
+kamikaze-version.patch

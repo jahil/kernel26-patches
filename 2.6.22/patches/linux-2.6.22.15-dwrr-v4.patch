@@ -1,0 +1,2668 @@
+diff -uprN linux-2.6.22.15/Documentation/sched-trio-design.txt linux-2.6.22.15-dwrr/Documentation/sched-trio-design.txt
+--- linux-2.6.22.15/Documentation/sched-trio-design.txt	1969-12-31 16:00:00.000000000 -0800
++++ linux-2.6.22.15-dwrr/Documentation/sched-trio-design.txt	2008-01-30 15:46:05.000000000 -0800
+@@ -0,0 +1,137 @@
++Overview:
++
++Trio extends the existing Linux scheduler with support for proportional-share
++scheduling. It uses a scheduling algorithm, called Distributed Weighted
++Round-Robin (DWRR), which retains the existing scheduler design as much as
++possible, and extends it to achieve proportional fairness with O(1) time
++complexity and a constant error bound, compared to the ideal fair scheduling
++algorithm. The goal of Trio is not to improve interactive performance; rather,
++it relies on the existing scheduler for interactivity and extends it to
++support MP proportional fairness.
++
++Trio has two unique features: (1) it enables users to control shares of CPU
++time for any thread or group of threads (e.g., a process, an application,
++etc.), and (2) it enables fair sharing of CPU time across multiple CPUs. For
++example, with ten tasks running on eight CPUs, Trio allows each task to take
++an equal fraction of the total CPU time, whereas no existing scheduler
++achieves such fairness. These features enable Trio to complement the mainline
++scheduler and other proposals such as CFS and SD to enable greater user 
++flexibility and stronger fairness.
++
++Background:
++
++Over the years, there has been a lot of criticism that conventional Unix
++priorities and the nice interface provide insufficient support for users to
++accurately control CPU shares of different threads or applications. Many have
++studied scheduling algorithms that achieve proportional fairness. Assuming
++that each thread has a weight that expresses its desired CPU share,
++informally, a scheduler is proportionally fair if (1) it is work-conserving,
++and (2) it allocates CPU time to threads in exact proportion to their weights
++in any time interval. Ideal proportional fairness is impractical since it
++requires that all runnable threads be running simultaneously and scheduled
++with infinitesimally small quanta. In practice, every proportional-share
++scheduling algorithm approximates the ideal algorithm with the goal of
++achieving a constant error bound. For more theoretical background, please
++refer to the following papers:
++
++[1] A. K. Parekh and R. G. Gallager. A generalized processor sharing
++approach to flow control in integrated services networks: The single-node
++case. IEEE/ACM Transactions on Networking, 1(3):344-357, June 1993.
++
++[2] C. R. Bennett and H. Zhang. WF2Q: Worst-case fair weighted fair queueing.
++In Proceedings of IEEE INFOCOM '94, pages 120-128, Mar. 1996.
++
++Previous proportional-share scheduling algorithms, however, suffer one or more
++of the following problems:
++
++(1) Inaccurate fairness with non-constant error bounds;
++(2) High run-time overhead (e.g., logarithmic);
++(3) Poor scalability due to the use of a global thread queue;
++(4) Inefficient support for latency-sensitive applications.
++
++Since the Linux scheduler has been successful at avoiding problems 2 to
++4, this design attempts to extend it with support for accurate proportional
++fairness while retaining all of its existing benefits.
++
++User Interface:
++
++By default, each thread is assigned a weight proportional to its static
++priority. A set of system calls also allow users to specify a weight or
++reservation for any thread. Weights are relative. For example, for two threads
++with weights 3 and 1, the scheduler ensures that the ratio of their CPU time is
++3:1. Reservations are absolute and in the form of X% of the total CPU time.
++For example, a reservation of 80% for a thread means that the thread always
++receives at least 80% of the total CPU time regardless of other threads.
++
++The system calls also support specifying weights or reservations for groups of
++threads. For example, one can specify an 80% reservation for a group of
++threads (e.g., a process) to control the total CPU share to which the member
++threads are collectively entitled.  Within the group, the user can further
++specify local weights to different threads to control their relative shares.
++
++Scheduling Algorithm:
++
++The scheduler keeps a set data structures, called Trio groups, to maintain the
++weight or reservation of each thread group (including one or more threads) and
++the local weight of each member thread. When scheduling a thread, it consults
++these data structures and computes (in constant time) a system-wide weight for
++the thread that represents an equivalent CPU share. Consequently, the
++scheduling algorithm, DWRR, operates solely based on the system-wide weight
++(or weight for short, hereafter) of each thread.
++
++For each processor, besides the existing active and expired arrays, DWRR keeps
++one more array, called round-expired. It also keeps a round number for each
++processor, initially all zero. A thread is said to be in round R if it is in
++the active or expired array of a round-R processor. For each thread, DWRR
++associates it with a round slice, equal to its weight multiplied by a scaling
++factor, which controls the total time that the thread can run in any round.
++When a thread exhausts its time slice, as in the existing scheduler, DWRR
++moves it to the expired array. However, when it exhausts its round slice, DWRR
++moves it to the round-expired array, indicating that the thread has finished
++round R.  In this way, all threads in the active and expired array on a
++round-R processor are running in round R, while the threads in the
++round-expired array have finished round R and are awaiting to start round R+1.
++Threads in the active and expired arrays are scheduled the same way as the
++existing scheduler. 
++
++When a processor's active array is empty, as usual, the active and expired
++arrays are switched. When both active and expired are empty, DWRR eventually
++wants to switch the active and round-expired arrays, thus advancing the
++current processor to the next round. However, to guarantee fairness, it needs
++to maintain the invariant that the rounds of all processors differ by at most
++one (when each processor has more than one thread in the run queue). Given
++this invariant, it can be shown that, during any time interval, the number of
++rounds that any two threads go through differs by at most one. This property
++is key to ensuring DWRR's constant error bound compared to the ideal algorithm
++(formal proofs available upon request).
++
++To enforce the above invariant, DWRR keeps track of the highest round
++(referred to as highest) among all processors at any time and ensures that no
++processor in round highest can advance to round highest+1 (thus updating
++highest), if there exists at least one thread in the system that is in round
++highest and not currently running. Specifically, it operates as follows:
++
++On any processor p, whenever both the active and expired arrays become empty,
++DWRR compares the round of p with highest. If equal, it performs idle load
++balancing in two steps: (1) It Identifies runnable threads that are in round
++highest but not currently running. Such threads can be in the active or
++expired array of a round highest processor, or in the round-expired array of a
++round highest - 1 processor. (2) Among those threads from step 1, move X of
++them to the active array of p, where X is a design choice and does not impact
++the fairness properties of DWRR. If step 1 returns no suitable threads, DWRR
++proceeds as if the round of processor p is less than highest, in which case
++DWRR switches p's active and round-expired arrays, and increments p's round by
++one, thus allowing all threads in its round-expired array to advance to the
++next round.
++
++Whenever the system creates a new thread or awakens an existing one, DWRR
++inserts the thread into the active array of an idle processor and sets the
++processor's round to the current value of highest. If no idle processor
++exists, it starts the thread on the least loaded processor among those in
++round highest.
++
++Whenever a processor goes idle (i.e., all of its three arrays are empty), DWRR
++resets its round to zero. Similar to the existing scheduler, DWRR also
++performs periodic load balancing but only among processors in round highest.
++Unlike idle load balancing, periodic load balancing only improves performance
++and is not necessary for fairness.
+diff -uprN linux-2.6.22.15/fs/proc/array.c linux-2.6.22.15-dwrr/fs/proc/array.c
+--- linux-2.6.22.15/fs/proc/array.c	2007-12-14 10:34:15.000000000 -0800
++++ linux-2.6.22.15-dwrr/fs/proc/array.c	2008-01-30 21:28:00.000000000 -0800
+@@ -75,6 +75,7 @@
+ #include <linux/cpuset.h>
+ #include <linux/rcupdate.h>
+ #include <linux/delayacct.h>
++#include <linux/dwrr.h>
+ 
+ #include <asm/uaccess.h>
+ #include <asm/pgtable.h>
+@@ -82,6 +83,10 @@
+ #include <asm/processor.h>
+ #include "internal.h"
+ 
++struct rq;
++extern struct rq per_cpu__runqueues;
++#define cpu_rq(cpu)             (&per_cpu(runqueues, (cpu)))
++
+ /* Gcc optimizes away "strlen(x)" for constant x */
+ #define ADDBUF(buffer, string) \
+ do { memcpy(buffer, string, strlen(string)); \
+@@ -161,6 +166,9 @@ static inline char * task_state(struct t
+ 	struct group_info *group_info;
+ 	int g;
+ 	struct fdtable *fdt = NULL;
++	struct task_struct *tsk, *n;
++	int cpu = task_cpu(p), count;
++	unsigned long flags;
+ 
+ 	rcu_read_lock();
+ 	buffer += sprintf(buffer,
+@@ -198,6 +206,97 @@ static inline char * task_state(struct t
+ 	put_group_info(group_info);
+ 
+ 	buffer += sprintf(buffer, "\n");
++	if (!p->dg) {
++		buffer += sprintf(buffer, "DWRRGroupType:\tN/A (RT task)\n");
++		return buffer;
++	}
++	if (p->dg->type == DWRR_GROUP_RESERVE)
++		buffer += sprintf(buffer,
++				"DWRRGroupType:\tgroup reserve\n"
++				"DWRRGroupUserReserve:\t%u\n"
++				"DWRRGroupUserWeight:\t%llu\n"
++				"DWRRGroupReserve:\t%u\n",
++				p->dg->user_reserve,
++				p->dg->user_weight,
++				p->dg->reserve);
++	else if (p->dg->type == DWRR_GROUP_WEIGHT)
++		buffer += sprintf(buffer, "DWRRGroupType:\tgroup weight\n"
++				"DWRRGroupUserReserve:\tN/A\n"
++				"DWRRGroupUserWeight:\t%llu\n"
++				"DWRRGroupReserve:\tN/A\n",
++				p->dg->user_weight);
++	else if (p->dg->type == DWRR_PROCESS_RESERVE)
++		buffer += sprintf(buffer, "DWRRGroupType:\tprocess reserve\n"
++				"DWRRGroupUserReserve:\t%u\n"
++				"DWRRGroupUserWeight:\t%llu\n"
++				"DWRRGroupReserve:\t%u\n",
++				p->dg->user_reserve,
++				p->dg->user_weight,
++				p->dg->reserve);
++	else /* if (p->dg->type == DWRR_PROCESS_WEIGHT) */
++		buffer += sprintf(buffer, "DWRRGroupType:\tprocess weight\n"
++				"DWRRGroupUserReserve:\tN/A\n"
++				"DWRRGroupUserWeight:\t%llu\n"
++				"DWRRGroupReserve:\tN/A\n",
++				p->dg->user_weight);
++
++	buffer += sprintf(buffer,
++			"DWRRGlobalSysReserve:\t%u\n"
++			"DWRRGlobalPshareWeight:\t%llu\n"
++			"DWRRGlobalWeightScale:\t%u\n"
++			"DWRRGroupLocalWeight:\t%llu\n"
++			"DWRRGroupNumTasks:\t%d\n"
++			"DWRRGroupNumRunningTasks:\t%d\n"
++			"DWRRTaskUserWeight:\t%llu\n"
++			"DWRRTaskWeight:\t%llu\n"
++			"DWRRTaskRoundSliceUsed:\t%lld ns\n",
++			dwrr_sys_reserve,
++			dwrr_sys_weight,
++			dwrr_weight_scale,
++			p->dg->local_weight,
++			p->dg->num_tasks,
++			p->dg->num_running_tasks,
++			p->user_weight,
++			p->weight,
++			p->round_slice_used);
++	if (p->dwrr_status == DWRR_TASK_ACTIVE)
++		buffer += sprintf(buffer, "DWRRTaskStatus:\tactive\n");
++	else
++		buffer += sprintf(buffer, "DWRRTaskStatus:\tinactive\n");
++	if (p->array == NULL)
++		buffer += sprintf(buffer, "DWRRTaskArray:\tnull\n");
++	else if (p->array == task_active_array(p))
++		buffer += sprintf(buffer, 
++				"DWRRTaskArray:\tcpu %d active\n", cpu);
++	else if (p->array == task_expired_array(p))
++		buffer += sprintf(buffer, 
++				"DWRRTaskArray:\tcpu %d expired\n", cpu);
++	else if (p->array == task_round_expired_array(p))
++		buffer += sprintf(buffer, 
++				"DWRRTaskArray:\tcpu %d round_expired\n", cpu);
++	else
++		buffer += sprintf(buffer, 
++				"DWRRTaskArray:\tcpu %d unknown\n", cpu);
++	buffer += sprintf(buffer,
++			"DWRRRound on CPU %d:\t"
++			"active %llu, expired %llu, round_expired %llu\n",
++			cpu, task_active_round(p), task_expired_round(p),
++			task_round_expired_round(p));
++	buffer += sprintf(buffer,
++			"DWRRHighestRound:\t%llu\n", dwrr_highest_round);
++	buffer += sprintf(buffer, "DWRRGroupMembers:");
++	spin_lock_irqsave(&p->dg->lock, flags);
++	count = 0;
++        list_for_each_entry_safe(tsk, n, &p->dg->tasks, dg_tasks) {
++		buffer += sprintf(buffer, "\t%d", tsk->pid);
++		count++;
++		/* Display only the first 20 tasks to avoid buffer overflow
++		 * when the group has a large number of member tasks. */
++		if (count == 20)
++			break;
++	}
++	spin_unlock_irqrestore(&p->dg->lock, flags);
++	buffer += sprintf(buffer, "\n");
+ 	return buffer;
+ }
+ 
+diff -uprN linux-2.6.22.15/include/asm-i386/unistd.h linux-2.6.22.15-dwrr/include/asm-i386/unistd.h
+--- linux-2.6.22.15/include/asm-i386/unistd.h	2007-12-14 10:34:15.000000000 -0800
++++ linux-2.6.22.15-dwrr/include/asm-i386/unistd.h	2008-01-30 15:46:05.000000000 -0800
+@@ -329,10 +329,17 @@
+ #define __NR_signalfd		321
+ #define __NR_timerfd		322
+ #define __NR_eventfd		323
++#define __NR_set_thread_reserve 324
++#define __NR_set_group_reserve  325
++#define __NR_set_thread_weight  326
++#define __NR_set_group_weight   327
++#define __NR_set_process_weight  328
++#define __NR_set_process_reserve   329
++
+ 
+ #ifdef __KERNEL__
+ 
+-#define NR_syscalls 324
++#define NR_syscalls 330
+ 
+ #define __ARCH_WANT_IPC_PARSE_VERSION
+ #define __ARCH_WANT_OLD_READDIR
+diff -uprN linux-2.6.22.15/include/asm-x86_64/unistd.h linux-2.6.22.15-dwrr/include/asm-x86_64/unistd.h
+--- linux-2.6.22.15/include/asm-x86_64/unistd.h	2007-12-14 10:34:15.000000000 -0800
++++ linux-2.6.22.15-dwrr/include/asm-x86_64/unistd.h	2008-01-30 21:28:30.000000000 -0800
+@@ -630,6 +630,20 @@ __SYSCALL(__NR_signalfd, sys_signalfd)
+ __SYSCALL(__NR_timerfd, sys_timerfd)
+ #define __NR_eventfd		284
+ __SYSCALL(__NR_eventfd, sys_eventfd)
++/* New system calls for DWRR. */
++#define __NR_set_thread_reserve 285
++__SYSCALL(__NR_set_thread_reserve, sys_set_thread_reserve)
++#define __NR_set_group_reserve  286
++__SYSCALL(__NR_set_group_reserve, sys_set_group_reserve)
++#define __NR_set_thread_weight  287
++__SYSCALL(__NR_set_thread_weight, sys_set_thread_weight)
++#define __NR_set_group_weight   288
++__SYSCALL(__NR_set_group_weight, sys_set_group_weight)
++#define __NR_set_process_weight  289
++__SYSCALL(__NR_set_process_weight, sys_set_process_weight)
++#define __NR_set_process_reserve   290
++__SYSCALL(__NR_set_process_reserve, sys_set_process_reserve)
++
+ 
+ #ifndef __NO_STUBS
+ #define __ARCH_WANT_OLD_READDIR
+diff -uprN linux-2.6.22.15/include/linux/dwrr.h linux-2.6.22.15-dwrr/include/linux/dwrr.h
+--- linux-2.6.22.15/include/linux/dwrr.h	1969-12-31 16:00:00.000000000 -0800
++++ linux-2.6.22.15-dwrr/include/linux/dwrr.h	2008-01-30 21:27:04.000000000 -0800
+@@ -0,0 +1,63 @@
++#ifndef _LINUX_DWRR_H
++#define _LINUX_DWRR_H
++
++#include <linux/list.h>
++#include <linux/spinlock_types.h>
++
++#define DWRR_DEBUG 0
++
++enum dwrr_group_type {
++	DWRR_GROUP_RESERVE,
++	DWRR_GROUP_WEIGHT,
++	DWRR_PROCESS_RESERVE,
++	DWRR_PROCESS_WEIGHT,
++};
++
++struct dwrr_group {
++	enum dwrr_group_type type;
++	unsigned int user_reserve; /* reserve specified by user */
++	u64 user_weight; /* user-specified weight for the group, which is
++			  * sum of the weights of running tasks in the group
++			  */
++	unsigned int num_tasks; /* running + non-running tasks */
++	struct list_head tasks; /* list of tasks in the group */
++	spinlock_t lock; /* protects the group */
++	/* The following two fields are computed when a task is activated. */
++	unsigned int reserve; /* actual reserve received */
++	u64 local_weight; /* sum of running tasks' weights within the group */
++	unsigned int num_running_tasks;
++};
++
++#define DWRR_TASK_ACTIVE 0
++#define DWRR_TASK_INACTIVE 1
++
++#define DWRR_RLIMIT_RESERVE 98 /* can reserve at most 98% of total CPU time */
++#define DWRR_NULL_RESERVE 0
++#define DWRR_NULL_WEIGHT 0
++#define DWRR_WEIGHT_SCALE	128 /* increases resolution of weight */
++
++extern u64 dwrr_highest_round;
++extern unsigned int dwrr_sys_reserve;
++extern u64 dwrr_sys_weight;
++extern unsigned int dwrr_weight_scale;
++
++void join_dwrr_group(struct task_struct *p, struct dwrr_group *dg);
++void activate_dwrr_task(struct task_struct *p);
++void deactivate_dwrr_task(struct task_struct *p);
++void remove_dwrr_task(struct task_struct *p);
++void dwrr_init(void);
++u64 dwrr_default_weight(struct task_struct *p);
++u64 dwrr_task_weight(struct task_struct *p);
++s64 dwrr_weight_to_roundslice(u64 weight);
++int do_init_thread_weight(struct task_struct *p, u64 weight);
++int do_set_thread_weight(struct task_struct *p, u64 weight);
++struct dwrr_group *create_dwrr_group(void);
++void init_dwrr_one_task_group(struct dwrr_group *dg, struct task_struct *p,
++	         	      int lock_init);
++struct prio_array *task_active_array(struct task_struct *p);
++struct prio_array *task_expired_array(struct task_struct *p);
++struct prio_array *task_round_expired_array(struct task_struct *p);
++u64 task_active_round(struct task_struct *p);
++u64 task_expired_round(struct task_struct *p);
++u64 task_round_expired_round(struct task_struct *p);
++#endif
+diff -uprN linux-2.6.22.15/include/linux/sched.h linux-2.6.22.15-dwrr/include/linux/sched.h
+--- linux-2.6.22.15/include/linux/sched.h	2007-12-14 10:34:15.000000000 -0800
++++ linux-2.6.22.15-dwrr/include/linux/sched.h	2008-01-30 21:27:04.000000000 -0800
+@@ -848,7 +848,7 @@ struct task_struct {
+ 
+ 	unsigned int policy;
+ 	cpumask_t cpus_allowed;
+-	unsigned int time_slice, first_time_slice;
++	s64 time_slice, first_time_slice;
+ 
+ #if defined(CONFIG_SCHEDSTATS) || defined(CONFIG_TASK_DELAY_ACCT)
+ 	struct sched_info sched_info;
+@@ -1076,6 +1076,18 @@ struct task_struct {
+ #ifdef CONFIG_FAULT_INJECTION
+ 	int make_it_fail;
+ #endif
++	struct dwrr_group *dg;
++	struct list_head dg_tasks; /* list of tasks in the same dg */
++	u64 user_weight; /* user-specified weight or
++				     DWRR_DEFAULT_WEIGHT if not specified */
++	/* The following fields are computed when a task is 
++	   activated/deactivated. */
++	u64 weight; /* current system-wide weight */
++	s64 round_slice_used; /* how long the task has run in the
++			         current round */
++	char dwrr_status; /* active or inactive */
++	spinlock_t dg_lock; /* guard against simultaneous updates to the
++			       task's dwrr group */
+ };
+ 
+ static inline pid_t process_group(struct task_struct *tsk)
+@@ -1445,8 +1457,8 @@ extern void wait_task_inactive(struct ta
+ #define wait_task_inactive(p)	do { } while (0)
+ #endif
+ 
+-#define remove_parent(p)	list_del_init(&(p)->sibling)
+-#define add_parent(p)		list_add_tail(&(p)->sibling,&(p)->parent->children)
++extern void remove_parent(struct task_struct *p);
++extern void add_parent(struct task_struct *p);
+ 
+ #define next_task(p)	list_entry(rcu_dereference((p)->tasks.next), struct task_struct, tasks)
+ 
+diff -uprN linux-2.6.22.15/include/linux/syscalls.h linux-2.6.22.15-dwrr/include/linux/syscalls.h
+--- linux-2.6.22.15/include/linux/syscalls.h	2007-12-14 10:34:15.000000000 -0800
++++ linux-2.6.22.15-dwrr/include/linux/syscalls.h	2008-01-30 21:28:38.000000000 -0800
+@@ -611,6 +611,14 @@ asmlinkage long sys_timerfd(int ufd, int
+ 			    const struct itimerspec __user *utmr);
+ asmlinkage long sys_eventfd(unsigned int count);
+ 
++/* New system calls for DWRR. */
++asmlinkage int sys_set_thread_reserve(int tid, int reserve);
++asmlinkage int sys_set_thread_weight(int tid, s64 weight);
++asmlinkage int sys_set_group_reserve(int *pids, int npids, unsigned int reserve);
++asmlinkage int sys_set_group_weight(int *pids, int npids, unsigned int weight);
++asmlinkage int sys_set_process_reserve(int pid, unsigned int reserve);
++asmlinkage int sys_set_process_weight(int pid, unsigned int weight);
++
+ int kernel_execve(const char *filename, char *const argv[], char *const envp[]);
+ 
+ #endif
+diff -uprN linux-2.6.22.15/init/main.c linux-2.6.22.15-dwrr/init/main.c
+--- linux-2.6.22.15/init/main.c	2007-12-14 10:34:15.000000000 -0800
++++ linux-2.6.22.15-dwrr/init/main.c	2008-01-30 15:46:05.000000000 -0800
+@@ -66,6 +66,8 @@
+ #include <asm/smp.h>
+ #endif
+ 
++#include <linux/dwrr.h>
++
+ /*
+  * This is one of the first .c files built. Error out early if we have compiler
+  * trouble.
+@@ -611,6 +613,7 @@ asmlinkage void __init start_kernel(void
+ 		efi_enter_virtual_mode();
+ #endif
+ 	fork_init(num_physpages);
++	dwrr_init();
+ 	proc_caches_init();
+ 	buffer_init();
+ 	unnamed_dev_init();
+diff -uprN linux-2.6.22.15/kernel/dwrr-group.c linux-2.6.22.15-dwrr/kernel/dwrr-group.c
+--- linux-2.6.22.15/kernel/dwrr-group.c	1969-12-31 16:00:00.000000000 -0800
++++ linux-2.6.22.15-dwrr/kernel/dwrr-group.c	2008-01-30 21:27:04.000000000 -0800
+@@ -0,0 +1,773 @@
++#include <linux/dwrr.h>
++#include <linux/slab.h>
++#include <linux/sched.h>
++#include <linux/module.h>
++#include <asm/uaccess.h>
++
++struct kmem_cache *dwrr_group_cachep = NULL;
++/* total reserve requested by users */
++__cacheline_aligned unsigned int dwrr_sys_reserve; 
++/* total weight of weight groups */
++u64 dwrr_sys_weight; 
++/* previous total weight of weight groups, used for adjusting 
++   dwrr_weight_scale */
++u64 dwrr_grouprev_sys_weight;
++/* global scale of weights, used to keep weights within a range */
++unsigned int dwrr_weight_scale;
++/* lock protecting all global variables */
++DEFINE_SPINLOCK(dwrr_global_lock); 
++
++/* Caller must hold dwrr_global_lock. */
++inline u64 dwrr_group_weight(struct dwrr_group *dg)
++{
++	u64 group_weight;
++	if (dg->type == DWRR_GROUP_RESERVE || dg->type ==
++			DWRR_PROCESS_RESERVE) {
++		if (dwrr_sys_weight == 0)
++			group_weight = dg->local_weight;
++		else 
++			group_weight = (dwrr_sys_weight * dg->reserve) /
++				       ((100 - dwrr_sys_reserve));
++	} else
++		group_weight = dg->user_weight;
++	return group_weight;
++}
++
++/* p->dg should be activated before this function is called. A task's weight
++ * is re-computed every time when it's interrupted by the timer interrupt. */
++inline u64 _dwrr_task_weight(struct task_struct *p)
++{
++	u64 group_weight, task_weight, default_weight;
++	int msb; 
++	unsigned long flags;
++
++	/* This locking so far hasn't been a performance problem (tested up
++	 * to 2000 threads on 8 processors). If it does become a problem, it
++	 * can be removed since temporary inconsistent dwrr_weight_scale and
++	 * dwrr_grouprev_sys_weight should have little impact on performance and
++	 * no impact on correctness of fair scheduling. */
++	spin_lock_irqsave(&dwrr_global_lock, flags);
++	group_weight = dwrr_group_weight(p->dg);
++	if (p->dg->local_weight == 0)
++		/* This may happen when a syscall that modifies p's weight 
++		 * is interrupted before p->dg->local_weight gets the new
++		 * value. FIXME: Seems like this is not possible any more. */
++		task_weight = group_weight << dwrr_weight_scale;
++	else {
++		u64 old_group_weight = group_weight;
++		group_weight = (p->user_weight * group_weight) <<
++				dwrr_weight_scale;
++		if (unlikely(group_weight == 0))
++			printk("group_weight %llu user_weight %llu scale %d\n",
++					old_group_weight, p->user_weight,
++					dwrr_weight_scale);
++		if (group_weight < p->dg->local_weight) {
++			msb = fls64(p->dg->local_weight/group_weight);
++			dwrr_weight_scale += msb;
++			group_weight <<= msb;
++			/* dwrr_weight_scale is changed, record current 
++			   dwrr_sys_weight */
++			dwrr_grouprev_sys_weight = dwrr_sys_weight;
++		}
++
++		task_weight = group_weight / p->dg->local_weight;
++	}
++
++	default_weight = dwrr_default_weight(p);
++	if (task_weight < default_weight) {
++		msb = fls64(default_weight/task_weight);
++		dwrr_weight_scale += msb;
++		task_weight <<= msb;
++		/* dwrr_weight_scale is changed, record current 
++		   dwrr_sys_weight */
++		dwrr_grouprev_sys_weight = dwrr_sys_weight;
++	}
++
++	spin_unlock_irqrestore(&dwrr_global_lock, flags);
++
++	BUG_ON(!task_weight);
++
++	return task_weight;
++}
++
++void __init dwrr_init(void)
++{
++	dwrr_group_cachep = kmem_cache_create("dwrr_group_cache", 
++				sizeof(struct dwrr_group), 0, 
++				SLAB_HWCACHE_ALIGN|SLAB_PANIC, NULL, NULL);
++	dwrr_sys_reserve = 0;
++	dwrr_sys_weight = 0;
++	dwrr_grouprev_sys_weight = 0;
++	dwrr_weight_scale = 0;
++}
++
++/* p->dg should be set to dg before this function is called */
++void init_dwrr_one_task_group(struct dwrr_group *dg, struct task_struct *p,
++			      int lock_init)
++{
++	if (p->dg != dg)
++		panic("error in init_dwrr_one_task_group()\n");
++
++	dg->type = DWRR_GROUP_WEIGHT;
++	dg->user_reserve = DWRR_NULL_RESERVE;
++	dg->reserve = DWRR_NULL_RESERVE;
++	dg->user_weight = dwrr_default_weight(p);
++	dg->num_tasks = 1;
++	INIT_LIST_HEAD(&dg->tasks);
++	spin_lock_init(&dg->lock);
++	dg->local_weight = 0;
++	dg->num_running_tasks = 0;
++
++	INIT_LIST_HEAD(&p->dg_tasks);
++	list_add(&p->dg_tasks, &dg->tasks);
++	p->user_weight = dg->user_weight;
++	if (lock_init)
++		spin_lock_init(&p->dg_lock);
++}
++
++struct dwrr_group *create_dwrr_group(void)
++{
++	struct dwrr_group *dg;
++
++	dg = kmem_cache_alloc(dwrr_group_cachep, GFP_KERNEL);
++	if (!dg)
++		printk(KERN_ERR "Out of memory in create_dwrr_group\n");
++	return dg;
++}
++
++static void deactivate_dwrr_group(struct dwrr_group *dg)
++{
++	unsigned long flags;
++	/* 
++	 * We keep the weights of the weight groups unchanged and adjust
++	 * the weights of the reserve groups. If there's no reserve group
++	 * after the removal, don't need to do anything. Maintain the scale
++	 * factor such that we don't need to update the weights for the 
++	 * weight groups---they are calculated using the scale factor when
++	 * they are used.
++	 */
++	spin_lock_irqsave(&dwrr_global_lock, flags);
++	if (dg->type == DWRR_GROUP_RESERVE ||
++			dg->type == DWRR_PROCESS_RESERVE) {
++		dwrr_sys_reserve -= dg->reserve;
++		if (dwrr_sys_reserve <= 0) {
++			dwrr_weight_scale = 0;
++			dwrr_grouprev_sys_weight = 0;
++		}
++#if DWRR_DEBUG 
++		if (dwrr_sys_reserve < 0) {
++			printk("dwrr_sys_reserve %d, reset to 0\n", 
++				dwrr_sys_reserve);
++			dwrr_sys_reserve = 0;
++		}
++#endif
++	} else {
++		dwrr_sys_weight -= dwrr_group_weight(dg);
++#if DWRR_DEBUG 
++		if (dwrr_sys_weight < 0) {
++			printk("dwrr_sys_weight %d, reset to 0\n", dwrr_sys_weight);
++			dwrr_sys_weight = 0;
++		}
++#endif
++	}
++	spin_unlock_irqrestore(&dwrr_global_lock, flags);
++}
++
++static void free_dwrr_group(struct dwrr_group *dg)
++{
++	/* free_dwrr_group is only called when the group has one task, so
++	 * there's no need to lock the dg lock here */
++	BUG_ON(!dwrr_group_cachep);
++	BUG_ON(!dg);
++	kmem_cache_free(dwrr_group_cachep, dg);
++}
++
++void _deactivate_dwrr_task(struct task_struct *p)
++{
++	unsigned long flags;
++
++	if (rt_task(p) || !p->dg)
++		return;
++
++	/* The lock here ensures the updates are atomic; however,
++	 * another process may read these variables at the same time
++	 * without any locking, so it can read stale and even
++	 * inconsistent data (e.g., the read occurs between the
++	 * updates to local_weight and num_tasks). However, this
++	 * only temporarily affects the achieved fairness, not
++	 * correctness. */
++	spin_lock_irqsave(&p->dg->lock, flags);
++	p->dg->local_weight -= p->user_weight;
++	p->dg->num_running_tasks--;
++	if (p->dg->num_running_tasks == 0) {
++		 /* There's no active task in the dwrr group, so we need
++		  * to deactivate the group. */
++		deactivate_dwrr_group(p->dg);
++	}
++	spin_unlock_irqrestore(&p->dg->lock, flags);
++	p->dwrr_status = DWRR_TASK_INACTIVE;
++}
++
++void _remove_dwrr_task(struct task_struct *p)
++{
++	unsigned long flags;
++	struct dwrr_group *dg = p->dg;
++
++	if (p->dg == NULL)
++		return;
++
++	if (p->array)
++		_deactivate_dwrr_task(p);
++	spin_lock_irqsave(&dg->lock, flags);
++	list_del_init(&p->dg_tasks);
++	dg->num_tasks--;
++	spin_unlock_irqrestore(&dg->lock, flags);
++	if (dg->num_tasks == 0) {
++		 /* There's only one task in the dwrr group, so we need to
++		  * remove the group. */
++		free_dwrr_group(dg);
++	}
++	p->dg = NULL;
++}
++
++void activate_dwrr_group(struct dwrr_group *dg)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&dwrr_global_lock, flags);
++	if (dg->type == DWRR_GROUP_RESERVE || 
++			dg->type == DWRR_PROCESS_RESERVE) {
++		dg->reserve = dg->user_reserve;
++		if (dg->user_reserve + dwrr_sys_reserve > DWRR_RLIMIT_RESERVE)
++			dg->reserve = DWRR_RLIMIT_RESERVE - dwrr_sys_reserve;
++#if DWRR_DEBUG
++		if (dg->reserve != dg->user_reserve)
++			printk(KERN_ERR "activate_dwrr_group: %d -> %d, sys_reserve %d\n", dg->user_reserve, dg->reserve, dwrr_sys_reserve);
++#endif
++		dwrr_sys_reserve += dg->reserve;
++	} else {
++		dwrr_sys_weight += dg->user_weight;
++		if (dwrr_sys_weight >= 2 * dwrr_grouprev_sys_weight 
++				&& dwrr_weight_scale > 0) {
++			/* dwrr_sys_weight is more than two times higher, so
++			 * we can scale down dwrr_weight_scale */
++			int scale = fls64(dwrr_sys_weight/dwrr_grouprev_sys_weight)-1;
++			dwrr_weight_scale -= scale;
++			if (dwrr_weight_scale < 0)
++				dwrr_weight_scale = 0;
++			dwrr_grouprev_sys_weight = dwrr_sys_weight;
++		}
++	}
++
++	spin_unlock_irqrestore(&dwrr_global_lock, flags);
++}
++
++void _activate_dwrr_task(struct task_struct *p)
++{
++	struct dwrr_group *dg = p->dg;
++	unsigned long flags;
++
++	if (rt_task(p) || !p->dg)
++		return;
++
++	/* activate within group */
++	/* weight is a relative weight within p's existing
++	 * group, i.e., we are changing an existing weight */
++	spin_lock_irqsave(&dg->lock, flags);
++	dg->local_weight += p->user_weight;
++	dg->num_running_tasks++;
++	if (dg->num_running_tasks == 1)
++		activate_dwrr_group(dg);
++	spin_unlock_irqrestore(&dg->lock, flags);
++	p->weight = _dwrr_task_weight(p);
++	p->round_slice_used = 0;
++	p->dwrr_status = DWRR_TASK_ACTIVE;
++}
++
++void join_dwrr_group(struct task_struct *p, struct dwrr_group *dg)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&p->dg_lock, flags);
++	/* remove p from old dwrr_group */
++	_remove_dwrr_task(p);
++	/* add p to new dwrr_group */
++	p->dg = dg;
++	spin_lock(&dg->lock);
++	list_add(&p->dg_tasks, &dg->tasks);
++	dg->num_tasks++;
++	spin_unlock(&dg->lock);
++	p->user_weight = dwrr_default_weight(p);
++	if (p->array)
++		_activate_dwrr_task(p);
++	spin_unlock_irqrestore(&p->dg_lock, flags);
++}
++
++int do_set_thread_reserve(struct task_struct *p, unsigned int reserve)
++{
++	struct dwrr_group *dg;
++	unsigned long flags;
++
++	/* create a new dwrr_group for p */
++	dg = create_dwrr_group();
++	if (!dg)
++		return -ENOMEM;
++
++	spin_lock_irqsave(&p->dg_lock, flags);
++	/* remove p from old dwrr_group */
++	_remove_dwrr_task(p);
++
++	p->dg = dg;
++	init_dwrr_one_task_group(dg, p, 0);
++	dg->type = DWRR_GROUP_RESERVE;
++	dg->user_reserve = reserve;
++
++	/* is p running? */
++	if (p->array)
++		_activate_dwrr_task(p);
++	spin_unlock_irqrestore(&p->dg_lock, flags);
++
++	return 0;
++}
++
++int do_set_process_reserve(struct task_struct *p, unsigned int reserve)
++{
++	struct dwrr_group *dg;
++	unsigned long flags;
++	struct task_struct *t;
++	struct list_head *_t, *_n;
++
++	/* create a new dwrr_group for p */
++	dg = create_dwrr_group();
++	if (!dg)
++		return -ENOMEM;
++
++	spin_lock_irqsave(&p->dg_lock, flags);
++	/* remove p from old dwrr_group */
++	_remove_dwrr_task(p);
++
++	p->dg = dg;
++	init_dwrr_one_task_group(dg, p, 0);
++	dg->type = DWRR_PROCESS_RESERVE;
++	dg->user_reserve = reserve;
++
++	/* is p running? */
++	if (p->array)
++		_activate_dwrr_task(p);
++	spin_unlock_irqrestore(&p->dg_lock, flags);
++
++	/* add children */
++	list_for_each_safe(_t, _n, &p->children) {
++		t = list_entry(_t, struct task_struct, sibling);
++		join_dwrr_group(t, dg);
++	}
++
++	return 0;
++}
++
++asmlinkage int sys_set_process_reserve(int pid, int reserve)
++{
++	struct task_struct *p;
++	int error = -ESRCH;
++
++	read_lock(&tasklist_lock);
++	p = find_task_by_pid(pid);
++	if (!p)
++		goto out;
++	if (reserve <= 0 || dwrr_sys_reserve == DWRR_RLIMIT_RESERVE) {
++		error = -EINVAL;
++		goto out;
++	}
++	if (p->uid != current->euid &&
++		p->euid != current->euid && !capable(CAP_SYS_NICE)) {
++		error = -EPERM;
++		goto out;
++	}
++
++	error = do_set_process_reserve(p, reserve);
++out:
++	read_unlock(&tasklist_lock);
++	return error;
++}
++
++asmlinkage int sys_set_thread_reserve(int pid, int reserve)
++{
++	struct task_struct *p;
++	int error = -ESRCH;
++
++	read_lock(&tasklist_lock);
++	p = find_task_by_pid(pid);
++	if (!p)
++		goto out;
++	if (reserve <= 0 || dwrr_sys_reserve == DWRR_RLIMIT_RESERVE) {
++		error = -EINVAL;
++		goto out;
++	}
++	if (p->uid != current->euid &&
++		p->euid != current->euid && !capable(CAP_SYS_NICE)) {
++		error = -EPERM;
++		goto out;
++	}
++
++	error = do_set_thread_reserve(p, reserve);
++out:
++	read_unlock(&tasklist_lock);
++	return error;
++}
++
++/* Removes thread from old dwrr group and re-create one for it. */
++int do_init_thread_weight(struct task_struct *p, u64 weight)
++{
++	unsigned long flags;
++	struct dwrr_group *dg;
++
++	BUG_ON(rt_task(p) || p->pid == 0);
++	BUG_ON(weight == 0);
++	/* create a new dwrr_group for p */
++	dg = create_dwrr_group();
++	if (!dg)
++		return -ENOMEM;
++
++	spin_lock_irqsave(&p->dg_lock, flags);
++	/* remove p from old dwrr_group */
++	_remove_dwrr_task(p);
++
++	p->dg = dg;
++	init_dwrr_one_task_group(dg, p, 0);
++	dg->type = DWRR_GROUP_WEIGHT;
++	dg->user_weight = weight;
++	p->user_weight = weight;
++
++	if (p->array)
++		_activate_dwrr_task(p);
++	spin_unlock_irqrestore(&p->dg_lock, flags);
++
++	return 0;
++}
++
++/* Dosen't remove thread from its old dwrr group. */
++int do_set_thread_weight(struct task_struct *p, u64 weight)
++{
++	unsigned long flags;
++
++	BUG_ON(rt_task(p) || p->pid == 0);
++	BUG_ON(weight == 0);
++	spin_lock_irqsave(&p->dg_lock, flags);
++	if (p->array)
++		_deactivate_dwrr_task(p);
++	if (p->dg->num_tasks == 1) {
++		/* even if this is reserve group, we convert it to a 
++		   weight group */
++		if (p->dg->type == DWRR_GROUP_RESERVE ||
++				p->dg->type == DWRR_PROCESS_RESERVE)
++			p->dg->type = DWRR_GROUP_WEIGHT;
++		p->dg->user_reserve = DWRR_NULL_RESERVE;
++		p->dg->reserve = DWRR_NULL_RESERVE;
++		p->dg->user_weight = weight;
++		p->dg->local_weight = 0;
++		p->dg->num_running_tasks = 0;
++	} 
++	
++	p->user_weight = weight;
++	if (p->array)
++		_activate_dwrr_task(p);
++	spin_unlock_irqrestore(&p->dg_lock, flags);
++
++	return 0;
++}
++
++asmlinkage int sys_set_thread_weight(int pid, s64 weight)
++{
++	struct task_struct *p;
++	int error = -ESRCH;
++
++	read_lock(&tasklist_lock);
++	p = find_task_by_pid(pid);
++	if (!p)
++		goto out;
++	if (weight <= 0) {
++		error = -EINVAL;
++		goto out;
++	}
++	if (p->uid != current->euid &&
++		p->euid != current->euid && !capable(CAP_SYS_NICE)) {
++		error = -EPERM;
++		goto out;
++	}
++
++	error = 0;
++	weight *= DWRR_WEIGHT_SCALE;
++	error = do_set_thread_weight(p, weight);
++out:
++	read_unlock(&tasklist_lock);
++	return error;
++}
++
++int do_set_process_weight(struct task_struct *p, u64 weight)
++{
++	unsigned long flags;
++	struct task_struct *t;
++	struct list_head *_t, *_n;
++	struct dwrr_group *dg;
++
++	BUG_ON(rt_task(p) || p->pid == 0);
++	BUG_ON(weight == 0);
++	/* create a new dwrr_group for p */
++	dg = create_dwrr_group();
++	if (!dg)
++		return -ENOMEM;
++
++	spin_lock_irqsave(&p->dg_lock, flags);
++	/* remove p from old dwrr_group */
++	_remove_dwrr_task(p);
++
++	p->dg = dg;
++	init_dwrr_one_task_group(dg, p, 0);
++	dg->type = DWRR_PROCESS_WEIGHT;
++	dg->user_weight = weight;
++	p->user_weight = weight;
++
++	if (p->array)
++		_activate_dwrr_task(p);
++	spin_unlock_irqrestore(&p->dg_lock, flags);
++
++	/* add children */
++	list_for_each_safe(_t, _n, &p->children) {
++		t = list_entry(_t, struct task_struct, sibling);
++		join_dwrr_group(t, dg);
++	}
++	/* add threads in the thread group for which I'm the group leader */
++	list_for_each_safe(_t, _n, &p->children) {
++		t = list_entry(_t, struct task_struct, sibling);
++		join_dwrr_group(t, dg);
++	}
++
++	for (t = next_thread(p); t != p; t = next_thread(t)) {
++		join_dwrr_group(t, dg);
++	}
++
++	return 0;
++}
++
++asmlinkage int sys_set_process_weight(int pid, s64 weight)
++{
++	struct task_struct *p;
++	int error = -ESRCH;
++
++	read_lock(&tasklist_lock);
++	p = find_task_by_pid(pid);
++	if (!p)
++		goto out;
++	if (weight <= 0) {
++		error = -EINVAL;
++		goto out;
++	}
++	if (p->uid != current->euid &&
++		p->euid != current->euid && !capable(CAP_SYS_NICE)) {
++		error = -EPERM;
++		goto out;
++	}
++
++	error = 0;
++	weight *= DWRR_WEIGHT_SCALE;
++	error = do_set_process_weight(p, weight);
++out:
++	read_unlock(&tasklist_lock);
++	return error;
++}
++
++asmlinkage int sys_set_group_reserve(int *pids, int npids, int reserve)
++{
++	struct task_struct *p, **tsks;
++	struct dwrr_group *dg;
++	int error, i, pid;
++	unsigned long flags;
++
++	read_lock(&tasklist_lock);
++	tsks = kmalloc(npids * sizeof(struct task_struct *), GFP_KERNEL);
++	if (!tsks) {
++		error = -ENOMEM;
++		goto out;
++	}
++
++	if (reserve <= 0 || dwrr_sys_reserve == DWRR_RLIMIT_RESERVE) {
++		error = -EINVAL;
++		goto out;
++	}
++
++	for (i = 0; i < npids; i++) {
++		if (copy_from_user(&pid, pids + i, sizeof(int))) {
++			error = -EFAULT;
++			goto out;
++		}
++
++		p = find_task_by_pid(pid);
++		if (!p) {
++			error = -ESRCH;
++			goto out;
++		}
++		if (p->uid != current->euid &&
++			p->euid != current->euid && !capable(CAP_SYS_NICE)) {
++			error = -EPERM;
++			goto out;
++		}
++		tsks[i] = p;
++	}
++	dg = create_dwrr_group();
++	if (!dg) {
++		error = -ENOMEM;
++		goto out;
++	}
++	error = 0;
++	dg->type = DWRR_GROUP_RESERVE;
++	dg->user_reserve = reserve;
++	dg->user_weight = DWRR_NULL_WEIGHT;
++	dg->num_tasks = npids;
++	INIT_LIST_HEAD(&dg->tasks);
++	spin_lock_init(&dg->lock);
++	dg->local_weight = 0;
++	dg->num_running_tasks = 0;
++
++	for (i = 0; i < npids; i++) {
++		p = tsks[i];
++		spin_lock_irqsave(&p->dg_lock, flags);
++		/* remove p from old dwrr_group */
++		_remove_dwrr_task(p);
++		/* add p to new dwrr_group */
++		p->dg = dg;
++		list_add(&p->dg_tasks, &dg->tasks);
++		p->user_weight = dwrr_default_weight(p);
++		if (p->array)
++			_activate_dwrr_task(p);
++		spin_unlock_irqrestore(&p->dg_lock, flags);
++	}
++
++out:
++	kfree(tsks);
++	read_unlock(&tasklist_lock);
++	return error;
++}
++
++asmlinkage int sys_set_group_weight(int *pids, int npids, s64 weight)
++{
++	struct task_struct *p, **tsks;
++	struct dwrr_group *dg;
++	int error, i, pid;
++	unsigned long flags;
++
++	read_lock(&tasklist_lock);
++	tsks = kmalloc(npids * sizeof(struct task_struct *), GFP_KERNEL);
++	if (!tsks) {
++		error = -ENOMEM;
++		goto out;
++	}
++	if (weight <= 0) {
++		error = -EINVAL;
++		goto out;
++	}
++	for (i = 0; i < npids; i++) {
++		if (copy_from_user(&pid, pids + i, sizeof(int))) {
++			error = -EFAULT;
++			goto out;
++		}
++
++		p = find_task_by_pid(pid);
++		if (!p) {
++			error = -ESRCH;
++			goto out;
++		}
++		if (p->uid != current->euid &&
++			p->euid != current->euid && !capable(CAP_SYS_NICE)) {
++			error = -EPERM;
++			goto out;
++		}
++		tsks[i] = p;
++	}
++	dg = create_dwrr_group();
++	if (!dg) {
++		error = -ENOMEM;
++		goto out;
++	}
++	error = 0;
++	weight *= DWRR_WEIGHT_SCALE;
++	dg->type = DWRR_GROUP_WEIGHT;
++	dg->user_reserve = DWRR_NULL_RESERVE;
++	dg->user_weight = weight;
++	dg->num_tasks = npids;
++	INIT_LIST_HEAD(&dg->tasks);
++        spin_lock_init(&dg->lock);
++	dg->local_weight = 0;
++	dg->num_running_tasks = 0;
++
++	for (i = 0; i < npids; i++) {
++		p = tsks[i];
++		spin_lock_irqsave(&p->dg_lock, flags);
++		/* remove p from old dwrr_group */
++		_remove_dwrr_task(p);
++		/* add p to new dwrr_group */
++		p->dg = dg;
++		list_add(&p->dg_tasks, &dg->tasks);
++		p->user_weight = dwrr_default_weight(p);
++		if (p->array)
++			_activate_dwrr_task(p);
++		spin_unlock_irqrestore(&p->dg_lock, flags);
++	}
++
++out:
++	kfree(tsks);
++	read_unlock(&tasklist_lock);
++	return error;
++}
++
++void activate_dwrr_task(struct task_struct *p)
++{
++	unsigned long flags;
++
++	BUG_ON(p->pid == 0);
++	spin_lock_irqsave(&p->dg_lock, flags);
++	_activate_dwrr_task(p);
++	spin_unlock_irqrestore(&p->dg_lock, flags);
++}
++
++void deactivate_dwrr_task(struct task_struct *p)
++{
++	unsigned long flags;
++
++	BUG_ON(p->pid == 0);
++	spin_lock_irqsave(&p->dg_lock, flags);
++	_deactivate_dwrr_task(p);
++	spin_unlock_irqrestore(&p->dg_lock, flags);
++}
++
++void remove_dwrr_task(struct task_struct *p)
++{
++	unsigned long flags;
++
++	BUG_ON(p->pid == 0);
++	spin_lock_irqsave(&p->dg_lock, flags);
++	_remove_dwrr_task(p);
++	spin_unlock_irqrestore(&p->dg_lock, flags);
++}
++
++
++u64 dwrr_task_weight(struct task_struct *p)
++{
++	unsigned long flags;
++	u64 weight;
++
++	BUG_ON(!p->dg);
++	BUG_ON(rt_task(p) || p->pid == 0);
++	if (!p->dg)
++		/* This may occur after a task is removed (exit or kill)
++		 * but before it's switched out. Can this really happen?? */
++		weight = p->weight;
++	else {
++		spin_lock_irqsave(&p->dg_lock, flags);
++		weight = _dwrr_task_weight(p);
++		spin_unlock_irqrestore(&p->dg_lock, flags);
++	}
++
++	BUG_ON(!weight);
++
++	return weight;
++}
+diff -uprN linux-2.6.22.15/kernel/fork.c linux-2.6.22.15-dwrr/kernel/fork.c
+--- linux-2.6.22.15/kernel/fork.c	2007-12-14 10:34:15.000000000 -0800
++++ linux-2.6.22.15-dwrr/kernel/fork.c	2008-01-30 21:27:04.000000000 -0800
+@@ -49,6 +49,7 @@
+ #include <linux/delayacct.h>
+ #include <linux/taskstats_kern.h>
+ #include <linux/random.h>
++#include <linux/dwrr.h>
+ 
+ #include <asm/pgtable.h>
+ #include <asm/pgalloc.h>
+@@ -104,10 +105,27 @@ struct kmem_cache *vm_area_cachep;
+ /* SLAB cache for mm_struct structures (tsk->mm) */
+ static struct kmem_cache *mm_cachep;
+ 
++inline void remove_parent(struct task_struct *p)
++{
++        list_del_init(&p->sibling);
++        if (p->parent->dg && (p->parent->dg->type == DWRR_PROCESS_RESERVE ||
++                        p->parent->dg->type == DWRR_PROCESS_WEIGHT))
++                do_init_thread_weight(p, dwrr_default_weight(p));
++}
++
++inline void add_parent(struct task_struct *p)
++{
++        list_add_tail(&p->sibling, &p->parent->children);
++        if (p->parent->dg && (p->parent->dg->type == DWRR_PROCESS_RESERVE ||
++                        p->parent->dg->type == DWRR_PROCESS_WEIGHT))
++                join_dwrr_group(p, p->parent->dg);
++}
++
+ void free_task(struct task_struct *tsk)
+ {
+ 	free_thread_info(tsk->stack);
+ 	rt_mutex_debug_task_free(tsk);
++        remove_dwrr_task(tsk);
+ 	free_task_struct(tsk);
+ }
+ EXPORT_SYMBOL(free_task);
+@@ -162,6 +180,7 @@ static struct task_struct *dup_task_stru
+ {
+ 	struct task_struct *tsk;
+ 	struct thread_info *ti;
++	struct dwrr_group *dg;
+ 
+ 	prepare_to_copy(orig);
+ 
+@@ -175,8 +194,17 @@ static struct task_struct *dup_task_stru
+ 		return NULL;
+ 	}
+ 
++        dg = create_dwrr_group();
++        if (!dg) {
++                free_task_struct(tsk);
++                free_thread_info(ti);
++                return NULL;
++        }
++
+ 	*tsk = *orig;
+ 	tsk->stack = ti;
++        tsk->dg = dg;
++        init_dwrr_one_task_group(dg, tsk, 1);
+ 	setup_thread_stack(tsk, orig);
+ 
+ #ifdef CONFIG_CC_STACKPROTECTOR
+@@ -1227,7 +1255,10 @@ static struct task_struct *copy_process(
+ 	if (clone_flags & CLONE_THREAD) {
+ 		p->group_leader = current->group_leader;
+ 		list_add_tail_rcu(&p->thread_group, &p->group_leader->thread_group);
+-
++		if (p->group_leader->dg && (p->group_leader->dg->type ==
++			DWRR_PROCESS_RESERVE || p->group_leader->dg->type ==
++			DWRR_PROCESS_WEIGHT))
++			join_dwrr_group(p, p->group_leader->dg);
+ 		if (!cputime_eq(current->signal->it_virt_expires,
+ 				cputime_zero) ||
+ 		    !cputime_eq(current->signal->it_prof_expires,
+diff -uprN linux-2.6.22.15/kernel/kthread.c linux-2.6.22.15-dwrr/kernel/kthread.c
+--- linux-2.6.22.15/kernel/kthread.c	2007-12-14 10:34:15.000000000 -0800
++++ linux-2.6.22.15-dwrr/kernel/kthread.c	2008-01-30 15:46:05.000000000 -0800
+@@ -13,6 +13,7 @@
+ #include <linux/file.h>
+ #include <linux/module.h>
+ #include <linux/mutex.h>
++#include <linux/dwrr.h>
+ #include <asm/semaphore.h>
+ 
+ static DEFINE_SPINLOCK(kthread_create_lock);
+diff -uprN linux-2.6.22.15/kernel/Makefile linux-2.6.22.15-dwrr/kernel/Makefile
+--- linux-2.6.22.15/kernel/Makefile	2007-12-14 10:34:15.000000000 -0800
++++ linux-2.6.22.15-dwrr/kernel/Makefile	2008-01-30 15:46:05.000000000 -0800
+@@ -8,7 +8,8 @@ obj-y     = sched.o fork.o exec_domain.o
+ 	    signal.o sys.o kmod.o workqueue.o pid.o \
+ 	    rcupdate.o extable.o params.o posix-timers.o \
+ 	    kthread.o wait.o kfifo.o sys_ni.o posix-cpu-timers.o mutex.o \
+-	    hrtimer.o rwsem.o latency.o nsproxy.o srcu.o die_notifier.o
++	    hrtimer.o rwsem.o latency.o nsproxy.o srcu.o die_notifier.o \
++	    dwrr-group.o
+ 
+ obj-$(CONFIG_STACKTRACE) += stacktrace.o
+ obj-y += time/
+diff -uprN linux-2.6.22.15/kernel/sched.c linux-2.6.22.15-dwrr/kernel/sched.c
+--- linux-2.6.22.15/kernel/sched.c	2007-12-14 10:34:15.000000000 -0800
++++ linux-2.6.22.15-dwrr/kernel/sched.c	2008-01-30 21:28:44.000000000 -0800
+@@ -53,6 +53,7 @@
+ #include <linux/kprobes.h>
+ #include <linux/delayacct.h>
+ #include <linux/reciprocal_div.h>
++#include <linux/dwrr.h>
+ 
+ #include <asm/tlb.h>
+ #include <asm/unistd.h>
+@@ -143,7 +144,8 @@ unsigned long long __attribute__((weak))
+ 	(NS_TO_JIFFIES((p)->sleep_avg) * MAX_BONUS / \
+ 		MAX_SLEEP_AVG)
+ 
+-#define GRANULARITY	(10 * HZ / 1000 ? : 1)
++/* GRANULARITY in ns */
++#define GRANULARITY	(NSEC_PER_MSEC * 10 * HZ / 1000 ? : 1)
+ 
+ #ifdef CONFIG_SMP
+ #define TIMESLICE_GRANULARITY(p)	(GRANULARITY * \
+@@ -169,7 +171,7 @@ unsigned long long __attribute__((weak))
+ 		(MAX_BONUS / 2 + DELTA((p)) + 1) / MAX_BONUS - 1))
+ 
+ #define TASK_PREEMPTS_CURR(p, rq) \
+-	((p)->prio < (rq)->curr->prio)
++	((p)->prio < (rq)->curr->prio && (p)->array != (rq)->round_expired)
+ 
+ #define SCALE_PRIO(x, prio) \
+ 	max(x * (MAX_PRIO - prio) / (MAX_USER_PRIO / 2), MIN_TIMESLICE)
+@@ -212,9 +214,28 @@ static inline void sg_inc_cpu_power(stru
+  * priority thread gets MIN_TIMESLICE worth of execution time.
+  */
+ 
+-static inline unsigned int task_timeslice(struct task_struct *p)
++static inline long long task_timeslice(struct task_struct *p)
+ {
+-	return static_prio_timeslice(p->static_prio);
++	/* return the time slice in ns */
++	return (static_prio_timeslice(p->static_prio) * NSEC_PER_MSEC);
++}
++
++/* default DWRR weight for a task */
++inline u64 dwrr_default_weight(struct task_struct *p)
++{
++	long long tmp = task_timeslice(p);
++	do_div(tmp, NSEC_PER_MSEC);
++	tmp *= DWRR_WEIGHT_SCALE;
++	do_div(tmp, DEF_TIMESLICE);
++	return tmp;
++}
++
++inline s64 dwrr_weight_to_roundslice(u64 weight)
++{
++	weight *= DEF_TIMESLICE;
++	do_div(weight, DWRR_WEIGHT_SCALE);
++	/* return the round slice in ns */
++	return weight * NSEC_PER_MSEC;
+ }
+ 
+ /*
+@@ -225,6 +246,7 @@ struct prio_array {
+ 	unsigned int nr_active;
+ 	DECLARE_BITMAP(bitmap, MAX_PRIO+1); /* include 1 bit for delimiter */
+ 	struct list_head queue[MAX_PRIO];
++	u64 round; /* round number of this array */
+ };
+ 
+ /*
+@@ -266,7 +288,8 @@ struct rq {
+ 	struct task_struct *curr, *idle;
+ 	unsigned long next_balance;
+ 	struct mm_struct *prev_mm;
+-	struct prio_array *active, *expired, arrays[2];
++	struct prio_array *active, *expired, *round_expired, arrays[3];
++	unsigned long expired_weighted_load;
+ 	int best_expired_prio;
+ 	atomic_t nr_iowait;
+ 
+@@ -304,6 +327,11 @@ struct rq {
+ 	struct lock_class_key rq_lock_key;
+ };
+ 
++/* Highest round number in the system. No need to lock-protect because even
++ * there can be brief moments of inconsistency, it doesn't affect
++ * correctness and the fairness properties of DWRR. */
++__cacheline_aligned u64 dwrr_highest_round = 0;
++
+ static DEFINE_PER_CPU(struct rq, runqueues) ____cacheline_aligned_in_smp;
+ static DEFINE_MUTEX(sched_hotcpu_mutex);
+ 
+@@ -338,6 +366,55 @@ static inline int cpu_of(struct rq *rq)
+ # define finish_arch_switch(prev)	do { } while (0)
+ #endif
+ 
++inline int dwrr_task_affinitized(struct task_struct *p)
++{
++	if (cpus_subset(cpu_online_map, p->cpus_allowed))
++		return 0;
++	else
++		return 1;
++}
++
++/* These functions allow rq fields to be visible outside of this file. */
++inline struct prio_array *task_active_array(struct task_struct *p)
++{
++	return task_rq(p)->active;
++}
++
++inline struct prio_array *task_expired_array(struct task_struct *p)
++{
++	return task_rq(p)->expired;
++}
++
++inline struct prio_array *task_round_expired_array(struct task_struct *p)
++{
++	return task_rq(p)->round_expired;
++}
++
++inline u64 task_active_round(struct task_struct *p)
++{
++	return task_rq(p)->active->round;
++}
++
++inline u64 task_expired_round(struct task_struct *p)
++{
++	return task_rq(p)->expired->round;
++}
++
++inline u64 task_round_expired_round(struct task_struct *p)
++{
++	return task_rq(p)->round_expired->round;
++}
++
++void dwrr_update_idle(struct task_struct *p, struct rq *rq)
++{
++	if (rt_task(p))
++		return;
++
++	rq->active->round = dwrr_highest_round;
++	rq->expired->round = rq->active->round;
++	rq->round_expired->round = rq->active->round + 1;
++}
++
+ #ifndef __ARCH_WANT_UNLOCKED_CTXSW
+ static inline int task_running(struct rq *rq, struct task_struct *p)
+ {
+@@ -709,6 +786,21 @@ sched_info_switch(struct task_struct *pr
+ #define sched_info_switch(t, next)	do { } while (0)
+ #endif /* CONFIG_SCHEDSTATS || CONFIG_TASK_DELAY_ACCT */
+ 
++static void dequeue_expired_task(struct task_struct *p, struct prio_array *array)
++{
++	list_del(&p->run_list);
++	if (list_empty(array->queue + p->prio))
++		__clear_bit(p->prio, array->bitmap);
++}
++
++static void enqueue_expired_task(struct task_struct *p, struct prio_array *array)
++{
++	sched_info_queued(p);
++	list_add_tail(&p->run_list, array->queue + p->prio);
++	__set_bit(p->prio, array->bitmap);
++	p->array = array;
++}
++
+ /*
+  * Adding/removing a task to/from a priority array:
+  */
+@@ -887,6 +979,8 @@ static void __activate_task(struct task_
+ 
+ 	if (batch_task(p))
+ 		target = rq->expired;
++	if (rq->curr == rq->idle)
++		dwrr_update_idle(p, rq);
+ 	enqueue_task(p, target);
+ 	inc_nr_running(p, rq);
+ }
+@@ -896,6 +990,8 @@ static void __activate_task(struct task_
+  */
+ static inline void __activate_idle_task(struct task_struct *p, struct rq *rq)
+ {
++	if (rq->curr == rq->idle)
++		dwrr_update_idle(p, rq);
+ 	enqueue_task_head(p, rq->active);
+ 	inc_nr_running(p, rq);
+ }
+@@ -1031,6 +1127,7 @@ static void activate_task(struct task_st
+ 	p->timestamp = now;
+ out:
+ 	__activate_task(p, rq);
++	activate_dwrr_task(p);
+ }
+ 
+ /*
+@@ -1038,7 +1135,13 @@ out:
+  */
+ static void deactivate_task(struct task_struct *p, struct rq *rq)
+ {
+-	dec_nr_running(p, rq);
++	if (p->array != rq->round_expired)
++		dec_nr_running(p, rq);
++	else if (rq->curr != p) {
++		printk("deactivating round_expired task %d %s\n", p->pid, p->comm);
++		BUG();
++	} else
++		rq->expired_weighted_load -= p->load_weight;
+ 	dequeue_task(p, p->array);
+ 	p->array = NULL;
+ }
+@@ -1304,6 +1407,8 @@ find_idlest_group(struct sched_domain *s
+ 	unsigned long min_load = ULONG_MAX, this_load = 0;
+ 	int load_idx = sd->forkexec_idx;
+ 	int imbalance = 100 + (sd->imbalance_pct-100)/2;
++	int found_highest_cpu, this_group_ok = 0;
++	struct rq *rq;
+ 
+ 	do {
+ 		unsigned long load, avg_load;
+@@ -1319,7 +1424,16 @@ find_idlest_group(struct sched_domain *s
+ 		/* Tally up the load of all CPUs in the group */
+ 		avg_load = 0;
+ 
++		found_highest_cpu = 0;
+ 		for_each_cpu_mask(i, group->cpumask) {
++			rq = cpu_rq(i);
++			if (cpu_isset(i, p->cpus_allowed) && 
++				(rq->active->round == dwrr_highest_round
++					|| rq->curr == rq->idle)) {
++				if (local_group)
++					this_group_ok = 1;
++				found_highest_cpu = 1; 
++			}
+ 			/* Bias balancing toward cpus of our domain */
+ 			if (local_group)
+ 				load = source_load(i, load_idx);
+@@ -1333,6 +1447,16 @@ find_idlest_group(struct sched_domain *s
+ 		avg_load = sg_div_cpu_power(group,
+ 				avg_load * SCHED_LOAD_SCALE);
+ 
++		if (!found_highest_cpu && !rt_task(p)) {
++			if (local_group) {
++				this_load = avg_load;
++				this = group;
++			}
++			/* If the group doesn't contain a highest round CPU or
++			 * an idle CPU, skip it. */
++			goto nextgroup;
++		}
++
+ 		if (local_group) {
+ 			this_load = avg_load;
+ 			this = group;
+@@ -1344,7 +1468,8 @@ nextgroup:
+ 		group = group->next;
+ 	} while (group != sd->groups);
+ 
+-	if (!idlest || 100*this_load < imbalance*min_load)
++	if (!idlest || (100*this_load < imbalance*min_load && 
++				(rt_task(p) || this_group_ok)))
+ 		return NULL;
+ 	return idlest;
+ }
+@@ -1359,6 +1484,7 @@ find_idlest_cpu(struct sched_group *grou
+ 	unsigned long load, min_load = ULONG_MAX;
+ 	int idlest = -1;
+ 	int i;
++	struct rq *rq;
+ 
+ 	/* Traverse only the allowed CPUs */
+ 	cpus_and(tmp, group->cpumask, p->cpus_allowed);
+@@ -1366,6 +1492,11 @@ find_idlest_cpu(struct sched_group *grou
+ 	for_each_cpu_mask(i, tmp) {
+ 		load = weighted_cpuload(i);
+ 
++		rq = cpu_rq(i);
++		if (!rt_task(p) && rq->curr != rq->idle &&
++				rq->active->round < dwrr_highest_round - 1)
++			continue;
++
+ 		if (load < min_load || (load == min_load && i == this_cpu)) {
+ 			min_load = load;
+ 			idlest = i;
+@@ -1441,6 +1572,54 @@ static int sched_balance_self(int cpu, i
+ 	return cpu;
+ }
+ 
++static int sched_balance_task(int cpu, struct task_struct *t, int flag)
++{
++	struct sched_domain *tmp, *sd = NULL;
++
++	for_each_domain(cpu, tmp) {
++		if (tmp->flags & flag)
++			sd = tmp;
++	}
++
++	while (sd) {
++		cpumask_t span;
++		struct sched_group *group;
++		int new_cpu, weight;
++
++		if (!(sd->flags & flag)) {
++			sd = sd->child;
++			continue;
++		}
++
++		span = sd->span;
++		group = find_idlest_group(sd, t, cpu);
++		if (!group) {
++			sd = sd->child;
++			continue;
++		}
++
++		new_cpu = find_idlest_cpu(group, t, cpu);
++		if (new_cpu == -1 || new_cpu == cpu) {
++			/* Now try balancing at a lower domain level of cpu */
++			sd = sd->child;
++			continue;
++		}
++
++		/* Now try balancing at a lower domain level of new_cpu */
++		cpu = new_cpu;
++		sd = NULL;
++		weight = cpus_weight(span);
++		for_each_domain(cpu, tmp) {
++			if (weight <= cpus_weight(tmp->span))
++				break;
++			if (tmp->flags & flag)
++				sd = tmp;
++		}
++		/* while loop will break here if sd == NULL */
++	}
++
++	return cpu;
++}
+ #endif /* CONFIG_SMP */
+ 
+ /*
+@@ -1513,7 +1692,7 @@ static int try_to_wake_up(struct task_st
+ #ifdef CONFIG_SMP
+ 	struct sched_domain *sd, *this_sd = NULL;
+ 	unsigned long load, this_load;
+-	int new_cpu;
++	int old_cpu, new_cpu;
+ #endif
+ 
+ 	rq = task_rq_lock(p, &flags);
+@@ -1606,6 +1785,17 @@ static int try_to_wake_up(struct task_st
+ 	new_cpu = cpu; /* Could not wake to this_cpu. Wake to cpu instead */
+ out_set_cpu:
+ 	new_cpu = wake_idle(new_cpu, p);
++	if (!rt_task(p)) {
++		old_cpu = new_cpu;
++		if (!idle_cpu(new_cpu) && 
++			cpu_rq(new_cpu)->active->round != dwrr_highest_round) {
++			/* Need to find a highest round cpu. This is similar
++			   to what's done in fork. */
++			new_cpu = sched_balance_task(old_cpu, p,
++					SD_BALANCE_FORK);
++			BUG_ON(new_cpu == -1);
++		}
++	}
+ 	if (new_cpu != cpu) {
+ 		set_task_cpu(p, new_cpu);
+ 		task_rq_unlock(rq, &flags);
+@@ -1686,7 +1876,8 @@ void fastcall sched_fork(struct task_str
+ 	int cpu = get_cpu();
+ 
+ #ifdef CONFIG_SMP
+-	cpu = sched_balance_self(cpu, SD_BALANCE_FORK);
++	if (rt_task(p))
++		cpu = sched_balance_self(cpu, SD_BALANCE_FORK);
+ #endif
+ 	set_task_cpu(p, cpu);
+ 
+@@ -1722,21 +1913,17 @@ void fastcall sched_fork(struct task_str
+ 	 * resulting in more scheduling fairness.
+ 	 */
+ 	local_irq_disable();
+-	p->time_slice = (current->time_slice + 1) >> 1;
+ 	/*
+ 	 * The remainder of the first timeslice might be recovered by
+ 	 * the parent if the child exits early enough.
+ 	 */
+ 	p->first_time_slice = 1;
+-	current->time_slice >>= 1;
+ 	p->timestamp = sched_clock();
+-	if (unlikely(!current->time_slice)) {
+-		/*
+-		 * This case is rare, it happens when the parent has only
+-		 * a single jiffy left from its timeslice. Taking the
+-		 * runqueue lock is not a problem.
+-		 */
+-		current->time_slice = 1;
++	if (current->time_slice > 0) {
++		p->time_slice = (current->time_slice + 1) >> 1;
++		current->time_slice >>= 1;
++	} else {
++		p->time_slice = 0;
+ 		task_running_tick(cpu_rq(cpu), current);
+ 	}
+ 	local_irq_enable();
+@@ -1755,6 +1942,9 @@ void fastcall wake_up_new_task(struct ta
+ 	struct rq *rq, *this_rq;
+ 	unsigned long flags;
+ 	int this_cpu, cpu;
++#ifdef CONFIG_SMP
++	int new_cpu;
++#endif
+ 
+ 	rq = task_rq_lock(p, &flags);
+ 	BUG_ON(p->state != TASK_RUNNING);
+@@ -1772,6 +1962,22 @@ void fastcall wake_up_new_task(struct ta
+ 
+ 	p->prio = effective_prio(p);
+ 
++#ifdef CONFIG_SMP
++	if (!rt_task(p)) {
++		new_cpu = sched_balance_task(cpu, p, SD_BALANCE_FORK);
++		BUG_ON(new_cpu == -1);
++		if (new_cpu != cpu) {
++			cpu = new_cpu;
++			set_task_cpu(p, cpu);
++			task_rq_unlock(rq, &flags);
++			rq = task_rq_lock(p, &flags);
++			BUG_ON(this_cpu != smp_processor_id());
++		}
++	}
++#endif
++
++	p->timestamp = sched_clock();
++	activate_dwrr_task(p);
+ 	if (likely(cpu == this_cpu)) {
+ 		if (!(clone_flags & CLONE_VM)) {
+ 			/*
+@@ -1784,8 +1990,19 @@ void fastcall wake_up_new_task(struct ta
+ 			else {
+ 				p->prio = current->prio;
+ 				p->normal_prio = current->normal_prio;
+-				list_add_tail(&p->run_list, &current->run_list);
+-				p->array = current->array;
++				if (rq->curr == rq->idle)
++					dwrr_update_idle(p, rq);
++				if (current->array == rq->round_expired) {
++					list_add_tail(&p->run_list,
++							rq->expired->queue +
++							p->prio);
++					__set_bit(p->prio, rq->expired->bitmap);
++					p->array = rq->expired;
++				} else {
++					list_add_tail(&p->run_list,
++							&current->run_list);
++					p->array = current->array;
++				}
+ 				p->array->nr_active++;
+ 				inc_nr_running(p, rq);
+ 			}
+@@ -2174,7 +2391,12 @@ out:
+ void sched_exec(void)
+ {
+ 	int new_cpu, this_cpu = get_cpu();
+-	new_cpu = sched_balance_self(this_cpu, SD_BALANCE_EXEC);
++
++	new_cpu = this_cpu;
++	if (unlikely(!cpu_isset(this_cpu, current->cpus_allowed)))
++		new_cpu = any_online_cpu(current->cpus_allowed);
++	else if (rt_task(current))
++		new_cpu = sched_balance_self(this_cpu, SD_BALANCE_EXEC);
+ 	put_cpu();
+ 	if (new_cpu != this_cpu)
+ 		sched_migrate_task(current, new_cpu);
+@@ -2191,6 +2413,8 @@ static void pull_task(struct rq *src_rq,
+ 	dequeue_task(p, src_array);
+ 	dec_nr_running(p, src_rq);
+ 	set_task_cpu(p, this_cpu);
++	if (this_rq->curr == this_rq->idle)
++		dwrr_update_idle(p, this_rq);
+ 	inc_nr_running(p, this_rq);
+ 	enqueue_task(p, this_array);
+ 	p->timestamp = (p->timestamp - src_rq->most_recent_timestamp)
+@@ -2204,6 +2428,31 @@ static void pull_task(struct rq *src_rq,
+ }
+ 
+ /*
++ * pull_expired_task - move a task from a remote expired runqueue to the
++ * local runqueue.
++ * Both runqueues must be locked.
++ */
++static void pull_expired_task(struct rq *src_rq, 
++			      struct prio_array *src_array,
++                      	      struct task_struct *p, struct rq *this_rq,
++                      	      struct prio_array *this_array, int this_cpu)
++{
++        dequeue_task(p, src_array);
++        src_rq->expired_weighted_load -= p->load_weight;
++        set_task_cpu(p, this_cpu);
++        inc_nr_running(p, this_rq);
++        enqueue_task(p, this_array);
++	p->timestamp = (p->timestamp - src_rq->most_recent_timestamp)
++				+ this_rq->most_recent_timestamp;
++        /*
++         * Note that idle threads have a prio of MAX_PRIO, for this test
++         * to be always true for them.
++         */
++        if (TASK_PREEMPTS_CURR(p, this_rq))
++                resched_task(this_rq->curr);
++}
++
++/*
+  * can_migrate_task - may task p from runqueue rq be migrated to this_cpu?
+  */
+ static
+@@ -2223,6 +2472,8 @@ int can_migrate_task(struct task_struct 
+ 
+ 	if (task_running(rq, p))
+ 		return 0;
++	if (p->array == rq->round_expired)
++		return 0;
+ 
+ 	/*
+ 	 * Aggressive migration if:
+@@ -2238,13 +2489,94 @@ int can_migrate_task(struct task_struct 
+ 		return 1;
+ 	}
+ 
+-	if (task_hot(p, rq->most_recent_timestamp, sd))
++	if (idle != NEWLY_IDLE && task_hot(p, rq->most_recent_timestamp, sd))
+ 		return 0;
+ 	return 1;
+ }
+ 
++/*
++ * can_migrate_expired_task - may task p from round expired runqueue rq be
++ * migrated to this_cpu?
++ */
++static
++int can_migrate_expired_task(struct task_struct *p, struct rq *rq, 
++			     int this_cpu)
++{
++        /*
++         * We do not migrate tasks that are:
++         * 1) running (obviously), or
++         * 2) cannot be migrated to this CPU due to cpus_allowed.
++         */
++        if (!cpu_isset(this_cpu, p->cpus_allowed))
++                return 0;
++
++        /*
++         * p could still be the current running task on rq between the time
++         * it was moved to the round_expired queue and the time schedule()
++         * is called to switch it out.
++         */
++        if (task_running(rq, p))
++                return 0;
++
++        return 1;
++}
++
+ #define rq_best_prio(rq) min((rq)->curr->prio, (rq)->best_expired_prio)
+ 
++static int move_round_expired_tasks(struct rq *this_rq, int this_cpu,
++                      struct rq *src_rq, unsigned long max_nr_move)
++{
++        int idx, pulled = 0;
++        struct prio_array *array, *dst_array;
++        struct list_head *head, *curr;
++        struct task_struct *tmp;
++
++        if (max_nr_move == 0 || !src_rq->round_expired->nr_active)
++                goto out;
++
++        array = src_rq->round_expired;
++        dst_array = this_rq->active;
++
++        /* Start searching at priority 0: */
++        idx = 0;
++skip_bitmap:
++        if (!idx)
++                idx = sched_find_first_bit(array->bitmap);
++        else
++                idx = find_next_bit(array->bitmap, MAX_PRIO, idx);
++        if (idx >= MAX_PRIO)
++                goto out;
++
++        head = array->queue + idx;
++        curr = head->prev;
++skip_queue:
++        tmp = list_entry(curr, struct task_struct, run_list);
++
++        curr = curr->prev;
++
++        if (!can_migrate_expired_task(tmp, src_rq, this_cpu)) {
++                if (curr != head)
++                        goto skip_queue;
++                idx++;
++                goto skip_bitmap;
++        }
++
++        pull_expired_task(src_rq, array, tmp, this_rq, dst_array, this_cpu);
++        pulled++;
++
++        /*
++         * We only want to steal up to the prescribed number of tasks.
++         */
++        if (pulled < max_nr_move) {
++                if (curr != head)
++                        goto skip_queue;
++                idx++;
++                goto skip_bitmap;
++        }
++out:
++        return pulled;
++}
++
+ /*
+  * move_tasks tries to move up to max_nr_move tasks and max_load_move weighted
+  * load from busiest to this_rq, as part of a balancing operation within
+@@ -2258,7 +2590,7 @@ static int move_tasks(struct rq *this_rq
+ 		      int *all_pinned)
+ {
+ 	int idx, pulled = 0, pinned = 0, this_best_prio, best_prio,
+-	    best_prio_seen, skip_for_load;
++	    best_prio_seen;
+ 	struct prio_array *array, *dst_array;
+ 	struct list_head *head, *curr;
+ 	struct task_struct *tmp;
+@@ -2318,17 +2650,7 @@ skip_queue:
+ 
+ 	curr = curr->prev;
+ 
+-	/*
+-	 * To help distribute high priority tasks accross CPUs we don't
+-	 * skip a task if it will be the highest priority task (i.e. smallest
+-	 * prio value) on its new queue regardless of its load weight
+-	 */
+-	skip_for_load = tmp->load_weight > rem_load_move;
+-	if (skip_for_load && idx < this_best_prio)
+-		skip_for_load = !best_prio_seen && idx == best_prio;
+-	if (skip_for_load ||
+-	    !can_migrate_task(tmp, busiest, this_cpu, sd, idle, &pinned)) {
+-
++	if (!can_migrate_task(tmp, busiest, this_cpu, sd, idle, &pinned)) {
+ 		best_prio_seen |= idx == best_prio;
+ 		if (curr != head)
+ 			goto skip_queue;
+@@ -2387,6 +2709,10 @@ find_busiest_group(struct sched_domain *
+ 	unsigned long min_nr_running = ULONG_MAX;
+ 	struct sched_group *group_min = NULL, *group_leader = NULL;
+ #endif
++	struct rq *this_rq = cpu_rq(this_cpu);
++	unsigned long nr_moved = 0;
++	int found_highest_cpu, highest_cpu = -1, this_group_ok;
++	struct sched_group *highest_group = NULL;
+ 
+ 	max_load = this_load = total_load = total_pwr = 0;
+ 	busiest_load_per_task = busiest_nr_running = 0;
+@@ -2413,6 +2739,8 @@ find_busiest_group(struct sched_domain *
+ 		/* Tally up the load of all CPUs in the group */
+ 		sum_weighted_load = sum_nr_running = avg_load = 0;
+ 
++		found_highest_cpu = 0;
++		this_group_ok = 0;
+ 		for_each_cpu_mask(i, group->cpumask) {
+ 			struct rq *rq;
+ 
+@@ -2421,6 +2749,19 @@ find_busiest_group(struct sched_domain *
+ 
+ 			rq = cpu_rq(i);
+ 
++			if (idle == NEWLY_IDLE && !nr_moved && 
++			    this_rq->active->round == dwrr_highest_round && 
++			    rq->active->round + 1 == dwrr_highest_round) {
++				double_lock_balance(this_rq, rq);
++				nr_moved = move_round_expired_tasks(this_rq,
++				  	this_cpu, rq,
++					(rq->round_expired->nr_active + 1)/2);
++				spin_unlock(&rq->lock);
++			}
++
++			if (rq->active->round >= dwrr_highest_round - 1)
++				found_highest_cpu = 1;
++
+ 			if (*sd_idle && !idle_cpu(i))
+ 				*sd_idle = 0;
+ 
+@@ -2438,6 +2779,26 @@ find_busiest_group(struct sched_domain *
+ 			avg_load += load;
+ 			sum_nr_running += rq->nr_running;
+ 			sum_weighted_load += rq->raw_weighted_load;
++			if (found_highest_cpu && !local_group &&
++					rq->nr_running >= 2) {
++				this_group_ok = 1;
++				if (highest_cpu == -1) {
++					highest_cpu = i;
++					highest_group = group;
++				}
++			}
++		}
++		if (!found_highest_cpu || 
++				(idle == NEWLY_IDLE && !this_group_ok)) {
++			if (local_group) {
++				avg_load = sg_div_cpu_power(group,
++						avg_load * SCHED_LOAD_SCALE);
++				this_load = avg_load;
++				this = group;
++				this_nr_running = sum_nr_running;
++				this_load_per_task = sum_weighted_load;
++			}
++ 			goto dwrr_group_next;
+ 		}
+ 
+ 		/*
+@@ -2527,6 +2888,7 @@ find_busiest_group(struct sched_domain *
+ 		}
+ group_next:
+ #endif
++dwrr_group_next:
+ 		group = group->next;
+ 	} while (group != sd->groups);
+ 
+@@ -2594,6 +2956,8 @@ small_imbalance:
+ 
+ 		if (max_load - this_load >= busiest_load_per_task * imbn) {
+ 			*imbalance = busiest_load_per_task;
++			if (idle == NEWLY_IDLE && highest_cpu == -1)
++				goto ret;
+ 			return busiest;
+ 		}
+ 
+@@ -2634,7 +2998,8 @@ small_imbalance:
+ 
+ 		*imbalance = busiest_load_per_task;
+ 	}
+-
++	if (idle == NEWLY_IDLE && (*imbalance == 0 || highest_cpu == -1))
++		goto ret;
+ 	return busiest;
+ 
+ out_balanced:
+@@ -2644,10 +3009,19 @@ out_balanced:
+ 
+ 	if (this == group_leader && group_leader != group_min) {
+ 		*imbalance = min_load_per_task;
++		if (idle == NEWLY_IDLE && 
++				(*imbalance == 0 || highest_cpu == -1))
++			goto ret;
+ 		return group_min;
+ 	}
+ #endif
+ ret:
++        if (idle == NEWLY_IDLE && highest_cpu != -1) {
++                /* No enough imbalance, so we force one task to be moved
++                 * over to the newly idle cpu */
++                *imbalance = LONG_MAX; /* signifies forced migration */
++                return highest_group;
++        }
+ 	*imbalance = 0;
+ 	return NULL;
+ }
+@@ -2672,6 +3046,10 @@ find_busiest_queue(struct sched_group *g
+ 
+ 		if (rq->nr_running == 1 && rq->raw_weighted_load > imbalance)
+ 			continue;
++		if (idle == NEWLY_IDLE && rq->nr_running == 1)
++			continue;
++		if (rq->active->round < dwrr_highest_round - 1)
++			continue;
+ 
+ 		if (rq->raw_weighted_load > max_load) {
+ 			max_load = rq->raw_weighted_load;
+@@ -2708,6 +3086,12 @@ static int load_balance(int this_cpu, st
+ 	cpumask_t cpus = CPU_MASK_ALL;
+ 	unsigned long flags;
+ 
++        /* Only idle CPUs and CPUs in the highest two rounds perform load
++	  * balancing and this is the common case. */
++        if (this_rq->active->round < dwrr_highest_round - 1
++			&& !idle_cpu(this_cpu))
++                return 0;
++
+ 	/*
+ 	 * When power savings policy is enabled for the parent domain, idle
+ 	 * sibling can pick up load irrespective of busy siblings. In this case,
+@@ -2778,32 +3162,9 @@ redo:
+ 		sd->nr_balance_failed++;
+ 
+ 		if (unlikely(sd->nr_balance_failed > sd->cache_nice_tries+2)) {
+-
+-			spin_lock_irqsave(&busiest->lock, flags);
+-
+-			/* don't kick the migration_thread, if the curr
+-			 * task on busiest cpu can't be moved to this_cpu
+-			 */
+-			if (!cpu_isset(this_cpu, busiest->curr->cpus_allowed)) {
+-				spin_unlock_irqrestore(&busiest->lock, flags);
+-				all_pinned = 1;
+-				goto out_one_pinned;
+-			}
+-
+-			if (!busiest->active_balance) {
+-				busiest->active_balance = 1;
+-				busiest->push_cpu = this_cpu;
+-				active_balance = 1;
+-			}
+-			spin_unlock_irqrestore(&busiest->lock, flags);
+-			if (active_balance)
+-				wake_up_process(busiest->migration_thread);
+-
+-			/*
+-			 * We've kicked active balancing, reset the failure
+-			 * counter.
+-			 */
+-			sd->nr_balance_failed = sd->cache_nice_tries+1;
++                        /* don't do active balance with dwrr */
++                        all_pinned = 1;
++                        goto out_one_pinned;
+ 		}
+ 	} else
+ 		sd->nr_balance_failed = 0;
+@@ -2861,6 +3222,8 @@ load_balance_newidle(int this_cpu, struc
+ 	int sd_idle = 0;
+ 	cpumask_t cpus = CPU_MASK_ALL;
+ 
++	BUG_ON(dwrr_highest_round > 0 &&
++			this_rq->active->round < dwrr_highest_round - 1);
+ 	/*
+ 	 * When power savings policy is enabled for the parent domain, idle
+ 	 * sibling can pick up load irrespective of busy siblings. In this case,
+@@ -2884,7 +3247,11 @@ redo:
+ 				&cpus);
+ 	if (!busiest) {
+ 		schedstat_inc(sd, lb_nobusyq[NEWLY_IDLE]);
+-		goto out_balanced;
++		/* find_busiest_group() found a busy group but
++		 * find_busiest_queue failed because tasks on the busiest
++		 * queue have exited. Let's re-search to find the next
++		 * busiest group. */
++		goto redo;
+ 	}
+ 
+ 	BUG_ON(busiest == this_rq);
+@@ -2906,6 +3273,15 @@ redo:
+ 				goto redo;
+ 		}
+ 	}
++	/* There are two cases we may get here: (1) we found the busiest
++	 * queue but all its tasks have exited; (2) the busiest queue we
++	 * found has only one task but its load is high due to nice. In both
++	 * cases, we should re-search for the busiest queue. */
++	else {
++		cpu_clear(cpu_of(busiest), cpus);
++		if (!cpus_empty(cpus))
++			goto redo;
++	}
+ 
+ 	if (!nr_moved) {
+ 		schedstat_inc(sd, lb_failed[NEWLY_IDLE]);
+@@ -2951,7 +3327,7 @@ static void idle_balance(int this_cpu, s
+ 		interval = msecs_to_jiffies(sd->balance_interval);
+ 		if (time_after(next_balance, sd->last_balance + interval))
+ 			next_balance = sd->last_balance + interval;
+-		if (pulled_task)
++		if (pulled_task > 0)
+ 			break;
+ 	}
+ 	if (!pulled_task)
+@@ -3301,7 +3677,13 @@ EXPORT_PER_CPU_SYMBOL(kstat);
+ static inline void
+ update_cpu_clock(struct task_struct *p, struct rq *rq, unsigned long long now)
+ {
+-	p->sched_time += now - p->last_ran;
++	long long elapsed_time = now - p->last_ran;
++
++	if (unlikely(elapsed_time < 0))
++		elapsed_time = 0;
++	p->sched_time += elapsed_time;
++	p->round_slice_used += elapsed_time;
++	p->time_slice -= elapsed_time;
+ 	p->last_ran = rq->most_recent_timestamp = now;
+ }
+ 
+@@ -3417,6 +3799,8 @@ void account_steal_time(struct task_stru
+ 
+ static void task_running_tick(struct rq *rq, struct task_struct *p)
+ {
++	s64 round_slice;
++
+ 	if (p->array != rq->active) {
+ 		/* Task has expired but was not scheduled yet */
+ 		set_tsk_need_resched(p);
+@@ -3435,8 +3819,11 @@ static void task_running_tick(struct rq 
+ 		 * RR tasks need a special form of timeslice management.
+ 		 * FIFO tasks have no timeslices.
+ 		 */
+-		if ((p->policy == SCHED_RR) && !--p->time_slice) {
+-			p->time_slice = task_timeslice(p);
++		if ((p->policy == SCHED_RR) && p->time_slice <= 0) {
++			/* p->time_slice < 0 means p used more than its
++			 * allotted time, so charge it back in the next
++			 * slice */
++			p->time_slice += task_timeslice(p);
+ 			p->first_time_slice = 0;
+ 			set_tsk_need_resched(p);
+ 
+@@ -3445,11 +3832,72 @@ static void task_running_tick(struct rq 
+ 		}
+ 		goto out_unlock;
+ 	}
+-	if (!--p->time_slice) {
++	/* Re-compute task weight. If weight is changed (e.g., due to
++	 * thread arrivals or departures), keep counting the task's
++	 * round_slice_used as if the task started this round with the new
++	 * weight. If a short job comes and goes, it may not affect the time
++	 * an existing task runs in a round, which helps enable stable CPU
++	 * time allocation. */
++        p->weight = dwrr_task_weight(p);
++	round_slice = dwrr_weight_to_roundslice(p->weight);
++	if (p->round_slice_used >= round_slice) {
++                /*
++                 * 1. Here we may dequeue an interactive task that the stock
++		 * scheduler would still want to run. How much is the impact?
++                 * 2. If a task runs in a critical section for too long
++		 * with timer interrupts disabled, it may exceed its round
++		 * slice. Ideally we should reduce its round slice in the
++		 * next round, but this seems to be hard to track. How much
++		 * impact would this cause?
++                 */
++                dequeue_task(p, rq->active);
++                /* Can't decrement nr_running now because although p is
++                 * moved to round_expired, it's still rq->curr before
++                 * schedule() is called, which may be quite some time later
++                 * (when the current CPU returns to user mode). If we
++                 * decrement nr_running here, another CPU A could advance to
++                 * two rounds ahead of this CPU B:
++                 *
++                 * 1. Initially, both A and B are in the highest round and B
++                 * has two processes in active.
++                 * 2. B's active becomes empty. It checks A's active queue.
++                 * Suppose A has one task in active queue and one task has
++                 * just moved to round_expired but before schedule() is
++                 * called, i.e., curr->rq of B is still that task. Thus, A
++                 * sees only one task in B's active queue and cannot move it
++                 * to A.
++                 * 3. A then advances highest_round and becomes empty again.
++                 * Suppose A still hasn't had a chance to run schedule(). A
++                 * will move no task again and advance to the next round.
++                 * This will cause A to be two rounds ahead.
++                 * 4. When B finally runs schedule() and continues to
++                 * advance to its next round, it will have two processes in
++                 * active. This is wrong!
++                 *
++                 * Therefore, we delay dec_nr_running until schedule() is
++                 * called (see schedule).
++                 */
++                /* dec_nr_running(p, rq); */
++                set_tsk_need_resched(p);
++                p->prio = effective_prio(p);
++                p->time_slice = task_timeslice(p);
++                p->first_time_slice = 0;
++		/* The task may overrun some time as compared to its new
++		 * entitlement, so penalize it for that much time in the
++		 * next round. */
++                p->round_slice_used -= round_slice;
++                enqueue_task(p, rq->round_expired);
++                rq->expired_weighted_load += p->load_weight;
++                goto out_unlock;
++        }
++
++	if (p->time_slice <= 0) {
+ 		dequeue_task(p, rq->active);
+ 		set_tsk_need_resched(p);
+ 		p->prio = effective_prio(p);
+-		p->time_slice = task_timeslice(p);
++		/* p->time_slice < 0 means p used more than its allotted
++		 * time, so charge it back in the next slice */
++		p->time_slice += task_timeslice(p);
+ 		p->first_time_slice = 0;
+ 
+ 		if (!rq->expired_timestamp)
+@@ -3623,6 +4071,9 @@ need_resched_nonpreemptible:
+ 
+ 	spin_lock_irq(&rq->lock);
+ 
++	if (prev->array == rq->round_expired)
++		dec_nr_running(prev, rq);
++
+ 	switch_count = &prev->nivcsw;
+ 	if (prev->state && !(preempt_count() & PREEMPT_ACTIVE)) {
+ 		switch_count = &prev->nvcsw;
+@@ -3633,16 +4084,39 @@ need_resched_nonpreemptible:
+ 			if (prev->state == TASK_UNINTERRUPTIBLE)
+ 				rq->nr_uninterruptible++;
+ 			deactivate_task(prev, rq);
++                        deactivate_dwrr_task(prev);
+ 		}
+ 	}
+ 
+ 	cpu = smp_processor_id();
+ 	if (unlikely(!rq->nr_running)) {
+-		idle_balance(cpu, rq);
++                if (rq->active->round == dwrr_highest_round
++				&& !rq->nr_running)
++			idle_balance(cpu, rq);
++
+ 		if (!rq->nr_running) {
+-			next = rq->idle;
+-			rq->expired_timestamp = 0;
+-			goto switch_tasks;
++                        if (unlikely(!rq->round_expired->nr_active)) {
++                                next = rq->idle;
++                                rq->expired_timestamp = 0;
++                                goto switch_tasks;
++                        } else {
++                                 /*
++                                  * Switch the active and round_expired
++                                  * arrays.
++                                  */
++                                array = rq->active;
++                                rq->active = rq->round_expired;
++                                rq->round_expired = array;
++                                rq->expired->round = rq->active->round;
++                                rq->round_expired->round =
++                                        rq->active->round + 1;
++                                rq->nr_running = rq->active->nr_active;
++                                rq->raw_weighted_load =
++                                        rq->expired_weighted_load;
++                                rq->expired_weighted_load = 0;
++                                if (rq->active->round > dwrr_highest_round)
++                                        dwrr_highest_round = rq->active->round;
++                        }
+ 		}
+ 	}
+ 
+@@ -3682,8 +4156,12 @@ need_resched_nonpreemptible:
+ 	}
+ 	next->sleep_type = SLEEP_NORMAL;
+ switch_tasks:
+-	if (next == rq->idle)
++	if (next == rq->idle) {
++		rq->active->round = 0;
++		rq->expired->round = 0;
++		rq->round_expired->round = 1;
+ 		schedstat_inc(rq, sched_goidle);
++	}
+ 	prefetch(next);
+ 	prefetch_stack(next);
+ 	clear_tsk_need_resched(prev);
+@@ -4140,18 +4618,47 @@ void rt_mutex_setprio(struct task_struct
+ 
+ 	oldprio = p->prio;
+ 	array = p->array;
+-	if (array)
++	/* After dequeuing a task from the round_expired array and before
++	 * it's enqueued back in, another CPU may run idle_balance and
++	 * incorrectly see the round_expired array empty. Thus, in this
++	 * case, we call dequeue_expired_task, which doesn't change
++	 * nr_active in round_expired. */
++	if (array == rq->round_expired) {
++		if (rt_prio(prio)) {
++			/* the task is in round_expired and will be inserted
++			   back into the active array */
++			dequeue_task(p, array);
++			rq->expired_weighted_load -= p->load_weight;
++		} else {
++			/* the task will stay in round_expired so don't
++			 * decrement nr_active in round_expired. */
++			dequeue_expired_task(p, array);
++		}
++	} else if (array)
+ 		dequeue_task(p, array);
++
++	/* We are changing to an RT priority so remove the old tg. */
++	if (p->dg && rt_prio(prio))
++		remove_dwrr_task(p);
++	else if (unlikely(rt_task(p) && !rt_prio(prio)))
++		printk(KERN_WARNING "rt_mutex_setprio: changing rt to non-rt" 
++		      " for task %d %s not implemented\n", p->pid, p->comm);
++
+ 	p->prio = prio;
+ 
+ 	if (array) {
+-		/*
+-		 * If changing to an RT priority then queue it
+-		 * in the active array!
+-		 */
+-		if (rt_task(p))
+-			array = rq->active;
+-		enqueue_task(p, array);
++		if (array == rq->round_expired) {
++			if (rt_task(p)) {
++				enqueue_task(p, rq->active);
++				inc_nr_running(p, rq);
++			} else
++				enqueue_expired_task(p, array);
++		} 
++		else {
++			if (rt_task(p))
++				array = rq->active;
++			enqueue_task(p, array);
++		}
+ 		/*
+ 		 * Reschedule if we are currently running on this runqueue and
+ 		 * our priority decreased, or if we are not currently running on
+@@ -4174,6 +4681,7 @@ void set_user_nice(struct task_struct *p
+ 	int old_prio, delta;
+ 	unsigned long flags;
+ 	struct rq *rq;
++	int old_static_prio = p->static_prio;
+ 
+ 	if (TASK_NICE(p) == nice || nice < -20 || nice > 19)
+ 		return;
+@@ -4193,9 +4701,18 @@ void set_user_nice(struct task_struct *p
+ 		goto out_unlock;
+ 	}
+ 	array = p->array;
++	if (unlikely(rt_task(p))) {
++		printk("rt_task %d %s set_user_nice\n", p->pid, p->comm);
++		BUG();
++	}
+ 	if (array) {
+-		dequeue_task(p, array);
+-		dec_raw_weighted_load(rq, p);
++		if (array == rq->round_expired) {
++			dequeue_expired_task(p, array);
++			rq->expired_weighted_load -= p->load_weight;
++		} else {
++			dequeue_task(p, array);
++			dec_raw_weighted_load(rq, p);
++		}
+ 	}
+ 
+ 	p->static_prio = NICE_TO_PRIO(nice);
+@@ -4204,15 +4721,28 @@ void set_user_nice(struct task_struct *p
+ 	p->prio = effective_prio(p);
+ 	delta = p->prio - old_prio;
+ 
++	if (old_static_prio != p->static_prio) {
++		if (unlikely(!p->dg)) {
++			printk("Thread %d %s tg NULL\n", p->pid, p->comm);
++			BUG();
++		}
++		do_set_thread_weight(p, dwrr_default_weight(p));
++	}
++
+ 	if (array) {
+-		enqueue_task(p, array);
+-		inc_raw_weighted_load(rq, p);
+-		/*
+-		 * If the task increased its priority or is running and
+-		 * lowered its priority, then reschedule its CPU:
+-		 */
+-		if (delta < 0 || (delta > 0 && task_running(rq, p)))
+-			resched_task(rq->curr);
++		if (array == rq->round_expired) {
++			enqueue_expired_task(p, array);
++			rq->expired_weighted_load += p->load_weight;
++		} else {
++			enqueue_task(p, array);
++			inc_raw_weighted_load(rq, p);
++			/*
++			 * If the task increased its priority or is running and
++			 * lowered its priority, then reschedule its CPU:
++			 */
++			if (delta < 0 || (delta > 0 && task_running(rq, p)))
++				resched_task(rq->curr);
++		}
+ 	}
+ out_unlock:
+ 	task_rq_unlock(rq, &flags);
+@@ -4335,6 +4865,13 @@ static void __setscheduler(struct task_s
+ 	p->normal_prio = normal_prio(p);
+ 	/* we are holding p->pi_lock already */
+ 	p->prio = rt_mutex_getprio(p);
++	if (p->dg && rt_task(p))
++		remove_dwrr_task(p);
++	else if (!p->dg && !rt_task(p)) {
++		p->dg = create_dwrr_group();
++		BUG_ON(!p->dg);
++		init_dwrr_one_task_group(p->dg, p, 1);
++	}
+ 	/*
+ 	 * SCHED_BATCH tasks are treated as perpetual CPU hogs:
+ 	 */
+@@ -4430,12 +4967,20 @@ recheck:
+ 		goto recheck;
+ 	}
+ 	array = p->array;
+-	if (array)
++	if (array) {
+ 		deactivate_task(p, rq);
++		deactivate_dwrr_task(p);
++	}
+ 	oldprio = p->prio;
+ 	__setscheduler(p, policy, param->sched_priority);
+ 	if (array) {
++		if (unlikely(rt_prio(oldprio) && !rt_task(p) &&
++				rq->active->round != dwrr_highest_round))
++			printk(KERN_WARNING "sched_setscheduler: changing "
++			      "task %d %s from rt to non-rt not implemented\n", 
++			      p->pid, p->comm);
+ 		__activate_task(p, rq);
++		activate_dwrr_task(p);
+ 		/*
+ 		 * Reschedule if we are currently running on this runqueue and
+ 		 * our priority decreased, or if we are not currently running on
+@@ -4736,7 +5281,8 @@ asmlinkage long sys_sched_yield(void)
+ 	 */
+ 	if (rt_task(current))
+ 		target = rq->active;
+-
++	if (array == rq->round_expired)
++		target = array;
+ 	if (array->nr_active == 1) {
+ 		schedstat_inc(rq, yld_act_empty);
+ 		if (!rq->expired->nr_active)
+@@ -5169,6 +5715,11 @@ static int __migrate_task(struct task_st
+ 	rq_src = cpu_rq(src_cpu);
+ 	rq_dest = cpu_rq(dest_cpu);
+ 
++	if (!rt_task(p) && cpu_isset(src_cpu, p->cpus_allowed)
++			&& rq_dest->curr != rq_dest->idle 
++			&& rq_dest->active->round != dwrr_highest_round)
++		return ret;
++
+ 	double_rq_lock(rq_src, rq_dest);
+ 	/* Already moved. */
+ 	if (task_cpu(p) != src_cpu)
+@@ -5177,6 +5728,9 @@ static int __migrate_task(struct task_st
+ 	if (!cpu_isset(dest_cpu, p->cpus_allowed))
+ 		goto out;
+ 
++	if (p->array == rq_src->round_expired)
++		goto out;
++
+ 	set_task_cpu(p, dest_cpu);
+ 	if (p->array) {
+ 		/*
+@@ -6605,6 +7159,8 @@ static int build_sched_domains(const cpu
+ 				> SD_NODES_PER_DOMAIN*cpus_weight(nodemask)) {
+ 			sd = &per_cpu(allnodes_domains, i);
+ 			*sd = SD_ALLNODES_INIT;
++			sd->flags |= (SD_BALANCE_NEWIDLE | SD_BALANCE_FORK
++					| SD_BALANCE_EXEC);
+ 			sd->span = *cpu_map;
+ 			cpu_to_allnodes_group(i, cpu_map, &sd->groups);
+ 			p = sd;
+@@ -6614,6 +7170,7 @@ static int build_sched_domains(const cpu
+ 
+ 		sd = &per_cpu(node_domains, i);
+ 		*sd = SD_NODE_INIT;
++		sd->flags |= SD_BALANCE_NEWIDLE;
+ 		sd->span = sched_domain_node_span(cpu_to_node(i));
+ 		sd->parent = p;
+ 		if (p)
+@@ -6624,6 +7181,7 @@ static int build_sched_domains(const cpu
+ 		p = sd;
+ 		sd = &per_cpu(phys_domains, i);
+ 		*sd = SD_CPU_INIT;
++		sd->flags |= SD_BALANCE_FORK;
+ 		sd->span = nodemask;
+ 		sd->parent = p;
+ 		if (p)
+@@ -6634,6 +7192,7 @@ static int build_sched_domains(const cpu
+ 		p = sd;
+ 		sd = &per_cpu(core_domains, i);
+ 		*sd = SD_MC_INIT;
++		sd->flags |= SD_BALANCE_FORK;
+ 		sd->span = cpu_coregroup_map(i);
+ 		cpus_and(sd->span, sd->span, *cpu_map);
+ 		sd->parent = p;
+@@ -6645,6 +7204,7 @@ static int build_sched_domains(const cpu
+ 		p = sd;
+ 		sd = &per_cpu(cpu_domains, i);
+ 		*sd = SD_SIBLING_INIT;
++		sd->flags |= SD_BALANCE_FORK;
+ 		sd->span = cpu_sibling_map[i];
+ 		cpus_and(sd->span, sd->span, *cpu_map);
+ 		sd->parent = p;
+@@ -7045,6 +7605,10 @@ void __init sched_init(void)
+ 		rq->nr_running = 0;
+ 		rq->active = rq->arrays;
+ 		rq->expired = rq->arrays + 1;
++		rq->round_expired = rq->arrays + 2;
++		rq->active->round = 0;
++		rq->expired->round = 0;
++		rq->round_expired->round = 1;
+ 		rq->best_expired_prio = MAX_PRIO;
+ 
+ #ifdef CONFIG_SMP
+@@ -7059,7 +7623,7 @@ void __init sched_init(void)
+ #endif
+ 		atomic_set(&rq->nr_iowait, 0);
+ 
+-		for (j = 0; j < 2; j++) {
++		for (j = 0; j < 3; j++) {
+ 			array = rq->arrays + j;
+ 			for (k = 0; k < MAX_PRIO; k++) {
+ 				INIT_LIST_HEAD(array->queue + k);
+@@ -7144,7 +7708,15 @@ void normalize_rt_tasks(void)
+ 			deactivate_task(p, task_rq(p));
+ 		__setscheduler(p, SCHED_NORMAL, 0);
+ 		if (array) {
++			if (unlikely(task_rq(p)->active->round != 
++						dwrr_highest_round)) {
++				printk("normalize_rt_tasks: changing process "
++				      "%d %s from rt to non-rt, not "
++				      "implemented yet", p->pid, p->comm);
++				BUG();
++			}
+ 			__activate_task(p, task_rq(p));
++			activate_dwrr_task(p);
+ 			resched_task(rq->curr);
+ 		}
+ 
+diff -uprN linux-2.6.22.15/Makefile linux-2.6.22.15-dwrr/Makefile
+--- linux-2.6.22.15/Makefile	2007-12-14 10:34:15.000000000 -0800
++++ linux-2.6.22.15-dwrr/Makefile	2008-01-30 15:46:05.000000000 -0800
+@@ -1,7 +1,7 @@
+ VERSION = 2
+ PATCHLEVEL = 6
+ SUBLEVEL = 22
+-EXTRAVERSION = .15
++EXTRAVERSION = .15-dwrr
+ NAME = Holy Dancing Manatees, Batman!
+ 
+ # *DOCUMENTATION*

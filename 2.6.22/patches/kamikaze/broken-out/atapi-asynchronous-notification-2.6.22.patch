@@ -1,0 +1,274 @@
+Index: linux-2.6.22-rc7/drivers/ata/libata-core.c
+===================================================================
+--- linux-2.6.22-rc7.orig/drivers/ata/libata-core.c
++++ linux-2.6.22-rc7/drivers/ata/libata-core.c
+@@ -70,6 +70,7 @@ const unsigned long sata_deb_timing_long
+ static unsigned int ata_dev_init_params(struct ata_device *dev,
+ 					u16 heads, u16 sectors);
+ static unsigned int ata_dev_set_xfermode(struct ata_device *dev);
++static unsigned int ata_dev_set_AN(struct ata_device *dev);
+ static void ata_dev_xfermask(struct ata_device *dev);
+ 
+ unsigned int ata_print_id = 1;
+@@ -2002,6 +2003,22 @@ int ata_dev_configure(struct ata_device 
+ 		}
+ 		dev->cdb_len = (unsigned int) rc;
+ 
++		/*
++		 * check to see if this ATAPI device supports
++		 * Asynchronous Notification
++		 */
++		if ((ap->flags & ATA_FLAG_AN) && ata_id_has_AN(id)) {
++			int err;
++			/* issue SET feature command to turn this on */
++			err = ata_dev_set_AN(dev);
++			if (err)
++				ata_dev_printk(dev, KERN_ERR,
++						"unable to set AN, err %x\n",
++						err);
++			else
++				dev->flags |= ATA_DFLAG_AN;
++		}
++
+ 		if (ata_id_cdb_intr(dev->id)) {
+ 			dev->flags |= ATA_DFLAG_CDB_INTR;
+ 			cdb_intr_string = ", CDB intr";
+@@ -3958,6 +3975,41 @@ static unsigned int ata_dev_set_xfermode
+ }
+ 
+ /**
++ *	ata_dev_set_AN - Issue SET FEATURES - SATA FEATURES
++ *	@dev: Device to which command will be sent
++ *
++ *	Issue SET FEATURES - SATA FEATURES command to device @dev
++ *	on port @ap with sector count set to indicate Asynchronous
++ *	Notification feature
++ *
++ *	LOCKING:
++ *	PCI/etc. bus probe sem.
++ *
++ *	RETURNS:
++ *	0 on success, AC_ERR_* mask otherwise.
++ */
++static unsigned int ata_dev_set_AN(struct ata_device *dev)
++{
++	struct ata_taskfile tf;
++	unsigned int err_mask;
++
++	/* set up set-features taskfile */
++	DPRINTK("set features - SATA features\n");
++
++	ata_tf_init(dev, &tf);
++	tf.command = ATA_CMD_SET_FEATURES;
++	tf.feature = SETFEATURES_SATA_ENABLE;
++	tf.flags |= ATA_TFLAG_ISADDR | ATA_TFLAG_DEVICE;
++	tf.protocol = ATA_PROT_NODATA;
++	tf.nsect = SATA_AN;
++
++	err_mask = ata_exec_internal(dev, &tf, NULL, DMA_NONE, NULL, 0);
++
++	DPRINTK("EXIT, err_mask=%x\n", err_mask);
++	return err_mask;
++}
++
++/**
+  *	ata_dev_init_params - Issue INIT DEV PARAMS command
+  *	@dev: Device to which command will be sent
+  *	@heads: Number of heads (taskfile parameter)
+Index: linux-2.6.22-rc7/include/linux/ata.h
+===================================================================
+--- linux-2.6.22-rc7.orig/include/linux/ata.h
++++ linux-2.6.22-rc7/include/linux/ata.h
+@@ -205,6 +205,12 @@ enum {
+ 
+ 	SETFEATURES_SPINUP	= 0x07, /* Spin-up drive */
+ 
++	SETFEATURES_SATA_ENABLE = 0x10, /* Enable use of SATA feature */
++	SETFEATURES_SATA_DISABLE = 0x90, /* Disable use of SATA feature */
++
++	/* SETFEATURE Sector counts for SATA features */
++	SATA_AN			= 0x05,  /* Asynchronous Notification */
++
+ 	/* ATAPI stuff */
+ 	ATAPI_PKT_DMA		= (1 << 0),
+ 	ATAPI_DMADIR		= (1 << 2),	/* ATAPI data dir:
+@@ -310,6 +316,9 @@ struct ata_taskfile {
+ #define ata_id_queue_depth(id)	(((id)[75] & 0x1f) + 1)
+ #define ata_id_removeable(id)	((id)[0] & (1 << 7))
+ #define ata_id_has_dword_io(id)	((id)[50] & (1 << 0))
++#define ata_id_has_AN(id)	\
++	( (((id)[76] != 0x0000) && ((id)[76] != 0xffff)) && \
++	  ((id)[78] & (1 << 5)) )
+ #define ata_id_iordy_disable(id) ((id)[49] & (1 << 10))
+ #define ata_id_has_iordy(id) ((id)[49] & (1 << 9))
+ #define ata_id_u32(id,n)	\
+Index: linux-2.6.22-rc7/include/linux/libata.h
+===================================================================
+--- linux-2.6.22-rc7.orig/include/linux/libata.h
++++ linux-2.6.22-rc7/include/linux/libata.h
+@@ -136,6 +136,7 @@ enum {
+ 	ATA_DFLAG_NCQ		= (1 << 3), /* device supports NCQ */
+ 	ATA_DFLAG_FLUSH_EXT	= (1 << 4), /* do FLUSH_EXT instead of FLUSH */
++	ATA_DFLAG_AN		= (1 << 5), /* device supports Async notification */
+ 	ATA_DFLAG_IPM		= (1 << 6), /* device supports interface PM */
+ 	ATA_DFLAG_CFG_MASK	= (1 << 8) - 1,
+ 
+ 	ATA_DFLAG_PIO		= (1 << 8), /* device limited to PIO mode */
+@@ -174,6 +175,7 @@ enum {
+ 	ATA_FLAG_IGN_SIMPLEX	= (1 << 15), /* ignore SIMPLEX */
+ 	ATA_FLAG_NO_IORDY	= (1 << 16), /* controller lacks iordy */
+ 	ATA_FLAG_ACPI_SATA	= (1 << 17), /* need native SATA ACPI layout */
++	ATA_FLAG_AN		= (1 << 18), /* controller supports AN */
+ 
+ 	/* The following flag belongs to ap->pflags but is kept in
+ 	 * ap->flags because it's referenced in many LLDs and will be
+@@ -708,6 +710,7 @@ extern void ata_host_init(struct ata_hos
+ extern int ata_scsi_detect(struct scsi_host_template *sht);
+ extern int ata_scsi_ioctl(struct scsi_device *dev, int cmd, void __user *arg);
+ extern int ata_scsi_queuecmd(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *));
++extern void ata_scsi_media_change_notify(struct ata_device *atadev);
+ extern void ata_sas_port_destroy(struct ata_port *);
+ extern struct ata_port *ata_sas_port_alloc(struct ata_host *,
+ 					   struct ata_port_info *, struct Scsi_Host *);
+Index: linux-2.6.22-rc7/drivers/ata/ahci.c
+===================================================================
+--- linux-2.6.22-rc7.orig/drivers/ata/ahci.c
++++ linux-2.6.22-rc7/drivers/ata/ahci.c
+@@ -325,14 +325,15 @@ static const struct ata_port_operations 
+ static const struct ata_port_info ahci_port_info[] = {
+ 	/* board_ahci */
+ 	{
+-		.flags		= AHCI_FLAG_COMMON,
++		.flags		= AHCI_FLAG_COMMON | ATA_FLAG_AN,
+ 		.pio_mask	= 0x1f, /* pio0-4 */
+ 		.udma_mask	= 0x7f, /* udma0-6 ; FIXME */
+ 		.port_ops	= &ahci_ops,
+ 	},
+ 	/* board_ahci_pi */
+ 	{
+-		.flags		= AHCI_FLAG_COMMON | AHCI_FLAG_HONOR_PI,
++		.flags		= AHCI_FLAG_COMMON | AHCI_FLAG_HONOR_PI |
++				  ATA_FLAG_AN,
+ 		.pio_mask	= 0x1f, /* pio0-4 */
+ 		.udma_mask	= 0x7f, /* udma0-6 ; FIXME */
+ 		.port_ops	= &ahci_ops,
+@@ -1248,6 +1249,28 @@ static void ahci_host_intr(struct ata_po
+ 		return;
+ 	}
+ 
++	if (status & PORT_IRQ_SDB_FIS) {
++		/*
++		 * if this is an ATAPI device with AN turned on,
++		 * then we should interrogate the device to
++		 * determine the cause of the interrupt
++		 *
++		 * for AN - this we should check the SDB FIS
++		 * and find the I and N bits set
++		 */
++		const u32 *f = pp->rx_fis + RX_FIS_SDB;
++
++		/* check the 'N' bit in word 0 of the FIS */
++		if (f[0] & (1 << 15)) {
++			int port_addr =  ((f[0] & 0x00000f00) >> 8);
++			struct ata_device *adev;
++			if (port_addr < ATA_MAX_DEVICES) {
++				adev = &ap->device[port_addr];
++				if (adev->flags & ATA_DFLAG_AN)
++					ata_scsi_media_change_notify(adev);
++			}
++		}
++	}
+ 	if (ap->sactive)
+ 		qc_active = readl(port_mmio + PORT_SCR_ACT);
+ 	else
+Index: linux-2.6.22-rc7/drivers/scsi/sr.c
+===================================================================
+--- linux-2.6.22-rc7.orig/drivers/scsi/sr.c
++++ linux-2.6.22-rc7/drivers/scsi/sr.c
+@@ -603,7 +603,10 @@ static int sr_probe(struct device *dev)
+ 
+ 	dev_set_drvdata(dev, cd);
+ 	disk->flags |= GENHD_FL_REMOVABLE;
++	if (sdev->media_change_notify)
++		disk->flags |= GENHD_FL_MEDIA_CHANGE_NOTIFY;
+ 	add_disk(disk);
++	sdev->disk = disk;
+ 
+ 	sdev_printk(KERN_DEBUG, sdev,
+ 		    "Attached scsi CD-ROM %s\n", cd->cdi.name);
+Index: linux-2.6.22-rc7/include/scsi/scsi_device.h
+===================================================================
+--- linux-2.6.22-rc7.orig/include/scsi/scsi_device.h
++++ linux-2.6.22-rc7/include/scsi/scsi_device.h
+@@ -126,7 +126,7 @@ struct scsi_device {
+ 	unsigned fix_capacity:1;	/* READ_CAPACITY is too high by 1 */
+ 	unsigned guess_capacity:1;	/* READ_CAPACITY might be too high by 1 */
+ 	unsigned retry_hwerror:1;	/* Retry HARDWARE_ERROR */
+-
++	unsigned media_change_notify:1; /* dev supports async media notify */
+ 	unsigned int device_blocked;	/* Device returned QUEUE_FULL. */
+ 
+ 	unsigned int max_device_blocked; /* what device_blocked counts down from  */
+@@ -140,7 +140,7 @@ struct scsi_device {
+ 
+ 	struct device		sdev_gendev;
+ 	struct class_device	sdev_classdev;
+-
++	struct gendisk 		*disk;
+ 	struct execute_work	ew; /* used to get process context on put */
+ 
+ 	enum scsi_device_state sdev_state;
+Index: linux-2.6.22-rc7/drivers/scsi/sd.c
+===================================================================
+--- linux-2.6.22-rc7.orig/drivers/scsi/sd.c
++++ linux-2.6.22-rc7/drivers/scsi/sd.c
+@@ -1668,8 +1668,12 @@ static int sd_probe(struct device *dev)
+ 	if (sdp->removable)
+ 		gd->flags |= GENHD_FL_REMOVABLE;
+ 
++	if (sdp->media_change_notify)
++		gd->flags |= GENHD_FL_MEDIA_CHANGE_NOTIFY;
++
+ 	dev_set_drvdata(dev, sdkp);
+ 	add_disk(gd);
++	sdp->disk = gd;
+ 
+ 	sd_printk(KERN_NOTICE, sdkp, "Attached SCSI %sdisk\n",
+ 		  sdp->removable ? "removable " : "");
+Index: linux-2.6.22-rc7/drivers/ata/libata-scsi.c
+===================================================================
+--- linux-2.6.22-rc7.orig/drivers/ata/libata-scsi.c
++++ linux-2.6.22-rc7/drivers/ata/libata-scsi.c
+@@ -772,6 +772,9 @@ static void ata_scsi_dev_config(struct s
+ 		blk_queue_max_hw_segments(q, q->max_hw_segments - 1);
+ 	}
+ 
++	if (dev->flags & ATA_DFLAG_AN)
++		sdev->media_change_notify = 1;
++
+ 	if (dev->flags & ATA_DFLAG_NCQ) {
+ 		int depth;
+ 
+@@ -3053,6 +3056,22 @@ static void ata_scsi_remove_dev(struct a
+ }
+ 
+ /**
++ *	ata_scsi_media_change_notify - send media change event
++ *	@atadev: Pointer to the disk device with media change event
++ *
++ *	Tell the block layer to send a media change notification
++ *	event.
++ *
++ * 	LOCKING:
++ * 	interrupt context, may not sleep.
++ */
++void ata_scsi_media_change_notify(struct ata_device *atadev)
++{
++	genhd_media_change_notify(atadev->sdev->disk);
++}
++EXPORT_SYMBOL_GPL(ata_scsi_media_change_notify);
++
++/**
+  *	ata_scsi_hotplug - SCSI part of hotplug
+  *	@work: Pointer to ATA port to perform SCSI hotplug on
+  *

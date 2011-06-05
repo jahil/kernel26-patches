@@ -1,0 +1,18 @@
+ Makefile |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+Index: linux-2.6.22/Makefile
+===================================================================
+--- linux-2.6.22.orig/Makefile
++++ linux-2.6.22/Makefile
+@@ -1,8 +1,8 @@
+ VERSION = 2
+ PATCHLEVEL = 6
+ SUBLEVEL = 22
+-EXTRAVERSION = .1
+-NAME = Holy Dancing Manatees, Batman!
++EXTRAVERSION = -kamikaze5
++NAME = Back in 20 days!
+ 
+ # *DOCUMENTATION*
+ # To see a list of typical targets execute "make help"

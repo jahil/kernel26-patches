@@ -1,0 +1,31 @@
+Index: linux-2.6.22/drivers/mmc/host/sdhci.c
+===================================================================
+--- linux-2.6.22.orig/drivers/mmc/host/sdhci.c
++++ linux-2.6.22/drivers/mmc/host/sdhci.c
+@@ -70,6 +70,14 @@ static const struct pci_device_id pci_id
+ 		.driver_data	= SDHCI_QUIRK_SINGLE_POWER_WRITE,
+ 	},
+ 
++	{
++		.vendor= PCI_VENDOR_ID_ENE,
++		.device= PCI_DEVICE_ID_ENE_CB712_SD_2,
++		.subvendor= PCI_ANY_ID,
++		.subdevice= PCI_ANY_ID,
++		.driver_data= SDHCI_QUIRK_SINGLE_POWER_WRITE,
++	},
++
+ 	{	/* Generic SD host controller */
+ 		PCI_DEVICE_CLASS((PCI_CLASS_SYSTEM_SDHCI << 8), 0xFFFF00)
+ 	},
+Index: linux-2.6.22/include/linux/pci_ids.h
+===================================================================
+--- linux-2.6.22.orig/include/linux/pci_ids.h
++++ linux-2.6.22/include/linux/pci_ids.h
+@@ -2000,6 +2000,7 @@
+ 
+ #define PCI_VENDOR_ID_ENE		0x1524
+ #define PCI_DEVICE_ID_ENE_CB712_SD	0x0550
++#define PCI_DEVICE_ID_ENE_CB712_SD_2	0x0551
+ #define PCI_DEVICE_ID_ENE_1211		0x1211
+ #define PCI_DEVICE_ID_ENE_1225		0x1225
+ #define PCI_DEVICE_ID_ENE_1410		0x1410

@@ -1,0 +1,25 @@
+diff -urN oldtree/kernel/Kconfig.hz newtree/kernel/Kconfig.hz
+--- oldtree/kernel/Kconfig.hz	2007-03-06 15:00:55.000000000 -0500
++++ newtree/kernel/Kconfig.hz	2007-03-06 17:52:36.000000000 -0500
+@@ -39,6 +39,14 @@
+ 	 on SMP and NUMA systems and exactly dividing by both PAL and
+ 	 NTSC frame rates for video and multimedia work.
+ 
++        config HZ_864
++                bool "864 HZ"
++        help
++         864 HZ is the best value for desktop systems. Most responsive
++         out of all the options. The only reason it is not default is
++         because it may break few drivers. Give it a try if you have
++         a desktop :).
++         
+ 	config HZ_1000
+ 		bool "1000 HZ"
+ 	help
+@@ -52,5 +60,6 @@
+ 	default 100 if HZ_100
+ 	default 250 if HZ_250_NODEFAULT
+ 	default 300 if HZ_300
++        default 864 if HZ_864
+ 	default 1000 if HZ_1000
+ 
