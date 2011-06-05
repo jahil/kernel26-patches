@@ -1,0 +1,17 @@
+	Bridge-Netfilter should be gentle when calling ip_route_input,
+	skb->dst can be already set.
+
+diff -urp v2.6.20/linux/net/bridge/br_netfilter.c linux/net/bridge/br_netfilter.c
+--- v2.6.20/linux/net/bridge/br_netfilter.c	2007-02-11 01:06:29.000000000 +0200
++++ linux/net/bridge/br_netfilter.c	2007-03-23 01:07:40.000000000 +0200
+@@ -269,6 +269,10 @@ static int br_nf_pre_routing_finish(stru
+ 	struct nf_bridge_info *nf_bridge = skb->nf_bridge;
+ 	int err;
+ 
++	/* Old skb->dst is not expected, it is lost in all cases */
++	dst_release(skb->dst);
++	skb->dst = NULL;
++
+ 	if (nf_bridge->mask & BRNF_PKT_TYPE) {
+ 		skb->pkt_type = PACKET_OTHERHOST;
+ 		nf_bridge->mask ^= BRNF_PKT_TYPE;
