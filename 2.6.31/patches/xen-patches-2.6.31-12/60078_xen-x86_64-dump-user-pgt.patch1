@@ -1,0 +1,50 @@
+From: jbeulich@novell.com
+Subject: dump the correct page tables for user mode faults
+Patch-mainline: obsolete
+
+--- head-2009-07-28.orig/arch/x86/mm/fault-xen.c	2009-07-28 16:59:35.000000000 +0200
++++ head-2009-07-28/arch/x86/mm/fault-xen.c	2009-07-29 10:58:14.000000000 +0200
+@@ -334,6 +334,7 @@ static void dump_pagetable(unsigned long
+ 
+ 	printk(KERN_CONT "\n");
+ }
++#define dump_pagetable(addr, krnl) dump_pagetable(addr)
+ 
+ #else /* CONFIG_X86_64: */
+ 
+@@ -458,7 +459,7 @@ static int bad_address(void *p)
+ 	return probe_kernel_address((unsigned long *)p, dummy);
+ }
+ 
+-static void dump_pagetable(unsigned long address)
++static void dump_pagetable(unsigned long address, bool kernel)
+ {
+ 	pgd_t *pgd;
+ 	pud_t *pud;
+@@ -468,6 +469,8 @@ static void dump_pagetable(unsigned long
+ 	pgd = (pgd_t *)read_cr3();
+ 
+ 	pgd = __va((unsigned long)pgd & PHYSICAL_PAGE_MASK);
++	if (!kernel)
++		pgd = __user_pgd(pgd);
+ 
+ 	pgd += pgd_index(address);
+ 	if (bad_address(pgd))
+@@ -608,7 +611,7 @@ show_fault_oops(struct pt_regs *regs, un
+ 	printk(KERN_ALERT "IP:");
+ 	printk_address(regs->ip, 1);
+ 
+-	dump_pagetable(address);
++	dump_pagetable(address, !(error_code & PF_USER));
+ }
+ 
+ static noinline void
+@@ -625,7 +628,7 @@ pgtable_bad(struct pt_regs *regs, unsign
+ 
+ 	printk(KERN_ALERT "%s: Corrupted page table at address %lx\n",
+ 	       tsk->comm, address);
+-	dump_pagetable(address);
++	dump_pagetable(address, !(error_code & PF_USER));
+ 
+ 	tsk->thread.cr2		= address;
+ 	tsk->thread.trap_no	= 14;

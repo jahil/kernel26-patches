@@ -1,0 +1,141 @@
+Subject: Propagate changed size of VBDs
+References: bnc#583677
+Patch-mainline: n/a
+
+Support dynamic resizing of virtual block devices. This patch supports
+both file backed block devices as well as physical devices that can be
+dynamically resized on the host side.
+
+Signed-off-by: K. Y. Srinivasan <ksrinivasan@novell.com>
+
+Index: linux/drivers/xen/blkback/blkback.c
+===================================================================
+--- linux.orig/drivers/xen/blkback/blkback.c	2010-03-18 14:17:28.000000000 -0600
++++ linux/drivers/xen/blkback/blkback.c	2010-03-18 14:17:33.000000000 -0600
+@@ -209,6 +209,7 @@ static void print_stats(blkif_t *blkif)
+ int blkif_schedule(void *arg)
+ {
+ 	blkif_t *blkif = arg;
++	struct vbd *vbd = &blkif->vbd;
+ 
+ 	blkif_get(blkif);
+ 
+@@ -218,6 +219,8 @@ int blkif_schedule(void *arg)
+ 	while (!kthread_should_stop()) {
+ 		if (try_to_freeze())
+ 			continue;
++		if (unlikely(vbd->size != vbd_size(vbd)))
++			vbd_resize(blkif);
+ 
+ 		wait_event_interruptible(
+ 			blkif->wq,
+Index: linux/drivers/xen/blkback/vbd.c
+===================================================================
+--- linux.orig/drivers/xen/blkback/vbd.c	2010-03-18 14:17:28.000000000 -0600
++++ linux/drivers/xen/blkback/vbd.c	2010-03-18 14:17:33.000000000 -0600
+@@ -73,6 +73,7 @@ int vbd_create(blkif_t *blkif, blkif_vde
+ 	}
+ 
+ 	vbd->bdev = bdev;
++	vbd->size = vbd_size(vbd);
+ 
+ 	if (vbd->bdev->bd_disk == NULL) {
+ 		DPRINTK("vbd_creat: device %08x doesn't exist.\n",
+@@ -120,3 +121,45 @@ int vbd_translate(struct phys_req *req,
+  out:
+ 	return rc;
+ }
++
++void vbd_resize(blkif_t *blkif)
++{
++	struct vbd *vbd = &blkif->vbd;
++	struct xenbus_transaction xbt;
++	int err;
++	struct xenbus_device *dev = blkif->be->dev;
++	unsigned long long new_size = vbd_size(vbd);
++
++	printk(KERN_INFO "VBD Resize: new size %Lu\n", new_size);
++	vbd->size = new_size;
++again:
++	err = xenbus_transaction_start(&xbt);
++	if (err) {
++		printk(KERN_WARNING "Error starting transaction");
++		return;
++	}
++	err = xenbus_printf(xbt, dev->nodename, "sectors", "%Lu",
++			    vbd_size(vbd));
++	if (err) {
++		printk(KERN_WARNING "Error writing new size");
++		goto abort;
++	}
++	/*
++	 * Write the current state; we will use this to synchronize
++	 * the front-end. If the current state is "connected" the
++	 * front-end will get the new size information online.
++	 */
++	err = xenbus_printf(xbt, dev->nodename, "state", "%d", dev->state);
++	if (err) {
++		printk(KERN_WARNING "Error writing the state");
++		goto abort;
++	}
++
++	err = xenbus_transaction_end(xbt, 0);
++	if (err == -EAGAIN)
++		goto again;
++	if (err)
++		printk(KERN_WARNING "Error ending transaction");
++abort:
++	xenbus_transaction_end(xbt, 1);
++}
+Index: linux/drivers/xen/blkback/common.h
+===================================================================
+--- linux.orig/drivers/xen/blkback/common.h	2010-03-18 14:17:28.000000000 -0600
++++ linux/drivers/xen/blkback/common.h	2010-03-18 14:17:33.000000000 -0600
+@@ -56,6 +56,7 @@ struct vbd {
+ 	unsigned char  type;        /* VDISK_xxx */
+ 	u32            pdevice;     /* phys device that this vbd maps to */
+ 	struct block_device *bdev;
++	sector_t       size;        /* Cached size parameter */
+ };
+ 
+ struct backend_info;
+@@ -116,6 +117,7 @@ blkif_t *blkif_alloc(domid_t domid);
+ void blkif_disconnect(blkif_t *blkif);
+ void blkif_free(blkif_t *blkif);
+ int blkif_map(blkif_t *blkif, unsigned long shared_page, unsigned int evtchn);
++void vbd_resize(blkif_t *blkif);
+ 
+ #define blkif_get(_b) (atomic_inc(&(_b)->refcnt))
+ #define blkif_put(_b)					\
+Index: linux/drivers/xen/blkfront/blkfront.c
+===================================================================
+--- linux.orig/drivers/xen/blkfront/blkfront.c	2010-03-18 14:17:28.000000000 -0600
++++ linux/drivers/xen/blkfront/blkfront.c	2010-03-18 14:17:33.000000000 -0600
+@@ -328,9 +328,25 @@ static void connect(struct blkfront_info
+ 	unsigned int binfo;
+ 	int err;
+ 
+-	if ((info->connected == BLKIF_STATE_CONNECTED) ||
+-	    (info->connected == BLKIF_STATE_SUSPENDED) )
++	switch (info->connected) {
++	case BLKIF_STATE_CONNECTED:
++		/*
++		 * Potentially, the back-end may be signalling
++		 * a capacity change; update the capacity.
++		 */
++		err = xenbus_scanf(XBT_NIL, info->xbdev->otherend,
++				   "sectors", "%Lu", &sectors);
++		if (XENBUS_EXIST_ERR(err))
++			return;
++		printk(KERN_INFO "Setting capacity to %Lu\n",
++		       sectors);
++		set_capacity(info->gd, sectors);
++		revalidate_disk(info->gd);
++
++		/* fall through */
++	case BLKIF_STATE_SUSPENDED:
+ 		return;
++	}
+ 
+ 	DPRINTK("blkfront.c:connect:%s.\n", info->xbdev->otherend);
+ 

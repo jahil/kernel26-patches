@@ -1,0 +1,2022 @@
+Documentation of variables for the Web100 TCP Kernel Instrumentation
+Set (KIS) project.
+
+	Matt Mathis	
+	Jeffrey Semke
+	Raghu Reddy
+	John Heffner
+	Pittsburgh Supercomputing Center
+	Web 100 Project
+
+(c) All rights reserved.  This document contains incomplete and
+    unpublished research results.  This interim version is provided
+    only to enable developers to build an initial tool set.  Future
+    version of this document are likely to differ from this version in
+    incompatible ways -- newer versions will completely supersede this
+    version.
+
+Terminology:
+	Local Host:	the host from which the KIS was read
+	Remote Host:	a host that has a TCP connection between the local
+			host and itself
+SNMP Data Types taken from RFC1902 "Structure of Management Information
+     	for Version 2 of the Simple Network Management Protocol (SNMPv2)"
+
+------------------------------------------------------------------------------
+Restructure as (5) new tables: Perf, Path, Stack, App, Tune
+------------------------------------------------------------------------------
+CATEGORY:	Performance
+CatDescr:	All basic performance instrumentation or native state variables
+SNMPprefix:	tcpEStatsPerf
+SNMPfile:	1Aperf
+SNMPfile:	1Bperf 30
+------------------------------------------------------------------------------
+CATEGORY:	Path
+CatDescr:	Detailed path statistics
+SNMPprefix:	tcpEStatsPath
+SNMPfile:	2Apath
+SNMPfile:	2Bpath 10
+------------------------------------------------------------------------------
+CATEGORY:	Stack
+CatDescr:	Stack Internal algorithms - how well coping w/the path
+SNMPprefix:	tcpEStatsStack
+SNMPfile:	3Astack
+SNMPfile:	3Bstack 20
+------------------------------------------------------------------------------
+CATEGORY:	Application
+CatDescr:	How well is the application staying ahead of TCP
+SNMPprefix:	tcpEStatsApp
+SNMPfile:	4Aapp
+SNMPfile:	4Bapp	10
+------------------------------------------------------------------------------
+CATEGORY:	Tune
+CatDescr:	Manual Tuning controls to facilitate workarounds for path
+		problems
+SNMPprefix:	tcpEStatsTune
+SNMPfile:	5Atune
+SNMPfile:	5Btune
+------------------------------------------------------------------------------
+CATEGORY:	CONNECTION ID
+CatDescr:	The 5 tuple that uniquely identifies every connection.
+------------------------------------------------------------------------------
+VariableName:	protocol
+Scope:		internal
+ShortDescr:	Protocol type for this connection
+ProcType:	Integer32
+Description:	Protocol type for this connection.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	LocalAddress 
+Scope:		internal
+ShortDescr:	Local IP Address
+ProcType:	Ip_Address
+Description:	IP Address of the host from which the KIS was read.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	LocalAddressType
+Scope:		internal
+ShortDescr:	Local Address Type
+ProcType:	Integer
+Description:	The address type of tcpEStatsConnectLocalAddress.  Only
+		ipv4(1) and ipv6(2) are expected.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	LocalPort
+Scope:		internal
+ShortDescr:	Local Port Number
+ProcType:	Unsigned16
+Description:	The Local Host's TCP port number for a connection.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	RemAddress
+Scope:		internal
+RenameFrom:	RemoteAddress
+ShortDescr:	Remote IP Address
+ProcType:	Ip_Address
+Description:	IP Address of the Remote host's end of a connection.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	RemPort
+Scope:		internal
+RenameFrom:	RemotePort
+ShortDescr:	Remote Port Number
+ProcType:	Unsigned16
+Description:	The Remote Host's TCP port number for a connection.
+R/W:		read-only
+------------------------------------------------------------------------------
+CATEGORY:	WAD
+CatDescr:	Work Around Daemon for the Net100 project.
+		These controls are not safe for general use.
+------------------------------------------------------------------------------
+VariableName:	WAD_IFQ
+Scope:		internal
+ShortDescr:	Disable enter_cwr when IF queue is full
+ProcType:	Gauge32
+Description:	Disable enter_cwr when IF queue is full
+R/W:		read-write
+------------------------------------------------------------------------------
+VariableName:	WAD_MaxBurst
+Scope:		internal
+ShortDescr:	Allow bursts when cwnd is greater than awnd
+ProcType:	Gauge32
+Description:	Cwnd is limited to WAD_MaxBurst above the actual window.  Set
+		it very large if you want no burst suppression.  The system
+		default is 3.
+R/W:		read-write
+------------------------------------------------------------------------------
+VariableName:	WAD_MaxSsthresh
+Scope:		internal
+ShortDescr:	Floyd modified slowstart
+ProcType:	Gauge32
+Description:	Floyd modified slowstart
+R/W:		read-write
+------------------------------------------------------------------------------
+VariableName:	WAD_FloydAIMD
+Scope:		internal
+ShortDescr:	Floyd modified TCP for long fat networks
+ProcType:	Gauge32
+Description:	Floyd modified TCP for long fat networks
+R/W:		read-write
+------------------------------------------------------------------------------
+VariableName:	WAD_AI
+Scope:		internal
+ShortDescr:	Set additive increase in units of 1/8 MSS
+ProcType:	Gauge32
+Description:	Set additive increase in units of 1/8 MSS
+R/W:		read-write
+------------------------------------------------------------------------------
+VariableName:	WAD_MD
+Scope:		internal
+ShortDescr:	Set multiplicative decrease
+ProcType:	Gauge32
+Description:	Set multiplicative decrease
+R/W:		read-write
+------------------------------------------------------------------------------
+VariableName:	WAD_NoAI
+Scope:		internal
+ShortDescr:	Disable the Additive Increase
+ProcType:	Integer
+Description:	Disable the Additive Increase
+R/W:		read-write
+------------------------------------------------------------------------------
+VariableName:	WAD_CwndAdjust
+Scope:		internal
+ShortDescr:	Adjust Cwnd once by the given delta (segments)
+ProcType:	Integer32
+Description:	Adjust Cwnd once by the given delta (segments).
+R/W:		read-write
+------------------------------------------------------------------------------
+#ifdef WEB100_PRIVATE
+VariableName:	WAD_BurstSize
+Scope:		new
+ShortDescr:	Cause the output queue to be bursty
+ProcType:	Gauge32
+Description:	Cause the output queue to be bursty
+R/W:		read-write
+------------------------------------------------------------------------------
+VariableName:	WAD_Delay
+Scope:		new
+ShortDescr:	Delay output segments to emulate a long path
+ProcType:	Gauge32
+Description:	Delay output segments to emulate a long path
+R/W:		read-write
+------------------------------------------------------------------------------
+VariableName:	X_FullBursts
+Scope:		new
+ShortDescr:	Number of successful WAD_BurstSize bursts
+ProcType:	ZeroBasedCounter32
+Description:	
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	X_PushedBursts
+Scope:		new
+ShortDescr:	Number of bursts sent before reaching WAD_BurstSize
+ProcType:	ZeroBasedCounter32
+Description:	
+R/W:		read-only
+------------------------------------------------------------------------------
+#endif /* WEB100_PRIVATE */
+SNMPcomment:	3Astack
+	The following objects reflect TCP options carried
+	on the SYN or SYN-ACK.   These options are used to
+	provide additional protocol parameters or to enable
+	various optional TCP features or algorithms.
+
+	Except as noted, the TCP protocol does not permit
+	these options to change after the SYN exchange.
+------------------------------------------------------------------------------
+VariableName:	ActiveOpen
+Scope:		standard
+ShortDescr:	True if local host was the one that sent the SYN.
+Refer:		RFC793, Transmission Control Protocol
+Table:		3Astack	+c
+ProcType:	TruthValue
+Description:	True(1) if the local connection traversed the SYN-SENT state,
+		else false(2).
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	MSSSent
+Scope:		standard
+ShortDescr:	Mss Option sent
+Refer:		RFC1122, Requirements for Internet Hosts - Communication Layers
+Table:		3Astack	+c
+ProcType:	Unsigned32
+Description:	The value sent in an MSS option, or zero if none.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	MSSRcvd
+Scope:		standard
+ShortDescr:	MSS Option received
+Refer:		RFC1122, Requirements for Internet Hosts - Communication Layers
+Table:		3Astack	+c
+ProcType:	Unsigned32
+Description:	The value received in an MSS option, or zero if none.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	WinScaleSent
+Scope:		standard
+# RenameFrom:	SendWinScale
+ShortDescr:	Requested Window Scale Out
+Refer:		RFC1323, TCP Extensions for High Performance
+Table:		3Astack	+c
+ProcType:	Integer32
+PossibleValues:	(-1..14)
+Description:	The value of the transmitted window scale option if one was
+		sent; otherwise, a value of -1.
+
+		Note that
+		if both tcpEStatsStackWinScaleSent and
+		tcpEStatsStackWinScaleRcvd are not -1,
+		then Rcv.Wind.Scale will be the same as this value
+		and used to scale receiver window announcements
+		from the local host to the remote host.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	WinScaleRcvd
+Scope:		standard
+# RenameFrom:	RecvWinScale
+ShortDescr:	requested window scale
+Refer:		RFC1323, TCP Extensions for High Performance
+Table:		3Astack	+c
+ProcType:	Integer32
+PossibleValues:	(-1..14)
+Description:	The value of the received window scale option if one was
+		received; otherwise, a value of -1.
+
+		Note that
+		if both tcpEStatsStackWinScaleSent and
+		tcpEStatsStackWinScaleRcvd are not -1,
+		then Snd.Wind.Scale will be the same as this value
+		and used to scale receiver window announcements
+		from the remote host to the local host.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	SACK
+Scope:		internal
+RenameFrom:	SACKEnabled
+ShortDescr:	SACK Enabled
+Refer:		RFC2018, TCP Selective Acknowledgement Options
+ProcType:	TruthValue
+Description:	True(1) if SACK has been negotiated on, else false(2).
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	TimeStamps
+Scope:		standard
+RenameFrom:	TimestampsEnabled
+ShortDescr:	Timestamps Enabled
+Refer:		RFC1323, TCP Extensions for High Performance
+Table:		3Astack	.c
+ProcType:	TcpEStatsNegotiated
+Description:	Enabled(1) if TCP timestamps have been negotiated on,
+		selfDisabled(2) if they are disabled or not implemented
+		on the local host, or
+		peerDisabled(3) if not negotiated by the remote hosts.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	ECN
+Scope:		standard
+RenameFrom:	ECNEnabled
+ShortDescr:	Explicit Congestion Notification is Enabled
+Refer:		RFC3168, The Addition of Explicit Congestion Notification (ECN)
+		to IP
+Table:		3Astack	.c
+ProcType:	TcpEStatsNegotiated
+Description:	Enabled(1) if Explicit Congestion Notification (ECN)
+		has been negotiated on,
+		selfDisabled(2) if it is disabled or not implemented
+		on the local host, or
+		peerDisabled(3) if not negotiated by the remote hosts.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	SndWindScale
+Scope:		internal
+RenameFrom:	SndWinScale
+ShortDescr:	Window scale used by the sender to decode snd.wnd
+Refer:		RFC1323, TCP Extensions for High Performance
+ProcType:	Integer32
+Description:	The value of Snd.Wind.Scale.  Note that
+		tcpEStatsStackSndWindScaleXXX is either zero or the same
+		as tcpEStatsStackWinScaleRcvdXXX.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	RcvWindScale
+Scope:		internal
+RenameFrom:	RcvWinScale
+ShortDescr:	Window scale used by the receiver to encode seg.wnd
+Refer:		RFC1323, TCP Extensions for High Performance
+ProcType:	Integer32
+Description:	The value of Rcv.Wind.Scale.  Note that
+		tcpEStatsStackRcvWindScaleXXX is either zero or the same
+		as tcpEStatsStackWinScaleSentXXX.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	WillSendSACK
+Scope:		standard
+ShortDescr:	SACKok was sent in SYN or SYN-ACK
+Refer:		RFC2018, TCP Selective Acknowledgement Options
+Table:		3Astack	+c
+ProcType:	TcpEStatsNegotiated
+Description:	Enabled(1) if the local host will send SACK options
+		selfDisabled(2) if SACK is disabled or not implemented
+		on the local host, or
+		peerDisabled(3) if the remote host did not send the
+		SACK-permitted option.
+
+		Note that SACK negotiation is not symmetrical.  SACK can
+		enabled on one side of the connection and not the other.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	WillUseSACK
+Scope:		standard
+ShortDescr:	SACKok was seen in SYN or SYN-ACK
+Refer:		RFC2018, TCP Selective Acknowledgement Options
+Table:		3Astack	+c
+ProcType:	TcpEStatsNegotiated
+Description:	Enabled(1) if the local host will process SACK options
+		selfDisabled(2) if SACK is disabled or not implemented
+		on the local host, or
+		peerDisabled(3) if the remote host sends duplicate ACKs
+		without SACK options, or the local host otherwise decides
+		not to process received SACK options.
+
+		Unlike other TCP options, the remote data receiver cannot
+		explicitly indicate if it is able to generate SACK options.
+		When sending data, the local host has to deduce if the remote
+		receiver is sending SACK options.   This object can transition
+		from Enabled(1) to peerDisabled(3) after the SYN exchange.
+
+		Note that SACK negotiation is not symmetrical.  SACK can
+		enabled on one side of the connection and not the other.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	TimeStampSent
+Scope:		internal
+ShortDescr:	Timestamp sent in SYN or SYN-ACK
+Refer:		RFC1323, TCP Extensions for High Performance
+ProcType:	TruthValue
+Description:	True(1) if Timestamp option was sent, else false(2).
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	TimeStampRcvd
+Scope:		internal
+ShortDescr:	Timestamp received in SYN or SYN-ACK
+Refer:		RFC1323, TCP Extensions for High Performance
+ProcType:	TruthValue
+Description:	True(1) if Timestamp option was received, else false(2).
+R/W:		read-only
+------------------------------------------------------------------------------
+SNMPcomment:	1Aperf
+		The following objects provide
+		statistics on aggregate segments and data sent on a
+	        connection.  These provide a direct measure of the Internet
+		capacity consumed by a connection.
+------------------------------------------------------------------------------
+VariableName:	SegsOut
+RenameFrom:	PktsOut
+Scope:		standard
+ShortDescr:	Total Segments Out
+Table:		1Aperf	+
+ProcType:	ZeroBasedCounter32
+Description:	The total number of segments sent.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	DataSegsOut
+RenameFrom:	DataPktsOut
+Scope:		standard
+ShortDescr:	Data Segments Out
+Table:		1Aperf	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of segments sent containing a positive length data
+		segment.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	DataOctetsOut
+RenameFrom:	DataBytesOut
+Scope:		standard
+ShortDescr:	Data Octets Out
+Units:		octets
+Table:		1Aperf	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of octets of data contained in transmitted segments,
+		including retransmitted data.  Note that this does not include
+		TCP headers.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	HCDataOctetsOut
+Scope:		standard
+ShortDescr:	Data Octets Out
+Units:		octets
+Table:		1Aperf	+
+ProcType:	ZeroBasedCounter64
+Description:	The number of octets of data contained in transmitted segments,
+		including retransmitted data, on systems that can transmit more
+		than 10 million bits per second.  Note that this does not
+		include TCP headers.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	SegsRetrans
+RenameFrom:	PktsRetrans
+Scope:		standard
+ShortDescr:	Segments With Retransmitted Data
+Refer:		RFC793, Transmission Control Protocol
+Table:		1Aperf	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of segments transmitted containing at least some
+		retransmitted data.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	OctetsRetrans
+RenameFrom:	BytesRetrans
+Scope:		standard
+ShortDescr:	Retransmitted Octets
+Refer:		RFC793, Transmission Control Protocol
+Units:		octets
+Table:		1Aperf	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of octets retransmitted.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	SegsIn
+RenameFrom:	PktsIn
+Scope:		standard
+ShortDescr:	Total Segments In
+Table:		1Aperf	+
+ProcType:	ZeroBasedCounter32
+Description:	The total number of segments received.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	DataSegsIn
+RenameFrom:	DataPktsIn
+Scope:		standard
+ShortDescr:	Total Data Segments In
+Table:		1Aperf	+
+ProcType:	ZeroBasedCounter32 
+Description:	The number of segments received containing a positive length
+		data segment.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	DataOctetsIn
+RenameFrom:	DataBytesIn
+Scope:		standard
+ShortDescr:	Data Octets In
+Units:		octets
+Table:		1Aperf	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of octets contained in received data segments,
+		including retransmitted data.  Note that this does not
+		include TCP headers.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	HCDataOctetsIn
+Scope:		standard
+ShortDescr:	Data Octets In
+Units:		octets
+Table:		1Aperf	+
+ProcType:	ZeroBasedCounter64
+Description:	The number of octets contained in received data segments,
+		including retransmitted data, on systems that can receive more
+		than 10 million bits per second.  Note that this does not
+		include TCP headers.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	ElapsedSecs
+RenameFrom:	Duration
+Scope:		standard
+RenameFrom:	CurrTime
+ShortDescr:	Elapsed seconds
+Units:		seconds
+Table:		1Aperf	+
+ProcType:	ZeroBasedCounter32
+Description:	The seconds part of the time elapsed between tcpEStatsPerfStartTimeStamp
+		and the most recent protocol event (segment sent or received).
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	ElapsedMicroSecs
+Scope:		standard
+ShortDescr:	Elapsed micro Seconds
+Units:		microseconds
+Table:		1Aperf	>
+ProcType:	ZeroBasedCounter32
+Description:	The micro-second part of time elapsed between tcpEStatsPerfStartTimeStamp
+		to the most recent protocol event (segment sent or received).
+		This may be updated in whatever time granularity is the system
+		supports.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	StartTimeStamp
+Scope:		standard
+RenameFrom:	StartTimeSec StartTime StartTimeUsec
+ShortDescr:	Start Time
+Table:		1Aperf	.
+ProcType:	Integer32
+SNMPType:	DateAndTime
+Description:	Time at which this row was created and all ZeroBasedCounters in
+		the row were initialized to zero.
+R/W:		read-only
+------------------------------------------------------------------------------
+SNMPcomment:	1Aperf
+		The following objects can be used to fit minimal 
+		performance models to the TCP data rate.
+------------------------------------------------------------------------------
+VariableName:	CurMSS
+Scope:		standard
+RenameFrom:	CurrentMSS
+ShortDescr:	Current Maximum Segment Size
+Refer:		RFC1122, Requirements for Internet Hosts - Communication Layers
+Units:		octets
+Table:		1Aperf	.
+ProcType:	Gauge32
+Description:	The current maximum segment size (MSS), in octets.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	PipeSize
+Scope:		standard
+ShortDescr:	Octets in flight
+Refer:		RFC793, RFC2581, RFC3517
+Units:		octets
+Table:		1Aperf	+
+ProcType:	Gauge32
+Description:	The TCP senders current estimate of the number of
+		unacknowledged data octets in the network.  
+
+		While not in recovery (e.g., while the receiver is not reporting
+		missing data to the sender) this is precisely the same as
+		``Flight size'' as defined in RFC2581, which can be computed as
+		SND.NXT minus SND.UNA. [RFC793]
+
+		During recovery the TCP sender has incomplete information about
+		the state of the network (e.g., which segments are lost vs
+		reordered, especially if the return path is also dropping
+		TCP acknowledgments).  Current TCP standards do not mandate any
+		specific algorithm for estimating the number of unacknowledged
+		data octets in the network.
+
+		RFC3517 describes a conservative algorithm to use SACK
+		information to estimate the number of unacknowledged data
+		octets in the network.  tcpEStatsPerfPipeSize object SHOULD be
+		the same as ``pipe'' as defined in RFC3517 if it is
+		implemented.  (Note that while not in recovery the pipe
+		algorithm yields the same values as flight size).
+
+		If RFC3517 is not implemented, the data octets in flight SHOULD
+		be estimated as SND.NXT minus SND.UNA adjusted by some measure
+		of the data that has left the network and retransmitted data.
+		For example, with Reno or NewReno style TCP, the number of
+		duplicate acknowledgment is used to count the number of
+		segments that have left the network.  I.e.,
+		PipeSize=SND.NXT-SND.UNA+(retransmits-dupacks)*CurMSS
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	MaxPipeSize
+Scope:		standard
+ShortDescr:	Max Octets in flight
+Refer:		RFC793, RFC2581, RFC3517
+Units:		octets
+Table:		1Aperf	+
+ProcType:	Gauge32
+Description:	The maximum value of tcpEStatsPerfPipeSize, for this connection.
+R/W:		read-only
+------------------------------------------------------------------------------
+SNMPcomment:	2Bpath
+		The following optional objects 
+		instrument the round trip time estimator and the retransmission
+	        timeout timer.
+------------------------------------------------------------------------------
+VariableName:	SampleRTT
+Scope:		standard
+RenameFrom:	SampledRTT
+ShortDescr:	Most recent RTT sample
+Refer:		RFC2988, Computing TCP's Retransmission Timer
+Units:		milliseconds
+Table:		2Bpath	+
+ProcType:	Gauge32
+Description:	The most recent raw round trip time measurement
+		used in calculation of the RTO.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	SmoothedRTT
+Scope:		standard
+ShortDescr:	Smoothed RTT
+Refer:		RFC2988, Computing TCP's Retransmission Timer
+Units:		milliseconds
+Table:		1Aperf	.
+ProcType:	Gauge32
+Description:	The smoothed round trip time used in
+		calculation of the RTO.  See SRTT in [RFC2988].
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	RTTVar
+Scope:		standard
+ShortDescr:	RTT variation
+Refer:		RFC2988, Computing TCP's Retransmission Timer
+Units:		milliseconds
+Table:		2Bpath	.
+ProcType:	Gauge32
+Description:	The round trip time variation used in
+		calculation of the RTO.  See RTTVAR in [RFC2988].
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	MaxRTT
+Scope:		standard
+ShortDescr:	Maximum RTT
+Refer:		RFC2988, Computing TCP's Retransmission Timer
+Units:		milliseconds
+Table:		2Bpath	+
+ProcType:	Gauge32
+Description:	The maximum sampled round trip time.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	MinRTT
+Scope:		standard
+ShortDescr:	Minimum RTT
+Refer:		RFC2988, Computing TCP's Retransmission Timer
+Units:		milliseconds
+Table:		2Bpath	+
+ProcType:	Gauge32
+Description:	The minimum sampled round trip time.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	SumRTT
+Scope:		standard
+ShortDescr:	Cumulative RTT
+Refer:		RFC2988, Computing TCP's Retransmission Timer
+Units:		milliseconds
+Table:		2Bpath	+
+ProcType:	ZeroBasedCounter32
+Description:	The sum of all sampled round trip times.
+
+		Note that the change in tcpEStatsPathSumRTT divided by
+		the change in tcpEStatsPathCountRTT is the mean RTT,
+		uniformly averaged over an enter interval.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	HCSumRTT
+Scope:		standard
+ShortDescr:	Cumulative RTT
+Refer:		RFC2988, Computing TCP's Retransmission Timer
+Units:		milliseconds
+Table:		2Bpath	+
+ProcType:	ZeroBasedCounter64
+Description:	The sum of all sampled round trip times, on
+		all systems that implement multiple concurrent RTT measurements.
+
+		Note that the change in tcpEStatsPathHCSumRTT divided by
+		the change in tcpEStatsPathCountRTT is the mean RTT,
+		uniformly averaged over an enter interval.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	CountRTT
+Scope:		standard
+ShortDescr:	Count of samples in SumRTT
+Refer:		RFC2988, Computing TCP's Retransmission Timer
+Table:		2Bpath	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of round trip time samples included in 
+		tcpEStatsPathSumRTT and tcpEStatsPathHCSumRTT.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	CurRTO
+Scope:		standard
+RenameFrom:	CurrentRTO
+ShortDescr:	Current Retransmission Timer
+Refer:		RFC2988, Computing TCP's Retransmission Timer
+Units:		milliseconds
+Table:		1Aperf	.
+ProcType:	Gauge32
+Description:	The current value of the retransmit timer RTO.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	MaxRTO
+Scope:		standard
+ShortDescr:	Maximum Retransmission Timer
+Refer:		RFC2988, Computing TCP's Retransmission Timer
+Units:		milliseconds
+Table:		2Bpath	+
+ProcType:	Gauge32
+Description:	The maximum value of the retransmit timer RTO.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	MinRTO
+Scope:		standard
+ShortDescr:	Minimum Retransmission Timer
+Refer:		RFC2988, Computing TCP's Retransmission Timer
+Units:		milliseconds
+Table:		2Bpath	+
+ProcType:	Gauge32
+Description:	The minimum value of the retransmit timer RTO.
+R/W:		read-only
+------------------------------------------------------------------------------
+SNMPcomment:	3Bstack
+		The following optional objects
+		instrument unusual protocol events that probably indicate
+		implementation problems in the protocol or path.
+------------------------------------------------------------------------------
+VariableName:	SoftErrors
+Scope:		standard
+ShortDescr:	Soft Errors
+Refer:		RFC793, Transmission Control Protocol
+Table:		3Bstack	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of segments that fail various consistency tests during
+		TCP input processing.   Soft errors might cause the segment to be
+		discard but some do not.   Some of these soft errors cause
+		the generation of a TCP acknowledgment, others are silently
+		discarded.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	SoftErrorReason
+Scope:		standard
+ShortDescr:	Identifies the consistency test that most recently failed
+Refer:		RFC793, Transmission Control Protocol
+Table:		3Bstack	>
+ProcType:	INTEGER
+R/W:		read-only
+PossibleValues:
+		belowDataWindow(1)
+		aboveDataWindow(2)
+		belowAckWindow(3)
+		aboveAckWindow(4)
+		belowTSWindow(5)
+		aboveTSWindow(6)
+		dataCheckSum(7)
+		otherSoftError(8)
+Description:	This object identifies which consistency test most recently
+		failed during tcp input processing.   This object SHOULD be set
+		every time tcpEStatsStackSoftErrors is incremented.   The codes
+		are as follows:
+
+		belowDataWindow(1) - All data in the segment is below SND.UNA.
+		(Normal for keep-alives and zero window probes).
+
+		aboveDataWindow(2) - Some data in the segment is above SND.WND.
+		(Indicates an implementation bug or possible attack).
+
+		belowAckWindow(3) - ACK below SND.UNA.  (Indicates that the return
+		path is reordering ACKs)
+
+		aboveAckWindow(4) - An ACK for data that we have not sent.
+		(Indicates an implementation bug or possible attack).
+
+		belowTSWindow(5) - TSecr on the segment is older than the
+		current TS.Recent (Normal for the rare case where
+		PAWS detects data reordered by the network.)
+
+		aboveTSWindow(6) - TSecr on the segment is newer than the
+		current TS.Recent.
+		(Indicates an implementation bug or possible attack).
+
+		dataCheckSum(7) - Incorrect checksum.  Note that this value
+		is intrinsically fragile, because the header fields used to
+		identify the connection may have been corrupted.
+
+		otherSoftError(8) - All other soft errors not listed above."
+------------------------------------------------------------------------------
+SNMPcomment:	2Bpath
+		The following optional objects provide information about how TCP is 
+		using the IP layer.
+------------------------------------------------------------------------------
+VariableName:	IpTtl
+Scope:		standard
+ShortDescr:	TTL on the incoming segment
+Refer:		RFC791, Internet Protocol
+Table:		2Bpath	+
+ProcType:	Unsigned32
+Description:	The value of the TTL field carried in the most recently
+		received IP header.   This is sometimes useful to detect
+		changing or unstable routes.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	IpTosIn
+Scope:		standard
+ShortDescr:	The DSCP field of the incoming segment.
+Refer:		RFC3260, New Terminology and Clarifications for Diffserv
+Table:		2Bpath	+
+ProcType:	Integer32
+SNMPType:	OCTET STRING
+PossibleValues:	(SIZE(1))
+Description:	The value of the IPv4 Type Of Service octet, or the IPv6
+		traffic class octet, carried in the most recently received IP
+		header.
+
+		This is useful to diagnose interactions between TCP and
+		any IP layer packet scheduling and delivery policy, which might
+		be in effect to implement Diffserv.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	IpTosOut
+Scope:		standard
+ShortDescr:	The DSCP field of the incoming segment.
+Refer:		RFC3260, New Terminology and Clarifications for Diffserv 
+Table:		2Bpath	.
+ProcType:	Integer32
+SNMPType:	OCTET STRING
+PossibleValues:	(SIZE(1))
+Description:	The value of the IPv4 Type Of Service octet, or the IPv6
+		traffic class octet, carried in the most recently transmitted IP
+		header.
+
+		This is useful to diagnose interactions between TCP and
+		any IP layer packet scheduling and delivery policy, which might
+		be in effect to implement Diffserv.
+R/W:		read-only
+------------------------------------------------------------------------------
+SNMPcomment:	4Aapp
+		The following objects provide throughput statistics for the
+		connection including sequence numbers and elapsed
+		application data.
+		These permit direct observation of the applications progress,
+		in terms of elapsed data delivery and elapsed time.
+------------------------------------------------------------------------------
+VariableName:	SndUna
+Scope:		standard
+RenameFrom:	snd_una
+ShortDescr:	Oldest Unacknowledged Sequence Number.
+Refer:		RFC793, Transmission Control Protocol
+Table:		4Aapp	.
+ProcType:	Counter32
+Description:	The value of SND.UNA, the oldest unacknowledged sequence
+		number.
+
+		Note that SND.UNA is a TCP state variable that is congruent
+		to Counter32 semantics.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	SndNxt
+Scope:		standard
+RenameFrom:	snd_nxt
+ShortDescr:	Next Sequence Number to be Sent
+Refer:		RFC793, Transmission Control Protocol
+Table:		4Aapp	.
+ProcType:	Unsigned32
+Description:	The value of SND.NXT, the next sequence number to be sent.
+		Note that tcpEStatsAppSndNxt is not monotonic
+		(and thus not a counter) because
+                TCP sometimes retransmits lost data by pulling
+		tcpEStatsAppSndNxt back	to the missing data.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	SndMax
+Scope:		standard
+RenameFrom:	snd_max
+ShortDescr:	Maximum Value of snd_nxt
+Refer:		RFC793, Transmission Control Protocol
+Table:		4Aapp	.
+ProcType:	Counter32
+Description:	The farthest forward (right most or largest) SND.NXT value.
+		Note that
+		this will be equal to tcpEStatsAppSndNxt except when
+		tcpEStatsAppSndNxt is pulled back during recovery.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	ThruOctetsAcked
+RenameFrom:	ThruBytesAcked
+Scope:		standard
+ShortDescr:	Total throughput octets sent
+Units:		octets
+Table:		4Aapp	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of octets for which cumulative acknowledgments
+		have been received.  Note that this will be the sum of
+		changes to tcpEStatsAppSndUna.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	HCThruOctetsAcked
+Scope:		standard
+ShortDescr:	Total throughput octets sent
+Units:		octets
+Table:		4Aapp	+
+ProcType:	ZeroBasedCounter64
+Description:	The number of octets for which cumulative acknowledgments
+		have been received, on systems that can receive more
+		than 10 million bits per second.  Note that this will
+                be the sum of changes in tcpEStatsAppSndUna.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	RcvNxt
+Scope:		standard
+RenameFrom:	rcv_nxt
+ShortDescr:	Next sequence number expected on an incoming segment
+Refer:		RFC793, Transmission Control Protocol
+Table:		4Aapp	.
+ProcType:	Counter32
+Description:	The value of RCV.NXT.  The next sequence number
+		expected on an incoming segment, and the left or lower edge of
+		the receive window.
+
+		Note that RCV.NXT is a TCP state variable that is congruent
+		to Counter32 semantics.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	ThruOctetsReceived
+RenameFrom:	ThruBytesReceived
+Scope:		standard
+ShortDescr:	Total throughput octets received
+Units:		octets
+Table:		4Aapp	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of octets for which cumulative acknowledgments
+		have been sent.  Note that this will be the sum of changes
+		to tcpEStatsAppRcvNxt.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	HCThruOctetsReceived
+Scope:		standard
+ShortDescr:	Total throughput octets received
+Units:		octets
+Table:		4Aapp	+
+ProcType:	ZeroBasedCounter64
+Description:	The number of octets for which cumulative acknowledgments
+		have been sent, on systems that can transmit more
+		than 10 million bits per second.  Note that this will be the
+		sum of changes	in tcpEStatsAppRcvNxt.
+R/W:		read-only
+------------------------------------------------------------------------------
+SNMPcomment:	1Bperf
+		The following optional objects
+		can be used to quickly identify
+		which subsystems are limiting TCP performance.
+		There are three parallel pairs of instruments that
+	        measure the extent to which TCP performance is limited
+		by the announced receiver window (indicating a receiver
+		bottleneck), the current congestion window or retransmission
+		timeout (indicating a path bottleneck)
+		and all others events (indicating a sender bottleneck).
+
+		These instruments SHOULD be updated every time the TCP output
+		routine stops sending data.  The elapsed time since the
+		previous stop is accumulated into the appropriate object as
+		determined by the previous stop reason (e.g., stop state).
+		The current stop reason determines which timer will be updated
+		the next time TCP output stops.
+
+		Since there is no explicit stop at the beginning of a
+		timeout, it is necessary to retroactively reclassify
+		the previous stop as "Congestion Limited".
+------------------------------------------------------------------------------
+VariableName:	SndLimTransRwin
+Scope:		standard
+ShortDescr:	Receiver Limited Transitions
+Table:		1Bperf	>
+Refer:		RFC793, Transmission Control Protocol
+ProcType:	ZeroBasedCounter32
+Description:	The number of transitions into the "Receiver Limited" state
+		from either the "Congestion Limited" or "Sender Limited" states.
+		This state is entered whenever TCP transmission stops
+		because the sender has filled the announced receiver window.
+		I.e., when SND.NXT has advanced to SND.UNA + SND.WND - 1 as
+		described in RFC 793.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	SndLimTransCwnd
+Scope:		standard
+ShortDescr:	Congestion Limited Transitions
+Table:		1Bperf	>
+Refer:		RFC2581, TCP Congestion Control
+ProcType:	ZeroBasedCounter32
+Description:    The number of transitions into the "Congestion Limited" state
+		from either the "Receiver Limited" or "Sender Limited" states.
+		This state is entered whenever TCP transmission stops because
+		the sender has reached some limit defined by congestion control
+		(e.g., cwnd) or other algorithms (retransmission timeouts)
+		designed to control network traffic.
+		See the definition of "CONGESTION WINDOW" in RFC 2581.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	SndLimTransSnd
+Scope:		standard
+RenameFrom:	SndLimTransSender
+ShortDescr:	Sender Limited Transitions
+Table:		1Bperf	>
+ProcType:	ZeroBasedCounter32
+Description:	The number of transitions into the "Sender Limited" state from
+		either the "Receiver Limited" or "Congestion Limited" states.
+		This state is entered whenever TCP transmission stops due to
+		some sender limit such as running out of application data or
+		other resources and the Karn algorithm.  When TCP stops sending
+		data for any reason which cannot be classified as Receiver
+		Limited or Congestion Limited it MUST be treated as Sender
+		Limited.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	SndLimTimeRwin
+Scope:		standard
+ShortDescr:	Receiver Limited Time
+Units:		milliseconds
+Table:		1Bperf	>
+ProcType:	ZeroBasedCounter32
+Description:	The cumulative time spent in the "Receiver Limited"
+		state.  See tcpEStatsPerfSndLimTransRwin.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	SndLimTimeCwnd
+Scope:		standard
+ShortDescr:	Congestion Limited Time
+Units:		milliseconds
+Table:		1Bperf	>
+ProcType:	ZeroBasedCounter32
+Description:	The cumulative time spent in the "Congestion
+		Limited" state.   See tcpEStatsPerfSndLimTransCwnd.   When there is a
+		retransmission timeout, it SHOULD be counted in tcpEStatsPerfSndLimTimeCwnd
+		(and not the cumulative time for some other state.)
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	SndLimTimeSnd
+Scope:		standard
+RenameFrom:	SndLimTimeSender
+ShortDescr:	Sender Limited Time
+Units:		milliseconds
+Table:		1Bperf	>
+ProcType:	ZeroBasedCounter32
+Description:	The cumulative time spent in the "Sender Limited"
+		state.   See tcpEStatsPerfSndLimTransSnd.
+R/W:		read-only
+------------------------------------------------------------------------------
+SNMPcomment:	3Astack
+		The following two objects reflect the current state of the
+		connection.
+------------------------------------------------------------------------------
+VariableName:	State
+Scope:		standard
+ShortDescr:	TCP State
+Refer:		RFC793, Transmission Control Protocol
+Table:		3Astack	.
+ProcType:	INTEGER
+Description:    An integer value representing the connection state from the
+		TCP State Transition Diagram.
+
+		The value listen(2) is
+		included only for parallelism to the
+		old tcpConnTable, and SHOULD NOT be used because the listen
+		state in managed by the tcpListenerTable.
+
+		The value DeleteTcb(12) is included only for parallelism
+		to the tcpConnTable mechanism for terminating connections,
+		although this table does not permit writing.
+R/W:		read-only
+PossibleValues:
+        	tcpESStateClosed(1)
+        	tcpESStateListen(2)
+        	tcpESStateSynSent(3)
+        	tcpESStateSynReceived(4)
+        	tcpESStateEstablished(5)
+        	tcpESStateFinWait1(6)
+        	tcpESStateFinWait2(7)
+        	tcpESStateCloseWait(8)
+        	tcpESStateLastAck(9)
+        	tcpESStateClosing(10)
+        	tcpESStateTimeWait(11)
+        	tcpESStateDeleteTcb(12)
+------------------------------------------------------------------------------
+VariableName:	Nagle
+Scope:		standard
+RenameFrom:	NagleEnabled
+ShortDescr:	Nagle Algorithm Enabled
+Refer:		RFC1122, Requirements for Internet Hosts - Communication Layers
+Table:		3Astack	.
+ProcType:	TruthValue
+Description:	True(1) if the Nagle algorithm is being used, else false(2).
+R/W:		read-only
+------------------------------------------------------------------------------
+SNMPcomment:	3Astack
+		The following objects instrument the
+		overall operation of TCP congestion control
+		and data retransmissions.
+		These instruments are sufficient to fit the actual performance
+		to an updated macroscopic performance model
+		[RFC2581] [Mat97] [Pad98].
+------------------------------------------------------------------------------
+SNMPcomment:	3Bstack
+		The following optional objects expose the detailed operation of the
+		congestion control algorithms.
+------------------------------------------------------------------------------
+VariableName:	SlowStart
+Scope:		standard
+ShortDescr:	Slow Start Window Opens
+Refer:		RFC2581, TCP Congestion Control
+Table:		3Bstack	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of times the congestion window has been increased
+		by the Slow Start algorithm.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	CongAvoid
+Scope:		standard
+ShortDescr:	Congestion Avoidance Window Opens
+Refer:		RFC2581, TCP Congestion Control
+Table:		3Bstack	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of times the congestion window has been increased
+		by the Congestion Avoidance algorithm.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	CongSignals
+Scope:		standard
+RenameFrom:	CongestionSignals
+RenameFrom:	Recoveries PreCongCountRTT
+ShortDescr:	Total Congestion Signals.
+Refer:		RFC2581, TCP Congestion Control
+Table:		1Aperf	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of multiplicative downward congestion window
+		adjustments due to all forms of congestion signals,
+		including Fast Retransmit, ECN and timeouts.   This object
+		summarizes all events that invoke the MD portion of AIMD
+		congestion control, and as such is the best indicator of
+		how cwnd is being affected by congestion.
+
+		Note that
+		retransmission timeouts multiplicatively reduce the
+		window implicitly by setting ssthresh, and SHOULD be included
+		in tcpEStatsPerfCongSignals.   In order to minimize
+		spurious congestion indications due to out-of-order segments,
+		tcpEStatsPerfCongSignals SHOULD be incremented in
+		association with the
+		Fast Retransmit algorithm.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	OtherReductions
+Scope:		standard
+ShortDescr:	Other Congestion Window Reductions
+Refer:		RFC2861, TCP Congestion Window Validation
+Table:		3Bstack	+
+ProcType:	ZeroBasedCounter32
+Description:    The number of congestion window reductions made as a result
+		of anything other than AIMD congestion control algorithms.
+		Examples of
+		non-multiplicative window reductions include
+		Congestion Window Validation [RFC2861] and
+		experimental algorithms such as Vegas [Bra94].
+
+		All window reductions MUST be counted as either
+		tcpEStatsPerfCongSignals or tcpEStatsStackOtherReductions.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	CongOverCount
+Scope:		standard
+RenameFrom:	CongestionOverCount
+ShortDescr:	Overcounted congestion Signals
+Refer:		RFC3522, The Eifel Detection Algorithm for TCP
+Table:		3Bstack	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of congestion events which were 'backed out' of the
+		congestion control state machine such that the congestion
+		window was restored to a prior value.   This can happen due to
+		the Eifel algorithm [RFC3522] or other algorithms which
+		can be used to
+		detect and cancel spurious invocations of the Fast Retransmit Algorithm.
+
+		Although it may be feasible to undo the effects of spurious
+		invocation of the Fast Retransmit
+		congestion events cannot easily be backed out of tcpEStatsPerfCongSignals
+		and tcpEStatsPathPreCongSumCwnd, etc.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	CurCwnd
+Scope:		standard
+RenameFrom:	CurrentCwnd
+ShortDescr:	Current Congestion Window
+Refer:		RFC2581, TCP Congestion Control
+Units:		octets
+Table:		1Aperf	.
+ProcType:	Gauge32
+Description:	The current congestion window, in octets.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	MaxSsCwnd
+Scope:		standard
+RenameFrom:	MaxCwnd
+ShortDescr:	Maximum SS Congestion Window
+Refer:		RFC2581, TCP Congestion Control
+Units:		octets
+Table:		3Astack	+
+ProcType:	Gauge32
+Description:	The maximum congestion window used during Slow Start, in octets.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	MaxCaCwnd
+Scope:		standard
+ShortDescr:	Maximum CA Congestion Window
+Refer:		RFC2581, TCP Congestion Control
+Units:		octets
+Table:		3Astack	+
+ProcType:	Gauge32
+Description:	The maximum congestion window used during Congestion Avoidance, in octets.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	LimCwnd
+Scope:		standard
+ShortDescr:	Maximum Congestion Window
+Refer:		RFC2581, TCP Congestion Control
+Units:		octets
+Table:		5Btune	+
+ProcType:	Unsigned32
+Description:	A control to set the maximum congestion window which may be used, in octets.
+R/W:		read-write
+------------------------------------------------------------------------------
+VariableName:	CurSsthresh
+Scope:		standard
+RenameFrom:	CurrentSsthresh
+ShortDescr:	Current Slowstart Threshold
+Refer:		RFC2581, TCP Congestion Control
+Units:		octets
+Table:		1Aperf	.
+ProcType:	Gauge32
+Description:	The current slow start threshold in octets.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	MaxSsthresh
+Scope:		standard
+ShortDescr:	Maximum Slowstart Threshold
+Refer:		RFC2581, TCP Congestion Control
+Units:		octets
+Table:		3Astack	+
+ProcType:	Gauge32
+Description:	The maximum slow start threshold, excluding the initial
+		value.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	MinSsthresh
+Scope:		standard
+ShortDescr:	Minimum Slowstart Threshold
+Refer:		RFC2581, TCP Congestion Control
+Units:		octets
+Table:		3Astack	+
+ProcType:	Gauge32
+Description:	The minimum slow start threshold.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	LimSsthresh
+Scope:		standard
+ShortDescr:	Maximum Slowstart Threshhold
+Refer:		RFC3742, Limited Slow-Start for TCP with Large Congestion Windows
+Units:		octets
+Table:		5Btune	+
+ProcType:	Unsigned32
+Description:	A control to limit the maximum queue space (in octets) that
+		this TCP connection is likely to occupy during slowstart.
+
+		It can be implemented with the algorithm described in
+		RFC3742 by setting the max_ssthresh parameter to twice
+		tcpEStatsTuneLimSsthresh.
+
+		This algorithm can be used to overcome some TCP performance
+		problems over network paths that do not have sufficient
+		buffering to withstand the bursts normally present during
+		slowstart.
+R/W:		read-write
+------------------------------------------------------------------------------
+VariableName:	InRecovery
+Scope:		standard
+ShortDescr:	Recovery state
+Refer:		RFC2581, TCP Congestion Control
+Table:		3Astack	.
+ProcType:	INTEGER
+Description:	An integer value representing the state of the loss recovery
+		for this connection.
+
+		tcpESDataContiguous(1) indicates that the remote receiver is reporting
+		contiguous data (no duplicate acknowledgments or SACK
+		options) and that there are no unacknowledged retransmissions.
+
+		tcpESDataUnordered(2) indicates that the remote receiver is reporting
+		missing or out-of-order data
+		(e.g., sending duplicate acknowledgments or SACK options)
+		and that there are no unacknowledged retransmissions (because
+		the missing data has not yet been retransmitted).
+
+		tcpESDataRecovery(3) indicates that the sender has outstanding
+		retransmitted data which is still unacknowledged.
+R/W:		read-only
+PossibleValues:
+		tcpESDataContiguous(1)
+		tcpESDataUnordered(2)
+		tcpESDataRecovery(3)
+------------------------------------------------------------------------------
+VariableName:	FastRetran
+Scope:		standard
+ShortDescr:	Fast Retransmits
+Refer:		RFC2581, TCP Congestion Control
+Table:		3Bstack	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of invocations of the Fast Retransmit algorithm.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	Timeouts
+Scope:		standard
+ShortDescr:	Number of Initial Timeouts
+Refer:		RFC2988, Computing TCP's Retransmission Timer
+Table:		1Aperf	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of times the retransmit timeout has expired when
+		the RTO backoff multiplier is equal to one.
+R/W:		read-only.
+------------------------------------------------------------------------------
+VariableName:	SubsequentTimeouts
+Scope:		standard
+ShortDescr:	Subsequent (repeated) Timeouts
+Refer:		RFC2988, Computing TCP's Retransmission Timer
+Table:		3Bstack	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of times the retransmit timeout has expired after
+		the RTO has been doubled.  See section 5.5 in RFC2988.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	CurTimeoutCount
+Scope:		standard
+RenameFrom:	CurrTimeoutCount
+ShortDescr:	Current Repeated Timeout Count
+Refer:		RFC2988, Computing TCP's Retransmission Timer
+Table:		3Bstack	+
+ProcType:	Gauge32
+Description:	The current number of times the retransmit timeout has
+		expired without receiving an acknowledgment for new data.
+		tcpEStatsStackCurTimeoutCount is reset to zero when new data
+		is acknowledged and incremented for each invocation of section
+		5.5 in RFC2988.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	AbruptTimeouts
+Scope:		standard
+ShortDescr:	Abrupt Timeouts
+Refer:		RFC2581, TCP Congestion Control
+Table:		3Bstack	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of timeouts that occurred without any immediately
+		preceding duplicate acknowledgments or other indications of
+		congestion.
+		Abrupt Timeouts indicate that the path lost an entire window of
+		data or acknowledgments.
+
+		Timeouts that are preceded by duplicate acknowledgments or
+		other congestion signals (e.g., ECN) are not counted as abrupt,
+		and might have been avoided by a more sophisticated Fast
+		Retransmit algorithm.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	DupAcksIn
+Scope:		standard
+ShortDescr:	Number of Duplicate ACKs Received
+Refer:		RFC2581, TCP Congestion Control
+Table:		3Astack	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of duplicate ACKs received.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	SACKsRcvd
+Scope:		standard
+ShortDescr:	Number of SACKs Options Received
+Refer:		RFC2018, TCP Selective Acknowledgement Options
+Table:		3Bstack	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of SACK options received.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	SACKBlocksRcvd
+Scope:		standard
+ShortDescr:	Number of SACKs blocks Received
+Refer:		RFC2018, TCP Selective Acknowledgement Options
+Table:		3Bstack	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of SACK blocks received (within SACK options).
+R/W:		read-only
+------------------------------------------------------------------------------
+SNMPcomment:	2Bpath
+		The following optional
+		objects characterize the congestion feedback signals by
+		collecting statistics on how the congestion events are correlated
+		to losses, changes in RTT and other protocol events.
+------------------------------------------------------------------------------
+VariableName:	PreCongSumCwnd
+Scope:		standard
+RenameFrom:	SumCwndAtCong
+ShortDescr:	Sum Congestion Window at Congestion
+Units:		octets
+Table:		2Bpath	+
+ProcType:	ZeroBasedCounter32
+Description:	The sum of the values of the congestion window, in octets,
+		captured each time a congestion signal is received.  This
+		MUST be updated each time tcpEStatsPerfCongSignals is incremented,
+		such that the change in tcpEStatsPathPreCongSumCwnd divided by the change in
+		tcpEStatsPerfCongSignals is the average window (over some
+		interval) just prior to a congestion signal.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	PreCongSumRTT
+Scope:		standard
+ShortDescr:	Sum of the RTT as measured just before congestion.
+Units:		milliseconds
+Table:		2Bpath	+
+ProcType:	ZeroBasedCounter32
+Description:	Sum of the last sample of the RTT (tcpEStatsPathSampleRTT) prior to received
+		congestion signals.  This MUST be updated each time
+		tcpEStatsPerfCongSignals is incremented, 
+		such that the change in tcpEStatsPathPreCongSumRTT divided by the change in
+		tcpEStatsPerfCongSignals is the average RTT (over some
+		interval) just prior to a congestion signal.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	PostCongSumRTT
+Scope:		standard
+ShortDescr:	Sum of the RTT as measured just after congestion.
+Units:		octets
+Table:		2Bpath	+
+ProcType:	ZeroBasedCounter32
+Description:	Sum of the first RTT sample following a received congestion
+		signal.
+Description:	Sum of the first sample of the RTT (tcpEStatsPathSampleRTT)
+		following each congestion signal.
+		Such that the change in tcpEStatsPathPostCongSumRTT divided by the change in
+		tcpEStatsPathPostCongCountRTT is the average RTT (over some
+		interval) just after a congestion signal.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	PostCongCountRTT
+Scope:		standard
+ShortDescr:	Count of the RTT as measured just after congestion
+Units:		milliseconds
+Table:		2Bpath	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of RTT samples included in
+		tcpEStatsPathPostCongSumRTT such that
+		the change in tcpEStatsPathPostCongSumRTT divided by the change in
+		tcpEStatsPathPostCongCountRTT is the average RTT (over some
+		interval) just after a congestion signal.
+R/W:		read-only
+------------------------------------------------------------------------------
+SNMPcomment:	2Bpath
+		The following optional objects can be used 
+		to detect other types of non-loss
+		congestion signals such as source quench or ECN.
+------------------------------------------------------------------------------
+VariableName:	ECNsignals
+Scope:		standard
+ShortDescr:	All ECN congestion signals
+Refer:		RFC3168, The Addition of Explicit Congestion Notification (ECN)
+		to IP
+Table:		2Bpath	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of congestion signals delivered to the TCP sender
+		via explicit congestion notification (ECN).
+		This is typically the number of segments bearing ECE bits but
+		should also include segments failing the ECN nonce check or other
+		explicit congestion signals.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	SendStall
+Scope:		standard
+ShortDescr:	local resource stalls treated as congestion signals
+Table:		3Bstack	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of interface stalls or other sender local resource
+		limitations that are treated as congestion signals.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	QuenchRcvd
+Scope:		internal
+ShortDescr:	ICMP Quench Messages received
+ProcType:	ZeroBasedCounter32
+Description:	The number of ICMP quench messages that are treated as
+		congestion signals.
+R/W:		read-only
+------------------------------------------------------------------------------
+SNMPcomment:	2Apath
+		The following optional objects can be used
+		to infer segment reordering on the path
+		from the local sender to the remote receiver.
+------------------------------------------------------------------------------
+VariableName:	RetranThresh
+Scope:		standard
+ShortDescr:	Duplicate ACKs needed to trigger FR
+Refer:		RFC2581, TCP Congestion Control
+Table:		2Apath	.
+ProcType:	Gauge32
+Description:	The number of duplicate acknowledgments required to trigger
+		Fast Retransmit.
+		Note that although this is constant in traditional
+		Reno TCP implementations, it is adaptive in many newer TCPs.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	NonRecovDAEpisodes
+Scope:		standard
+ShortDescr:	Dup Ack Episodes that did not trigger FR
+Refer:		RFC2581, TCP Congestion Control
+Table:		2Apath	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of duplicate acknowledgment episodes that
+		did not trigger a Fast
+		Retransmit because ACK advanced prior to the number of
+		duplicate acknowledgments reaching RetranThresh.
+
+		In many implementations this is the number of times the
+		"dupacks" counter is set to zero when it is non-zero but less
+		than RetranThresh.
+
+		Note that the change in tcpEStatsPathNonRecovDAEpisodes divided by
+		the change in tcpEStatsPerfDataSegsOut is an estimate of the
+		frequency of data reordering on the forward path over some interval.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	SumOctetsReordered
+Scope:		standard
+ShortDescr:	Sum Octets Reordered
+Units:		octets
+Table:		2Apath	+
+ProcType:	ZeroBasedCounter32
+Description:	The sum of the amounts SND.UNA advances on the acknowledgment
+		which ends a dup-ack episode without a retransmission.
+
+		Note the change in tcpEStatsPathSumOctetsReordered divided by 
+		the change in tcpEStatsPathNonRecovDAEpisodes is an
+		estimates of the average reordering distance, over some interval.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	NonRecovDA
+Scope:		standard
+ShortDescr:	Duplicate Acks attributed to Out-of-Order
+Refer:		RFC2581, TCP Congestion Control
+Table:		2Apath	+
+ProcType:	ZeroBasedCounter32
+Description:	Duplicate acks (or SACKS) that did not trigger a Fast
+		Retransmit because ACK advanced prior to the number of
+		duplicate acknowledgments reaching RetranThresh.
+
+		In many implementations, this is the sum of the
+		"dupacks" counter, just
+		before it is set to zero because ACK advanced without a Fast
+		Retransmit. 
+
+		Note that the change in tcpEStatsPathNonRecovDA divided by
+		the change in tcpEStatsPathNonRecovDAEpisodes is an
+		estimate of the average reordering distance in segments over
+		some interval.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	SpuriousFrDetected
+RenameFrom:	AckAfterFR
+Scope:		standard
+ShortDescr:	ACKs following FR, but not due to FR (way ooo)
+Refer:		RFC3522, The Eifel Detection Algorithm for TCP
+Table:		3Astack	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of acknowledgments reporting out-of-order segments
+		after the Fast Retransmit algorithm has
+		already retransmitted the segments.
+		(For example as detected by the Eifel algorithm)."
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	SpuriousRtoDetected
+Scope:		standard
+ShortDescr:	ACKs following FR, but not due to FR (way ooo)
+Table:		3Astack	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of acknowledgments reporting segments that have
+		already been retransmitted due to a Retransmission Timeout.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	DSACKDups
+Scope:		standard
+ShortDescr:	Duplicate Data DSACK Reports
+Refer:		RFC2883, An Extension to the Selective Acknowledgement (SACK)
+		Option for TCP
+Table:		3Bstack	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of duplicate segments reported to the local
+		host by D-SACK blocks.
+R/W:		read-only
+------------------------------------------------------------------------------
+SNMPcomment:	3Bstack
+		The following optional objects instrument path MTU discovery.
+------------------------------------------------------------------------------
+VariableName:	MaxMSS
+Scope:		standard
+ShortDescr:	Maximum MSS
+Refer:		RFC1191, Path MTU discovery
+Units:		octets
+Table:		3Bstack	+
+ProcType:	Gauge32
+Description:	The maximum MSS, in octets.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	MinMSS
+Scope:		standard
+ShortDescr:	Minimum MSS
+Refer:		RFC1191, Path MTU discovery
+Units:		octets
+Table:		3Bstack	+
+ProcType:	Gauge32
+Description:	The minimum MSS, in octets.
+R/W:		read-only
+------------------------------------------------------------------------------
+SNMPcomment:	3Bstack
+		The following optional initial value objects are useful for conformance
+		testing instruments on application progress and consumed
+		network resources.
+------------------------------------------------------------------------------
+VariableName:	SndInitial
+Scope:		standard
+RenameFrom:	SndISS
+ShortDescr:	Initial send sequence number.
+Refer:		RFC793, Transmission Control Protocol
+Table:		3Bstack	+c
+ProcType:	Unsigned32
+Description:	Initial send sequence number.  Note that by definition
+		tcpEStatsStackSndInitial never changes for a given connection.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	RecInitial
+Scope:		standard
+RenameFrom:	RecvISS
+ShortDescr:	Initial receive sequence number
+Refer:		RFC793, Transmission Control Protocol
+Table:		3Bstack	+c
+ProcType:	Unsigned32
+Description:	Initial receive sequence number.  Note that by definition
+		tcpEStatsStackRecInitial never changes for a given connection.
+R/W:		read-only
+------------------------------------------------------------------------------
+SNMPcomment:	3Bstack
+		The following optional objects
+		instrument the senders buffer usage, including
+		any buffering in the application interface to TCP and the
+		retransmit queue.  All "buffer memory" instruments are
+		assumed to include OS data structure overhead.
+------------------------------------------------------------------------------
+VariableName:	CurRetxQueue
+Scope:		standard
+RenameFrom:	CurRetranQueue
+ShortDescr:	Current size of retransmit queue
+Units:		octets
+Table:		3Bstack	.
+ProcType:	Gauge32
+Description:	The current number of octets of data occupying the retransmit queue.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	MaxRetxQueue
+Scope:		standard
+RenameFrom:	MaxRetranQueue
+ShortDescr:	Maximum size of retransmit queue
+Units:		octets
+Table:		3Bstack	+
+ProcType:	Gauge32
+Description:	The maximum number of octets of data occupying the retransmit queue.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	CurAppWQueue
+Scope:		standard
+ShortDescr:	Current size of application write queue
+Units:		octets
+Table:		4Bapp	.
+ProcType:	Gauge32
+Description:	The current number of octets of application data
+		buffered by TCP, pending first transmission, i.e. to the left
+		of SND.NXT or SndMax.   This data will generally be transmitted (and
+		SND.NXT advanced to the left) as soon as there is available congestion
+		window (cwnd) or receiver window (rwin).   This is the amount
+		of data readily available for transmission, without scheduling
+		the application.   TCP performance may suffer if there is
+		insufficient queued write data.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	MaxAppWQueue
+Scope:		standard
+ShortDescr:	Maximum size of application write queue
+Units:		octets
+Table:		4Bapp	+
+ProcType:	Gauge32
+Description:	The maximum number of octets of application data
+		buffered by TCP, pending first transmission.   This is the
+		maximum value of tcpEStatsAppCurAppWQueue.   This pair of objects can be
+		used to determine if insufficient queued data is steady state
+		(suggesting insufficient queue space) or transient (suggesting
+		insufficient application performance or excessive CPU load or
+		scheduler latency).
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	X_SBufMode
+Scope:		internal
+ShortDescr:	Send buffer mode
+ProcType:	Gauge32
+Description:	A mechanism for changing the send buffering mode of a
+		connection.  Current values taken may be:
+		  (0) Default Linux kernel buffering
+		  (1) Web100 "autotuned" buffering
+R/W:		read-write
+------------------------------------------------------------------------------
+VariableName:	X_Sndbuf
+RenameFrom:	Sndbuf
+Scope:		internal
+ShortDescr:	Socket sndbuf size
+ProcType:	Gauge32
+Description:	The socket send buffer size is octets.  Note that the
+		meaning of this variable is implementation dependent. 
+		Particularly, it may or may not include the retransmit
+		queue.
+R/W:		read-only
+------------------------------------------------------------------------------
+SNMPcomment:	1Aperf
+		The following objects instrument receiver window updates
+		sent by the local receiver
+		to the remote sender.   These can be used to determine if
+		the local receiver is exerting flow control back pressure
+		on the remote sender.
+------------------------------------------------------------------------------
+VariableName:	CurRwinSent
+Scope:		standard
+RenameFrom:	CurrentRwinSent
+ShortDescr:	current receiver window out
+Refer:		RFC793, Transmission Control Protocol
+Units:		octets
+Table:		1Aperf	.
+ProcType:	Gauge32
+Description:	The most recent window advertisement sent, in octets.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	MaxRwinSent
+Scope:		standard
+ShortDescr:	maximum receiver window out
+Refer:		RFC793, Transmission Control Protocol
+Units:		octets
+Table:		1Aperf	+
+ProcType:	Gauge32
+Description:	The maximum window advertisement sent, in octets.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	ZeroRwinSent
+Scope:		standard
+ShortDescr:	Number of ACKS sent with zero receive windows
+Refer:		RFC793, Transmission Control Protocol
+Table:		1Aperf	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of acknowledgments sent announcing a
+		zero receive window, when the previously announced window
+		was not zero.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	LimRwin
+Scope:		standard
+ShortDescr:	Bound on announced receiver window
+Refer:		RFC793, Transmission Control Protocol
+Units:		octets
+Table:		5Btune	+
+ProcType:	Unsigned32
+Description:	A control to set the maximum window advertisement which may be sent, in
+		octets.
+R/W:		read-write
+------------------------------------------------------------------------------
+VariableName:	LimMSS
+Scope:		standard
+ShortDescr:	Bound on MSS
+Refer:		RFC1191, Path MTU discovery
+Units:		octets
+Table:		5Btune	+
+ProcType:	Unsigned32
+Description:	A control to limit the maximum segment size in octets,
+		that this TCP connection can use.
+R/W:		read-write
+------------------------------------------------------------------------------
+SNMPcomment:	2Bpath
+		The following optional objects are receiver side
+		instruments of the path from the sender to the receiver.
+		In general the receiver has less information about the state
+		of the path, because the receiver does not have a robust
+		mechanism to infer the sender's actions.
+------------------------------------------------------------------------------
+VariableName:	DupAckEpisodes
+Scope:		standard
+ShortDescr:	Number of Duplicate Acks Sent when prior Ack was not duplicate
+Refer:		RFC2581, TCP Congestion Control
+Table:		2Bpath	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of Duplicate Acks Sent when prior Ack was not
+		duplicate.  This is the number of times that a contiguous
+		series of duplicate acknowledgments have been sent.
+
+		This is an indication of the number of data segments lost or
+		reordered on the path from the remote TCP endpoint to the near
+		TCP endpoint.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	RcvRTT
+RenameFrom:	X_RcvRTT
+Scope:		standard
+ShortDescr:	The receiver's estimate of the Path RTT
+Table:		2Bpath	.
+ProcType:	Gauge32
+Description:	The receiver's estimate of the Path RTT.
+
+		Adaptive receiver window algorithms depend on the
+		receiver to having a good estimate of the path RTT.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	DupAcksOut
+Scope:		standard
+ShortDescr:	Number of Duplicate Acks Sent
+Refer:		RFC2581, TCP Congestion Control
+Table:		2Bpath	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of duplicate ACKs sent.   The ratio of the change in
+		tcpEStatsPathDupAcksOut to the change in tcpEStatsPathDupAckEpisodes is an
+		indication of reorder or recovery distance over some interval.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	CERcvd
+Scope:		standard
+ShortDescr:	Received segments with Congestion Experienced bits
+Refer:		RFC3168, The Addition of Explicit Congestion Notification (ECN)
+		to IP
+Table:		2Bpath	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of segments received with IP headers bearing 
+		Congestion Experienced (CE) markings.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	ECESent
+Scope:		standard
+ShortDescr:	Number of times CE bits have set ECE
+Refer:		RFC3168, The Addition of Explicit Congestion Notification (ECN)
+		to IP
+Table:		2Bpath	+
+ProcType:	ZeroBasedCounter32
+Description:	Number of times the Echo Congestion Experienced (ECE) bit in the
+		TCP header has been set (transitioned from 0 to 1), due to 
+		a Congestion Experienced (CE) marking on an IP header.   Note
+		that ECE can be set and reset only once per RTT, while CE can
+		be set on many segments per RTT.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	ECNNonceRcvd
+Scope:		internal
+ShortDescr:	Number of ECN Nonces received
+Refer:		RFC3540, Robust Explicit Congestion Notification (ECN)
+		Signaling with Nonces 
+ProcType:	ZeroBasedCounter32
+Description:	Number of ECN Nonces (NS bits) received.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	CurReasmQueue
+Scope:		standard
+ShortDescr:	Current size of reassembly queue
+Units:		octets
+Table:		3Bstack	.
+ProcType:	Gauge32
+Description:	The current number of octets of sequence space spanned by the
+		reassembly queue.   This is generally the difference between
+		rcv.nxt and the sequence number of the right most edge of the
+		reassembly queue.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	MaxReasmQueue
+Scope:		standard
+ShortDescr:	Maximum size of reassembly queue
+Table:		3Bstack	+
+ProcType:	Gauge32
+Description:	The maximum value of tcpEStatsStackCurReasmQueue
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	CurAppRQueue
+Scope:		standard
+ShortDescr:	Current size of application read queue
+Units:		octets
+Table:		4Bapp	.
+ProcType:	Gauge32
+Description:	The current number of octets of application data that has been
+		acknowledged by TCP but not yet delivered to the application. 
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	MaxAppRQueue
+Scope:		standard
+ShortDescr:	Maximum size of application read queue
+Units:		octets
+Table:		4Bapp	.
+ProcType:	Gauge32
+Description:	The maximum number of octets of application data that has been
+		acknowledged by TCP but not yet delivered to the application. 
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	X_RBufMode
+Scope:		internal
+ShortDescr:	Send buffer mode
+ProcType:	Gauge32
+Description:	A mechanism for changing the receive buffering
+		mode of a connection. Current values taken may be:
+		  (0) Default Linux kernel buffering
+		  (1) Web100 "autotuned" buffering
+R/W:		read-write
+------------------------------------------------------------------------------
+VariableName:	X_Rcvbuf
+RenameFrom:	Rcvbuf
+Scope:		internal
+ShortDescr:	Socket rcvbuf size
+Units:		octets
+ProcType:	Gauge32
+Description:	The socket receive buffer size is octets.  Note that the
+		meaning of this variable is implementation dependent.  In
+		particular, it may or may not include the reassembly queue.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	X_wnd_clamp
+Scope:		internal
+ShortDescr:	X_wnd_clamp
+ProcType:	Gauge32
+Description:	Code dissection.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	X_rcv_ssthresh
+Scope:		internal
+ShortDescr:	X_rcv_ssthresh
+ProcType:	Gauge32
+Description:	Code dissection.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	X_dbg1
+Scope:		internal
+ShortDescr:	X_dbg1
+ProcType:	Gauge32
+Description:	Debugging
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	X_dbg2
+Scope:		internal
+ShortDescr:	X_dbg2
+ProcType:	Gauge32
+Description:	Debugging
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	X_dbg3
+Scope:		internal
+ShortDescr:	X_dbg3
+ProcType:	Gauge32
+Description:	Debugging
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	X_dbg4
+Scope:		internal
+ShortDescr:	X_dbg4
+ProcType:	Gauge32
+Description:	Debugging
+R/W:		read-only
+------------------------------------------------------------------------------
+SNMPcomment:	1Aperf
+		The following objects
+		instrument receiver window updates from the far end-system
+		to determine if
+		the remote receiver has sufficient buffer space or is exerting
+		flow-control back pressure on the local sender.
+------------------------------------------------------------------------------
+VariableName:	CurRwinRcvd
+Scope:		standard
+RenameFrom:	CurrentRwinRcvd
+ShortDescr:	Current Receiver Window
+Refer:		RFC793, Transmission Control Protocol
+Units:		octets
+Table:		1Aperf	.
+ProcType:	Gauge32
+Description:	The most recent window advertisement received, in octets.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	MaxRwinRcvd
+Scope:		standard
+ShortDescr:	Maximum Receiver Window
+Refer:		RFC793, Transmission Control Protocol
+Units:		octets
+Table:		1Aperf	+
+ProcType:	Gauge32
+Description:	The maximum window advertisement received, in octets.
+R/W:		read-only
+------------------------------------------------------------------------------
+VariableName:	ZeroRwinRcvd
+Scope:		standard
+ShortDescr:	Minimum Receiver Window
+Refer:		RFC793, Transmission Control Protocol
+Table:		1Aperf	+
+ProcType:	ZeroBasedCounter32
+Description:	The number of acknowledgments received announcing a
+		zero receive window, when the previously announced window
+		was not zero.
+R/W:		read-only
+------------------------------------------------------------------------------
+CATEGORY:	NULL
+CatDescr:	NULL
+------------------------------------------------------------------------------
+
+ LocalWords:  perf

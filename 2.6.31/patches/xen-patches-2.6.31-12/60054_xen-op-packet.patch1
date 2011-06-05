@@ -1,0 +1,140 @@
+From: plc@novell.com
+Subject: add support for new operation type BLKIF_OP_PACKET
+Patch-mainline: obsolete
+References: fate#300964
+
+--- 11.2-2010-02-16.orig/drivers/xen/blkback/blkback.c	2009-09-02 11:59:54.000000000 +0200
++++ 11.2-2010-02-16/drivers/xen/blkback/blkback.c	2009-07-29 10:18:11.000000000 +0200
+@@ -193,13 +193,15 @@ static void fast_flush_area(pending_req_
+ 
+ static void print_stats(blkif_t *blkif)
+ {
+-	printk(KERN_DEBUG "%s: oo %3d  |  rd %4d  |  wr %4d  |  br %4d\n",
++	printk(KERN_DEBUG "%s: oo %3d  |  rd %4d  |  wr %4d  |  br %4d |  pk %4d\n",
+ 	       current->comm, blkif->st_oo_req,
+-	       blkif->st_rd_req, blkif->st_wr_req, blkif->st_br_req);
++	       blkif->st_rd_req, blkif->st_wr_req, blkif->st_br_req,
++	       blkif->st_pk_req);
+ 	blkif->st_print = jiffies + msecs_to_jiffies(10 * 1000);
+ 	blkif->st_rd_req = 0;
+ 	blkif->st_wr_req = 0;
+ 	blkif->st_oo_req = 0;
++	blkif->st_pk_req = 0;
+ }
+ 
+ int blkif_schedule(void *arg)
+@@ -359,6 +361,13 @@ static int do_block_io_op(blkif_t *blkif
+ 			blkif->st_wr_req++;
+ 			dispatch_rw_block_io(blkif, &req, pending_req);
+ 			break;
++		case BLKIF_OP_PACKET:
++			DPRINTK("error: block operation BLKIF_OP_PACKET not implemented\n");
++			blkif->st_pk_req++;
++			make_response(blkif, req.id, req.operation,
++				      BLKIF_RSP_ERROR);
++			free_req(pending_req);
++			break;
+ 		default:
+ 			/* A good sign something is wrong: sleep for a while to
+ 			 * avoid excessive CPU consumption by a bad guest. */
+--- 11.2-2010-02-16.orig/drivers/xen/blkback/common.h	2009-06-09 15:50:31.000000000 +0200
++++ 11.2-2010-02-16/drivers/xen/blkback/common.h	2009-07-29 10:18:11.000000000 +0200
+@@ -89,6 +89,7 @@ typedef struct blkif_st {
+ 	int                 st_wr_req;
+ 	int                 st_oo_req;
+ 	int                 st_br_req;
++	int                 st_pk_req;
+ 	int                 st_rd_sect;
+ 	int                 st_wr_sect;
+ 
+--- 11.2-2010-02-16.orig/drivers/xen/blkfront/blkfront.c	2010-02-16 15:53:20.000000000 +0100
++++ 11.2-2010-02-16/drivers/xen/blkfront/blkfront.c	2010-02-16 15:55:17.000000000 +0100
+@@ -653,6 +653,8 @@ static int blkif_queue_request(struct re
+ 		BLKIF_OP_WRITE : BLKIF_OP_READ;
+ 	if (blk_barrier_rq(req))
+ 		ring_req->operation = BLKIF_OP_WRITE_BARRIER;
++	if (blk_pc_request(req))
++		ring_req->operation = BLKIF_OP_PACKET;
+ 
+ 	ring_req->nr_segments = blk_rq_map_sg(req->q, req, info->sg);
+ 	BUG_ON(ring_req->nr_segments > BLKIF_MAX_SEGMENTS_PER_REQUEST);
+@@ -710,7 +712,7 @@ void do_blkif_request(struct request_que
+ 
+ 		blk_start_request(req);
+ 
+-		if (!blk_fs_request(req)) {
++		if (!blk_fs_request(req) && !blk_pc_request(req)) {
+ 			__blk_end_request_all(req, -EIO);
+ 			continue;
+ 		}
+@@ -781,6 +783,7 @@ static irqreturn_t blkif_int(int irq, vo
+ 			/* fall through */
+ 		case BLKIF_OP_READ:
+ 		case BLKIF_OP_WRITE:
++		case BLKIF_OP_PACKET:
+ 			if (unlikely(bret->status != BLKIF_RSP_OKAY))
+ 				DPRINTK("Bad return from blkdev data "
+ 					"request: %x\n", bret->status);
+--- 11.2-2010-02-16.orig/drivers/xen/blktap/blktap.c	2009-07-30 10:55:18.000000000 +0200
++++ 11.2-2010-02-16/drivers/xen/blktap/blktap.c	2009-07-30 10:55:28.000000000 +0200
+@@ -1130,13 +1130,14 @@ static void fast_flush_area(pending_req_
+ 
+ static void print_stats(blkif_t *blkif)
+ {
+-	printk(KERN_DEBUG "%s: oo %3d  |  rd %4d  |  wr %4d\n",
++	printk(KERN_DEBUG "%s: oo %3d  |  rd %4d  |  wr %4d |  pk %4d\n",
+ 	       current->comm, blkif->st_oo_req,
+-	       blkif->st_rd_req, blkif->st_wr_req);
++	       blkif->st_rd_req, blkif->st_wr_req, blkif->st_pk_req);
+ 	blkif->st_print = jiffies + msecs_to_jiffies(10 * 1000);
+ 	blkif->st_rd_req = 0;
+ 	blkif->st_wr_req = 0;
+ 	blkif->st_oo_req = 0;
++	blkif->st_pk_req = 0;
+ }
+ 
+ int tap_blkif_schedule(void *arg)
+@@ -1371,6 +1372,11 @@ static int do_block_io_op(blkif_t *blkif
+ 			dispatch_rw_block_io(blkif, &req, pending_req);
+ 			break;
+ 
++		case BLKIF_OP_PACKET:
++			blkif->st_pk_req++;
++			dispatch_rw_block_io(blkif, &req, pending_req);
++			break;
++
+ 		default:
+ 			/* A good sign something is wrong: sleep for a while to
+ 			 * avoid excessive CPU consumption by a bad guest. */
+@@ -1410,6 +1416,8 @@ static void dispatch_rw_block_io(blkif_t
+ 	struct vm_area_struct *vma = NULL;
+ 
+ 	switch (req->operation) {
++	case BLKIF_OP_PACKET:
++		/* Fall through */
+ 	case BLKIF_OP_READ:
+ 		operation = READ;
+ 		break;
+--- 11.2-2010-02-16.orig/drivers/xen/blktap/common.h	2009-09-02 11:51:39.000000000 +0200
++++ 11.2-2010-02-16/drivers/xen/blktap/common.h	2009-07-29 10:18:11.000000000 +0200
+@@ -75,6 +75,7 @@ typedef struct blkif_st {
+ 	int                 st_rd_req;
+ 	int                 st_wr_req;
+ 	int                 st_oo_req;
++	int                 st_pk_req;
+ 	int                 st_rd_sect;
+ 	int                 st_wr_sect;
+ 
+--- 11.2-2010-02-16.orig/include/xen/interface/io/blkif.h	2009-08-17 14:15:11.000000000 +0200
++++ 11.2-2010-02-16/include/xen/interface/io/blkif.h	2009-07-29 10:18:11.000000000 +0200
+@@ -76,6 +76,10 @@
+  * "feature-flush-cache" node!
+  */
+ #define BLKIF_OP_FLUSH_DISKCACHE   3
++/*
++ * Device specific command packet contained within the request
++ */
++#define BLKIF_OP_PACKET            4
+ 
+ /*
+  * Maximum scatter/gather segments per request.

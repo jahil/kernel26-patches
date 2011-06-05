@@ -1,0 +1,316 @@
+From: Greg Kroah-Hartman <gregkh@suse.de>
+Subject: Linux 2.6.32.19
+Patch-mainline: 2.6.32.19
+
+Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+
+Automatically created from "patches.kernel.org/patch-2.6.32.18-19" by xen-port-patches.py
+
+--- sle11sp1-2010-09-22.orig/arch/x86/kernel/apic/io_apic-xen.c	2010-08-06 17:02:25.000000000 +0200
++++ sle11sp1-2010-09-22/arch/x86/kernel/apic/io_apic-xen.c	2010-08-23 12:10:22.000000000 +0200
+@@ -1556,7 +1556,7 @@ static struct {
+ 
+ static void __init setup_IO_APIC_irqs(void)
+ {
+-	int apic_id = 0, pin, idx, irq;
++	int apic_id, pin, idx, irq;
+ 	int notcon = 0;
+ 	struct irq_desc *desc;
+ 	struct irq_cfg *cfg;
+@@ -1564,14 +1564,7 @@ static void __init setup_IO_APIC_irqs(vo
+ 
+ 	apic_printk(APIC_VERBOSE, KERN_DEBUG "init IO_APIC IRQs\n");
+ 
+-#ifdef CONFIG_ACPI
+-	if (!acpi_disabled && acpi_ioapic) {
+-		apic_id = mp_find_ioapic(0);
+-		if (apic_id < 0)
+-			apic_id = 0;
+-	}
+-#endif
+-
++	for (apic_id = 0; apic_id < nr_ioapics; apic_id++)
+ 	for (pin = 0; pin < nr_ioapic_registers[apic_id]; pin++) {
+ 		idx = find_irq_entry(apic_id, pin, mp_INT);
+ 		if (idx == -1) {
+@@ -1593,6 +1586,9 @@ static void __init setup_IO_APIC_irqs(vo
+ 
+ 		irq = pin_2_irq(idx, apic_id, pin);
+ 
++		if ((apic_id > 0) && (irq > 16))
++			continue;
++
+ #ifdef CONFIG_XEN
+ 		if (irq < PIRQ_BASE || irq >= PIRQ_BASE + nr_pirqs)
+ 			continue;
+@@ -4208,27 +4204,23 @@ int acpi_get_override_irq(int bus_irq, i
+ #ifdef CONFIG_SMP
+ void __init setup_ioapic_dest(void)
+ {
+-	int pin, ioapic = 0, irq, irq_entry;
++	int pin, ioapic, irq, irq_entry;
+ 	struct irq_desc *desc;
+ 	const struct cpumask *mask;
+ 
+ 	if (skip_ioapic_setup == 1)
+ 		return;
+ 
+-#ifdef CONFIG_ACPI
+-	if (!acpi_disabled && acpi_ioapic) {
+-		ioapic = mp_find_ioapic(0);
+-		if (ioapic < 0)
+-			ioapic = 0;
+-	}
+-#endif
+-
++	for (ioapic = 0; ioapic < nr_ioapics; ioapic++)
+ 	for (pin = 0; pin < nr_ioapic_registers[ioapic]; pin++) {
+ 		irq_entry = find_irq_entry(ioapic, pin, mp_INT);
+ 		if (irq_entry == -1)
+ 			continue;
+ 		irq = pin_2_irq(irq_entry, ioapic, pin);
+ 
++		if ((ioapic > 0) && (irq > 16))
++			continue;
++
+ 		desc = irq_to_desc(irq);
+ 
+ 		/*
+--- sle11sp1-2010-09-22.orig/arch/x86/kernel/vsyscall_64-xen.c	2009-11-06 10:52:23.000000000 +0100
++++ sle11sp1-2010-09-22/arch/x86/kernel/vsyscall_64-xen.c	2010-08-23 12:10:22.000000000 +0200
+@@ -73,7 +73,8 @@ void update_vsyscall_tz(void)
+ 	write_sequnlock_irqrestore(&vsyscall_gtod_data.lock, flags);
+ }
+ 
+-void update_vsyscall(struct timespec *wall_time, struct clocksource *clock)
++void update_vsyscall(struct timespec *wall_time, struct clocksource *clock,
++		     u32 mult)
+ {
+ 	unsigned long flags;
+ 
+@@ -82,7 +83,7 @@ void update_vsyscall(struct timespec *wa
+ 	vsyscall_gtod_data.clock.vread = clock->vread;
+ 	vsyscall_gtod_data.clock.cycle_last = clock->cycle_last;
+ 	vsyscall_gtod_data.clock.mask = clock->mask;
+-	vsyscall_gtod_data.clock.mult = clock->mult;
++	vsyscall_gtod_data.clock.mult = mult;
+ 	vsyscall_gtod_data.clock.shift = clock->shift;
+ 	vsyscall_gtod_data.wall_time_sec = wall_time->tv_sec;
+ 	vsyscall_gtod_data.wall_time_nsec = wall_time->tv_nsec;
+--- sle11sp1-2010-09-22.orig/arch/x86/mm/fault-xen.c	2009-11-06 10:52:23.000000000 +0100
++++ sle11sp1-2010-09-22/arch/x86/mm/fault-xen.c	2010-08-23 12:10:22.000000000 +0200
+@@ -809,8 +809,10 @@ do_sigbus(struct pt_regs *regs, unsigned
+ 	up_read(&mm->mmap_sem);
+ 
+ 	/* Kernel mode? Handle exceptions or die: */
+-	if (!(error_code & PF_USER))
++	if (!(error_code & PF_USER)) {
+ 		no_context(regs, error_code, address);
++		return;
++	}
+ 
+ 	/* User-space => ok to do another page fault: */
+ 	if (is_prefetch(regs, error_code, address))
+--- sle11sp1-2010-09-22.orig/arch/x86/mm/init_64-xen.c	2009-11-06 10:52:23.000000000 +0100
++++ sle11sp1-2010-09-22/arch/x86/mm/init_64-xen.c	2010-08-23 12:10:22.000000000 +0200
+@@ -862,6 +862,21 @@ void __init paging_init(void)
+  */
+ #ifdef CONFIG_MEMORY_HOTPLUG
+ /*
++ * After memory hotplug the variables max_pfn, max_low_pfn and high_memory need
++ * updating.
++ */
++static void  update_end_of_memory_vars(u64 start, u64 size)
++{
++	unsigned long end_pfn = PFN_UP(start + size);
++
++	if (end_pfn > max_pfn) {
++		max_pfn = end_pfn;
++		max_low_pfn = end_pfn;
++		high_memory = (void *)__va(max_pfn * PAGE_SIZE - 1) + 1;
++	}
++}
++
++/*
+  * Memory is added always to NORMAL zone. This means you will never get
+  * additional DMA/DMA32 memory.
+  */
+@@ -880,6 +895,9 @@ int arch_add_memory(int nid, u64 start, 
+ 	ret = __add_pages(nid, zone, start_pfn, nr_pages);
+ 	WARN_ON_ONCE(ret);
+ 
++	/* update max_pfn, max_low_pfn and high_memory */
++	update_end_of_memory_vars(start, size);
++
+ 	return ret;
+ }
+ EXPORT_SYMBOL_GPL(arch_add_memory);
+--- sle11sp1-2010-09-22.orig/drivers/xen/netfront/netfront.c	2009-11-06 10:52:23.000000000 +0100
++++ sle11sp1-2010-09-22/drivers/xen/netfront/netfront.c	2010-09-22 11:32:21.000000000 +0200
+@@ -50,7 +50,6 @@
+ #include <linux/moduleparam.h>
+ #include <net/sock.h>
+ #include <net/pkt_sched.h>
+-#include <net/arp.h>
+ #include <net/route.h>
+ #include <asm/uaccess.h>
+ #include <xen/evtchn.h>
+@@ -220,7 +219,6 @@ static void netif_disconnect_backend(str
+ static int network_connect(struct net_device *);
+ static void network_tx_buf_gc(struct net_device *);
+ static void network_alloc_rx_buffers(struct net_device *);
+-static void send_fake_arp(struct net_device *);
+ 
+ static irqreturn_t netif_int(int irq, void *dev_id);
+ 
+@@ -237,6 +235,25 @@ static inline int xennet_can_sg(struct n
+ 	return dev->features & NETIF_F_SG;
+ }
+ 
++/*
++ * Work around net.ipv4.conf.*.arp_notify no being enabled by default.
++ */
++static void __devinit netfront_enable_arp_notify(struct netfront_info *info)
++{
++#ifdef CONFIG_INET
++	struct in_device *in_dev;
++
++	rtnl_lock();
++	in_dev = __in_dev_get_rtnl(info->netdev);
++	if (in_dev && !IN_DEV_CONF_GET(in_dev, ARP_NOTIFY))
++		IN_DEV_CONF_SET(in_dev, ARP_NOTIFY, 1);
++	rtnl_unlock();
++	if (!in_dev)
++		printk(KERN_WARNING "Cannot enable ARP notification on %s\n",
++		       info->xbdev->nodename);
++#endif
++}
++
+ /**
+  * Entry point to this code when a new device is created.  Allocate the basic
+  * structures and the ring buffers for communication with the backend, and
+@@ -266,6 +283,8 @@ static int __devinit netfront_probe(stru
+ 		goto fail;
+ 	}
+ 
++	netfront_enable_arp_notify(info);
++
+ 	err = xennet_sysfs_addif(info->netdev);
+ 	if (err) {
+ 		unregister_netdev(info->netdev);
+@@ -552,7 +571,7 @@ static void backend_changed(struct xenbu
+ 		if (network_connect(netdev) != 0)
+ 			break;
+ 		xenbus_switch_state(dev, XenbusStateConnected);
+-		send_fake_arp(netdev);
++		netif_notify_peers(netdev);
+ 		break;
+ 
+ 	case XenbusStateClosing:
+@@ -561,36 +580,6 @@ static void backend_changed(struct xenbu
+ 	}
+ }
+ 
+-/** Send a packet on a net device to encourage switches to learn the
+- * MAC. We send a fake ARP request.
+- *
+- * @param dev device
+- * @return 0 on success, error code otherwise
+- */
+-static void send_fake_arp(struct net_device *dev)
+-{
+-#ifdef CONFIG_INET
+-	struct sk_buff *skb;
+-	u32             src_ip, dst_ip;
+-
+-	dst_ip = INADDR_BROADCAST;
+-	src_ip = inet_select_addr(dev, dst_ip, RT_SCOPE_LINK);
+-
+-	/* No IP? Then nothing to do. */
+-	if (src_ip == 0)
+-		return;
+-
+-	skb = arp_create(ARPOP_REPLY, ETH_P_ARP,
+-			 dst_ip, dev, src_ip,
+-			 /*dst_hw*/ NULL, /*src_hw*/ NULL,
+-			 /*target_hw*/ dev->dev_addr);
+-	if (skb == NULL)
+-		return;
+-
+-	dev_queue_xmit(skb);
+-#endif
+-}
+-
+ static inline int netfront_tx_slot_available(struct netfront_info *np)
+ {
+ 	return ((np->tx.req_prod_pvt - np->tx.rsp_cons) <
+@@ -2110,32 +2099,6 @@ static struct net_device * __devinit cre
+ 	return ERR_PTR(err);
+ }
+ 
+-#ifdef CONFIG_INET
+-/*
+- * We use this notifier to send out a fake ARP reply to reset switches and
+- * router ARP caches when an IP interface is brought up on a VIF.
+- */
+-static int
+-inetdev_notify(struct notifier_block *this, unsigned long event, void *ptr)
+-{
+-	struct in_ifaddr  *ifa = (struct in_ifaddr *)ptr;
+-	struct net_device *dev = ifa->ifa_dev->dev;
+-
+-	/* UP event and is it one of our devices? */
+-	if (event == NETDEV_UP && dev->netdev_ops->ndo_open == network_open)
+-		send_fake_arp(dev);
+-
+-	return NOTIFY_DONE;
+-}
+-
+-static struct notifier_block notifier_inetdev = {
+-	.notifier_call  = inetdev_notify,
+-	.next           = NULL,
+-	.priority       = 0
+-};
+-#endif
+-
+-
+ static void netif_disconnect_backend(struct netfront_info *info)
+ {
+ 	/* Stop old i/f to prevent errors whilst we rebuild the state. */
+@@ -2189,8 +2152,6 @@ static struct xenbus_driver netfront_dri
+ 
+ static int __init netif_init(void)
+ {
+-	int err;
+-
+ 	if (!is_running_on_xen())
+ 		return -ENODEV;
+ 
+@@ -2208,26 +2169,13 @@ static int __init netif_init(void)
+ 
+ 	IPRINTK("Initialising virtual ethernet driver.\n");
+ 
+-#ifdef CONFIG_INET
+-	(void)register_inetaddr_notifier(&notifier_inetdev);
+-#endif
+-
+-	err = xenbus_register_frontend(&netfront_driver);
+-	if (err) {
+-#ifdef CONFIG_INET
+-		unregister_inetaddr_notifier(&notifier_inetdev);
+-#endif
+-	}
+-	return err;
++	return xenbus_register_frontend(&netfront_driver);
+ }
+ module_init(netif_init);
+ 
+ 
+ static void __exit netif_exit(void)
+ {
+-#ifdef CONFIG_INET
+-	unregister_inetaddr_notifier(&notifier_inetdev);
+-#endif
+ 	xenbus_unregister_driver(&netfront_driver);
+ 
+ 	netif_exit_accel();

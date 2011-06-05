@@ -1,0 +1,6066 @@
+diff --git a/include/linux/WK4x4.h b/include/linux/WK4x4.h
+new file mode 100644
+index 0000000..838669c
+--- /dev/null
++++ b/include/linux/WK4x4.h
+@@ -0,0 +1,91 @@
++/* 
++   WK4x4-v0.2 -- Wilson-Kaplan-4x4 version 0.2
++   
++   Compresses buffers using a dictionary based match and partial match
++   scheme.
++
++   Scott F. Kaplan -- sfkaplan@cs.utexas.edu
++   September 1997 */
++
++/* ============================================================ */
++/* Preprocessor directives to avoid multiple inclusion */
++#if !defined (_WK4x4_H)
++#define _WK4x4_H
++
++/* ============================================================ */
++/* Types and Constants */
++
++/* A manipulable type that is the machine word size. */
++
++
++#if !defined(_WK_common_H)
++#define _WK_common_H
++
++/* A manipulable type that is the machine word size. */
++typedef unsigned int WK_word;
++
++#define PAGE_COMPRESS_WORDS_PER_PAGE 1024
++#define DICTIONARY_SIZE 16
++
++typedef WK_word DictionaryElement;
++
++#endif  /* _WK_common_H */
++
++#if !defined (_WK0_H)
++
++/* A structure to hold both partial and exact match counts. */
++typedef struct {
++  unsigned int partial;
++  unsigned int exact;
++} matchCount;
++
++#endif /* _WK0_H */
++
++/* ============================================================ */
++/* Interface */
++
++/* If this header is being included into a C++ module, we need to be
++   sure that the function names for this module don't suffer C++ name
++   mangling. */
++#if defined (__cplusplus)
++extern "C" {
++#endif /* __cplusplus */
++
++/* Given pointers to source buffer (sourceBuffer) of uncompressed data
++   and a destination buffer (destinationBuffer) into which compressed
++   data can be placed, as well as the number of words in the source
++   buffer (words), compress the contents of the source and place the
++   results in the destination.  Return the number of bytes placed into
++   the destination. */
++unsigned int WK4x4_compress (WK_word* sourceBuffer,
++			     WK_word* destinationBuffer,
++			     unsigned int words);
++
++/* Given a pointer to a source buffer (sourceBuffer) of compressed
++   data and a pointer to a destination buffer (destinationBuffer) into
++   which uncompressed data can be placed, as well as the number of
++   uncompressed words that will be written to the destination buffer
++   (words), decompress the data into the destination buffer. */
++int WK4x4_decompress (WK_word* sourceBuffer,
++		       WK_word* destinationPage,
++		       unsigned int words);
++
++/* Given a pointer to a source buffer (sourceBuffer) of uncompressed
++   data, the number of words stored in that buffer (words), and two
++   arrays for counting the number of exact (exactMatchCountArray) and
++   partial (partialMatchCountArray) matches at each LRU position,
++   compress the source and record what types of hits (partial or
++   exact) occurred at each queue position.  Return the number of words
++   that would be placed into a destination buffer (if there were
++   one). */
++unsigned int
++WK4x4_measureCompress (WK_word* sourceBuffer,
++		       unsigned int words,
++		       unsigned int* exactMatchCountArray,
++		       unsigned int* partialMatchCountArray);
++
++#if defined (__cplusplus)
++}
++#endif /* __cplusplus */
++
++#endif /* _WK4x4_H */
+diff --git a/include/linux/WKdm.h b/include/linux/WKdm.h
+new file mode 100644
+index 0000000..0ce93a7
+--- /dev/null
++++ b/include/linux/WKdm.h
+@@ -0,0 +1,81 @@
++/* 
++   WKdm-v0.1 -- Wilson-Kaplan-dm (direct-mapped) version 0.1
++   
++   Compresses buffers using a dictionary based match and partial match
++   scheme.
++
++   Paul Wilson -- wilson@cs.utexas.edu
++   Scott F. Kaplan -- sfkaplan@cs.utexas.edu
++   September 1997 */
++
++/* ============================================================ */
++/* Preprocessor directives to avoid multiple inclusion */
++#if !defined (_WKdm_H)
++#define _WKdm_H
++
++/* ============================================================ */
++/* Types and Constants */
++
++#if !defined(_WK_common_H)
++#define _WK_common_H
++
++/* A manipulable type that is the machine word size. */
++typedef unsigned int WK_word;
++
++#define PAGE_COMPRESS_WORDS_PER_PAGE 1024
++#define DICTIONARY_SIZE 16
++
++typedef WK_word DictionaryElement;
++
++#endif	/* _WK_common_H */
++
++/* ============================================================ */
++/* Interface */
++
++/* If this header is being included into a C++ module, we need to be
++   sure that the function names for this module don't suffer C++ name
++   mangling. */
++#if defined (__cplusplus)
++extern "C" {
++#endif /* __cplusplus */
++  
++/* Given pointers to source buffer (sourceBuffer) of uncompressed data
++   and a destination buffer (destinationBuffer) into which compressed
++   data can be placed, as well as the number of words in the source
++   buffer (words), compress the contents of the source and place the
++   results in the destination.  Return the number of bytes placed into
++   the destination. */
++unsigned int
++WKdm_compress (WK_word* sourceBuffer,
++	       WK_word* destinationBuffer,
++	       unsigned int words);
++  
++/* Given a pointer to a source buffer (sourceBuffer) of compressed
++   data and a pointer to a destination buffer (destinationBuffer) into
++   which uncompressed data can be placed, as well as the number of
++   uncompressed words that will be written to the destination buffer
++   (words), decompress the data into the destination buffer. */
++unsigned int
++WKdm_decompress (WK_word* sourceBuffer,
++		 WK_word* destinationPage,
++		 unsigned int words);
++  
++/* Given a pointer to a source buffer (sourceBuffer) of uncompressed
++   data, the number of words stored in that buffer (words), and two
++   arrays for counting the number of exact (exactMatchCountArray) and
++   partial (partialMatchCountArray) matches at each LRU position,
++   compress the source and record what types of hits (partial or
++   exact) occurred at each queue position.  Return the number of words
++   that would be placed into a destination buffer (if there were
++   one). */
++unsigned int
++WKdm_measureCompress (WK_word* sourceBuffer,
++		     unsigned int words,
++		     unsigned int* exactMatchCountArray,
++		     unsigned int* partialMatchCountArray);
++
++#if defined (__cplusplus)
++}
++#endif /* __cplusplus */
++
++#endif /* _WKdm_H */
+diff --git a/include/linux/ccache.h b/include/linux/ccache.h
+new file mode 100644
+index 0000000..8aee787
+--- /dev/null
++++ b/include/linux/ccache.h
+@@ -0,0 +1,155 @@
++#ifndef _CCACHE_H_
++#define _CCACHE_H_
++
++#include <linux/mm.h>
++#include <linux/page-flags.h>
++#include <linux/swap.h>
++#include <linux/sysctl.h>
++
++#define CC_INFO(fmt,arg...) \
++	printk(KERN_INFO "%s: " fmt "\n",__FUNCTION__,##arg)
++
++#if (1 || defined(DEBUG_CCACHE))
++#define CC_DEBUG(fmt,arg...) \
++	printk(KERN_DEBUG "%s: " fmt "\n",__FUNCTION__,##arg)
++
++#else
++#define CC_DEBUG(fmt,arg...) \
++	do { } while (0)
++#endif
++
++
++/* even more verbose */
++#if (0 && defined(DEBUG_CCACHE2))
++#define CC_DEBUG2(fmt,arg...) \
++	printk(KERN_DEBUG "%s: " fmt "\n",__FUNCTION__,##arg)
++#else
++#define CC_DEBUG2(fmt,arg...) \
++	do { } while (0)
++#endif
++
++#define MAX_SWAP_OFFSET_SHIFT	24
++#define MAX_SWAP_OFFSET		(1 << MAX_SWAP_OFFSET_SHIFT)
++
++/*
++ * Layout of chunk_head->flags
++ *
++ *   |   CH Flags  | ALGO ID |   Flags of page compressed |
++ *  N-1                (4)   ^                            0
++ * (64/32)                (N-FLAGS_RESERVED)
++ */
++
++#define CH_ALGO_BITS		4
++#define CH_ALGO_BITS_START	(BITS_PER_LONG-FLAGS_RESERVED)
++#define CH_ALGO_BITS_MASK	(((1<<CH_ALGO_BITS)-1) << CH_ALGO_BITS_START)
++
++#define CH_PAGE_FLAGS_MASK	((1 << (BITS_PER_LONG-FLAGS_RESERVED))-1)
++
++#if 0
++/* chunk head flags */
++enum CH_FLAGS {
++	CH_FLAG1 = CH_ALGO_BITS_START + CH_ALGO_BITS,
++	CH_FLAG2
++};
++
++#define ChunkHeadAnon(ch)	\
++	(!!(ch->flags & (1 << CH_ANON)))
++#define SetChunkHeadAnon(ch)	\
++	(ch->flags |= (1 << CH_ANON))
++#define ClearChunkHeadAnon(ch)	\
++	(ch->flags &= ~(1 << CH_ANON))
++#endif
++
++/* chunk flags: only 3 MSBs available [13-15] */
++#define CHUNK_FREE	15
++#define CHUNK_MERGED	14
++
++#define CHUNK_SIZE_MASK	0x1FFF
++#define ChunkSize(chunk)	(chunk->size & CHUNK_SIZE_MASK)
++
++#define ChunkFree(chunk)	\
++	(!!(chunk->size & (1 << CHUNK_FREE)))
++#define SetChunkFree(chunk)	\
++	(chunk->size |= (1 << CHUNK_FREE))
++#define ClearChunkFree(chunk)	\
++	(chunk->size &= ~(1 << CHUNK_FREE))
++
++#define ChunkMerged(chunk)	\
++	(!!(chunk->size & (1 << CHUNK_MERGED)))
++#define SetChunkMerged(chunk)	\
++	(chunk->size |= (1 << CHUNK_MERGED))
++#define ClearChunkMerged(chunk)	\
++	(chunk->size &= ~(1 << CHUNK_MERGED))
++
++/* compression algos */
++#define MAX_COMP_ALGOS  4
++#define WKdm_IDX  0
++#define WK4x4_IDX 1
++#define LZO_IDX   2
++
++extern unsigned long max_anon_cc_size, max_fs_backed_cc_size;
++
++/*
++ * max _uncompressed_ size for ccache
++ * (units of pages: 4k)
++ *
++ * For anon pages, ccache size is limited by 'offset' field (24 bits)
++ * of swp_entry_t (swapped out page identifier).
++ * For page cache pages, this limit is artificial but should never
++ * hurt (1<<24 pages == 64GB!).
++ */
++extern const unsigned long ccache_size_limit;
++
++/*
++ * NOTE: use of 'offset' field is not _required_ for anon pages.
++ * This field exists for page-cache (filesystem backed) pages only.
++ */
++struct chunk_head {
++	unsigned long flags;	/* compression algo used, no. of chunks etc. */
++	atomic_t _count;	/* usage count; free this struct
++				 * when count is 0 */
++	unsigned long offset;	/* page->index for fs pages,
++				 * page->private for anon pages */
++	struct chunk *chunk_list;	/* point to first chunk */
++	struct list_head lru;		/* to add to one of LRU lists */
++};
++
++struct chunk {
++	void *start_addr;	/* page addr + offset within page
++				 * where chunk starts */
++	unsigned short size;	/* size: 12 LSB bits, flags: rest 4 bits */
++	struct chunk *next;	/* link to next 'related' chunk */
++	struct list_head chunks;	/* 'master chunk list': every
++					 * chunk is linked */
++};
++
++static inline void release_chunk_head(struct chunk_head *ch)
++{
++	if (atomic_dec_and_test(&ch->_count))
++		kfree(ch);
++}
++
++static inline void wait_on_chunk_head(unsigned long *flags)
++{
++	CC_DEBUG("start");
++#if defined(CONFIG_SMP) || defined(CONFIG_DEBUG_SPINLOCK)
++	while (test_bit(PG_locked, flags))
++		cpu_relax();
++#endif
++}
++
++extern int init_ccache(void);
++extern int is_page_in_virt_swap(struct page *page);
++extern int set_anon_cc_size(unsigned long size);
++extern int should_add_to_ccache(struct page *page);
++extern int cc_writepage(struct page *page);
++extern struct page* handle_ccache_fault(struct chunk_head *ch,
++				struct address_space *mapping);
++extern int sysctl_max_anon_cc_size(ctl_table *table, int write,
++	struct file *file, void __user *buffer, size_t *length, loff_t *ppos);
++extern int sysctl_max_fs_backed_cc_size(ctl_table *table, int write,
++	struct file *file, void __user *buffer, size_t *length, loff_t *ppos);
++extern void release_chunk_heads_or_pages(struct page **pages,
++						unsigned int start,
++						unsigned int end);
++#endif
+diff --git a/include/linux/errno.h b/include/linux/errno.h
+index d90b80f..47944a3 100644
+--- a/include/linux/errno.h
++++ b/include/linux/errno.h
+@@ -24,6 +24,9 @@
+ #define EIOCBQUEUED	529	/* iocb queued, will get completion event */
+ #define EIOCBRETRY	530	/* iocb queued, will trigger a retry */
+ 
++/* For compressed cache */
++#define EEXPAND		550	/* Data size increased on compression */
++
+ #endif
+ 
+ #endif
+diff --git a/include/linux/lzoconf.h b/include/linux/lzoconf.h
+new file mode 100644
+index 0000000..fe87c91
+--- /dev/null
++++ b/include/linux/lzoconf.h
+@@ -0,0 +1,499 @@
++
++/* lzoconf.h -- configuration for the LZO real-time data compression library
++
++   This file is part of the LZO real-time data compression library.
++
++   Copyright (C) 2005 Markus Franz Xaver Johannes Oberhumer
++   Copyright (C) 2004 Markus Franz Xaver Johannes Oberhumer
++   Copyright (C) 2003 Markus Franz Xaver Johannes Oberhumer
++   Copyright (C) 2002 Markus Franz Xaver Johannes Oberhumer
++   Copyright (C) 2001 Markus Franz Xaver Johannes Oberhumer
++   Copyright (C) 2000 Markus Franz Xaver Johannes Oberhumer
++   Copyright (C) 1999 Markus Franz Xaver Johannes Oberhumer
++   Copyright (C) 1998 Markus Franz Xaver Johannes Oberhumer
++   Copyright (C) 1997 Markus Franz Xaver Johannes Oberhumer
++   Copyright (C) 1996 Markus Franz Xaver Johannes Oberhumer
++   All Rights Reserved.
++
++   The LZO library is free software; you can redistribute it and/or
++   modify it under the terms of the GNU General Public License,
++   version 2, as published by the Free Software Foundation.
++
++   The LZO library is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++   GNU General Public License for more details.
++
++   You should have received a copy of the GNU General Public License
++   along with the LZO library; see the file COPYING.
++   If not, write to the Free Software Foundation, Inc.,
++   51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++
++   Markus F.X.J. Oberhumer
++   <markus@oberhumer.com>
++   http://www.oberhumer.com/opensource/lzo/
++ */
++
++#include <linux/types.h>
++#include <linux/kernel.h>	// UINT_MAX, ULONG_MAX
++
++#ifndef __LZOCONF_H_INCLUDED
++#define __LZOCONF_H_INCLUDED
++
++#define LZO_VERSION             0x2020
++#define LZO_VERSION_STRING      "2.02"
++#define LZO_VERSION_DATE        "Oct 17 2005"
++
++//#include <limits.h>
++//#include <stddef.h>
++#include <asm/byteorder.h>
++
++
++/* get OS and architecture defines */
++//#ifndef __LZODEFS_H_INCLUDED
++//#include "lzodefs.h"
++//#endif
++
++// ------------ remove dep on lzodefs.h ------------------
++//#define UINT_MAX      4294967295U
++
++/* #if __WORDSIZE == 64 */
++//#if BITS_PER_LONG == 64
++//# define ULONG_MAX    18446744073709551615UL
++//#else
++//# define ULONG_MAX    4294967295UL
++//#endif
++
++#define LZO_0xffffL             65535ul
++#define LZO_0xffffffffL         4294967295ul
++
++#if !defined(__LZO_ARCH_OVERRIDE)
++#if defined(LZO_ARCH_GENERIC)
++#  define LZO_INFO_ARCH             "generic"
++#elif defined(__alpha__) || defined(__alpha) || defined(_M_ALPHA)
++#  define LZO_ARCH_ALPHA            1
++#  define LZO_INFO_ARCH             "alpha"
++#elif defined(__amd64__) || defined(__x86_64__) || defined(_M_AMD64)
++#  define LZO_ARCH_AMD64            1
++#  define LZO_INFO_ARCH             "amd64"
++#elif defined(__thumb__) || (defined(_M_ARM) && defined(_M_THUMB))
++#  define LZO_ARCH_ARM              1
++#  define LZO_ARCH_ARM_THUMB        1
++#  define LZO_INFO_ARCH             "arm_thumb"
++#elif defined(__arm__) || defined(_M_ARM)
++#  define LZO_ARCH_ARM              1
++#  define LZO_INFO_ARCH             "arm"
++#elif (UINT_MAX <= LZO_0xffffL) && defined(__AVR__)
++#  define LZO_ARCH_AVR              1
++#  define LZO_INFO_ARCH             "avr"
++#elif defined(__bfin__)
++#  define LZO_ARCH_BLACKFIN         1
++#  define LZO_INFO_ARCH             "blackfin"
++#elif (UINT_MAX == LZO_0xffffL) && defined(__C166__)
++#  define LZO_ARCH_C166             1
++#  define LZO_INFO_ARCH             "c166"
++#elif defined(__cris__)
++#  define LZO_ARCH_CRIS             1
++#  define LZO_INFO_ARCH             "cris"
++#elif defined(__H8300__) || defined(__H8300H__) || defined(__H8300S__) || defined(__H8300SX__)
++#  define LZO_ARCH_H8300            1
++#  define LZO_INFO_ARCH             "h8300"
++#elif defined(__hppa__) || defined(__hppa)
++#  define LZO_ARCH_HPPA             1
++#  define LZO_INFO_ARCH             "hppa"
++#elif defined(__386__) || defined(__i386__) || defined(__i386) || defined(_M_IX86) || defined(_M_I386)
++#  define LZO_ARCH_I386             1
++#  define LZO_ARCH_IA32             1
++#  define LZO_INFO_ARCH             "i386"
++#elif (LZO_CC_ZORTECHC && defined(__I86__))
++#  define LZO_ARCH_I386             1
++#  define LZO_ARCH_IA32             1
++#  define LZO_INFO_ARCH             "i386"
++#elif (LZO_OS_DOS32 && LZO_CC_HIGHC) && defined(_I386)
++#  define LZO_ARCH_I386             1
++#  define LZO_ARCH_IA32             1
++#  define LZO_INFO_ARCH             "i386"
++#elif defined(__ia64__) || defined(__ia64) || defined(_M_IA64)
++#  define LZO_ARCH_IA64             1
++#  define LZO_INFO_ARCH             "ia64"
++#elif (UINT_MAX == LZO_0xffffL) && defined(__m32c__)
++#  define LZO_ARCH_M16C             1
++#  define LZO_INFO_ARCH             "m16c"
++#elif defined(__m32r__)
++#  define LZO_ARCH_M32R             1
++#  define LZO_INFO_ARCH             "m32r"
++#elif (LZO_OS_TOS) || defined(__m68k__) || defined(__m68000__) || defined(__mc68000__) || defined(_M_M68K)
++#  define LZO_ARCH_M68K             1
++#  define LZO_INFO_ARCH             "m68k"
++#elif (UINT_MAX == LZO_0xffffL) && defined(__C251__)
++#  define LZO_ARCH_MCS251           1
++#  define LZO_INFO_ARCH             "mcs251"
++#elif (UINT_MAX == LZO_0xffffL) && defined(__C51__)
++#  define LZO_ARCH_MCS51            1
++#  define LZO_INFO_ARCH             "mcs51"
++#elif defined(__mips__) || defined(__mips) || defined(_MIPS_ARCH) || defined(_M_MRX000)
++#  define LZO_ARCH_MIPS             1
++#  define LZO_INFO_ARCH             "mips"
++#elif (UINT_MAX == LZO_0xffffL) && defined(__MSP430__)
++#  define LZO_ARCH_MSP430           1
++#  define LZO_INFO_ARCH             "msp430"
++#elif defined(__powerpc__) || defined(__powerpc) || defined(__ppc__) || defined(__PPC__) || defined(_M_PPC)
++#  define LZO_ARCH_POWERPC          1
++#  define LZO_INFO_ARCH             "powerpc"
++#elif defined(__s390__) || defined(__s390) || defined(__s390x__) || defined(__s390x)
++#  define LZO_ARCH_S390             1
++#  define LZO_INFO_ARCH             "s390"
++#elif defined(__sh__) || defined(_M_SH)
++#  define LZO_ARCH_SH               1
++#  define LZO_INFO_ARCH             "sh"
++#elif defined(__sparc__) || defined(__sparc) || defined(__sparcv8)
++#  define LZO_ARCH_SPARC            1
++#  define LZO_INFO_ARCH             "sparc"
++#elif (UINT_MAX == LZO_0xffffL) && defined(__z80)
++#  define LZO_ARCH_Z80              1
++#  define LZO_INFO_ARCH             "z80"
++#else
++#  define LZO_ARCH_UNKNOWN          1
++#  define LZO_INFO_ARCH             "unknown"
++#endif
++#endif
++
++#ifdef __BIG_ENDIAN
++#  define LZO_ABI_BIG_ENDIAN        1
++#elif defined __LITTLE_ENDIAN
++#  define LZO_ABI_LITTLE_ENDIAN     1
++#endif
++// ----------------------------------------------
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++
++/***********************************************************************
++// some core defines
++************************************************************************/
++
++#if !defined(LZO_UINT32_C)
++#  if (UINT_MAX < LZO_0xffffffffL)
++#    define LZO_UINT32_C(c)     c ## UL
++#  else
++#    define LZO_UINT32_C(c)     ((c) + 0U)
++#  endif
++#endif
++
++/* memory checkers */
++#if !defined(__LZO_CHECKER)
++#  if defined(__BOUNDS_CHECKING_ON)
++#    define __LZO_CHECKER       1
++#  elif defined(__CHECKER__)
++#    define __LZO_CHECKER       1
++#  elif defined(__INSURE__)
++#    define __LZO_CHECKER       1
++#  elif defined(__PURIFY__)
++#    define __LZO_CHECKER       1
++#  endif
++#endif
++
++
++/***********************************************************************
++// integral and pointer types
++************************************************************************/
++
++/* lzo_uint should match size_t */
++#if !defined(LZO_UINT_MAX)
++#  if defined(LZO_ABI_LLP64) /* WIN64 */
++#    if defined(LZO_OS_WIN64)
++     typedef unsigned __int64   lzo_uint;
++     typedef __int64            lzo_int;
++#    else
++     typedef unsigned long long lzo_uint;
++     typedef long long          lzo_int;
++#    endif
++#    define LZO_UINT_MAX        0xffffffffffffffffull
++#    define LZO_INT_MAX         9223372036854775807LL
++#    define LZO_INT_MIN         (-1LL - LZO_INT_MAX)
++#  elif defined(LZO_ABI_IP32L64) /* MIPS R5900 */
++     typedef unsigned int       lzo_uint;
++     typedef int                lzo_int;
++#    define LZO_UINT_MAX        UINT_MAX
++#    define LZO_INT_MAX         INT_MAX
++#    define LZO_INT_MIN         INT_MIN
++#  elif (ULONG_MAX >= LZO_0xffffffffL)
++     typedef unsigned long      lzo_uint;
++     typedef long               lzo_int;
++#    define LZO_UINT_MAX        ULONG_MAX
++#    define LZO_INT_MAX         LONG_MAX
++#    define LZO_INT_MIN         LONG_MIN
++#  else
++#    error "lzo_uint"
++#  endif
++#endif
++
++/* Integral types with 32 bits or more. */
++#if !defined(LZO_UINT32_MAX)
++#  if (UINT_MAX >= LZO_0xffffffffL)
++     typedef unsigned int       lzo_uint32;
++     typedef int                lzo_int32;
++#    define LZO_UINT32_MAX      UINT_MAX
++#    define LZO_INT32_MAX       INT_MAX
++#    define LZO_INT32_MIN       INT_MIN
++#  elif (ULONG_MAX >= LZO_0xffffffffL)
++     typedef unsigned long      lzo_uint32;
++     typedef long               lzo_int32;
++#    define LZO_UINT32_MAX      ULONG_MAX
++#    define LZO_INT32_MAX       LONG_MAX
++#    define LZO_INT32_MIN       LONG_MIN
++#  else
++#    error "lzo_uint32"
++#  endif
++#endif
++
++/* The larger type of lzo_uint and lzo_uint32. */
++#if (LZO_UINT_MAX >= LZO_UINT32_MAX)
++#  define lzo_xint              lzo_uint
++#else
++#  define lzo_xint              lzo_uint32
++#endif
++
++/* Memory model that allows to access memory at offsets of lzo_uint. */
++#if !defined(__LZO_MMODEL)
++#  if (LZO_UINT_MAX <= UINT_MAX)
++#    define __LZO_MMODEL
++#  elif defined(LZO_HAVE_MM_HUGE_PTR)
++#    define __LZO_MMODEL_HUGE   1
++#    define __LZO_MMODEL        __huge
++#  else
++#    define __LZO_MMODEL
++#  endif
++#endif
++
++/* no typedef here because of const-pointer issues */
++#define lzo_bytep               unsigned char __LZO_MMODEL *
++#define lzo_charp               char __LZO_MMODEL *
++#define lzo_voidp               void __LZO_MMODEL *
++#define lzo_shortp              short __LZO_MMODEL *
++#define lzo_ushortp             unsigned short __LZO_MMODEL *
++#define lzo_uint32p             lzo_uint32 __LZO_MMODEL *
++#define lzo_int32p              lzo_int32 __LZO_MMODEL *
++#define lzo_uintp               lzo_uint __LZO_MMODEL *
++#define lzo_intp                lzo_int __LZO_MMODEL *
++#define lzo_xintp               lzo_xint __LZO_MMODEL *
++#define lzo_voidpp              lzo_voidp __LZO_MMODEL *
++#define lzo_bytepp              lzo_bytep __LZO_MMODEL *
++/* deprecated - use `lzo_bytep' instead of `lzo_byte *' */
++#define lzo_byte                unsigned char __LZO_MMODEL
++
++typedef int lzo_bool;
++
++
++/***********************************************************************
++// function types
++************************************************************************/
++
++/* name mangling */
++#if !defined(__LZO_EXTERN_C)
++#  ifdef __cplusplus
++#    define __LZO_EXTERN_C      extern "C"
++#  else
++#    define __LZO_EXTERN_C      extern
++#  endif
++#endif
++
++/* calling convention */
++#if !defined(__LZO_CDECL)
++#  define __LZO_CDECL           __lzo_cdecl
++#endif
++
++/* DLL export information */
++#if !defined(__LZO_EXPORT1)
++#  define __LZO_EXPORT1
++#endif
++#if !defined(__LZO_EXPORT2)
++#  define __LZO_EXPORT2
++#endif
++
++/* __cdecl calling convention for public C and assembly functions */
++#if !defined(LZO_PUBLIC)
++#  define LZO_PUBLIC(_rettype)  __LZO_EXPORT1 _rettype __LZO_EXPORT2 __LZO_CDECL
++#endif
++#if !defined(LZO_EXTERN)
++#  define LZO_EXTERN(_rettype)  __LZO_EXTERN_C LZO_PUBLIC(_rettype)
++#endif
++#if !defined(LZO_PRIVATE)
++#  define LZO_PRIVATE(_rettype) static _rettype __LZO_CDECL
++#endif
++
++/* function types */
++typedef int
++( *lzo_compress_t)   ( const lzo_bytep src, lzo_uint  src_len,
++                                        lzo_bytep dst, lzo_uintp dst_len,
++                                        lzo_voidp wrkmem );
++
++typedef int
++( *lzo_decompress_t) ( const lzo_bytep src, lzo_uint  src_len,
++                                        lzo_bytep dst, lzo_uintp dst_len,
++                                        lzo_voidp wrkmem );
++
++typedef int
++( *lzo_optimize_t)   (       lzo_bytep src, lzo_uint  src_len,
++                                        lzo_bytep dst, lzo_uintp dst_len,
++                                        lzo_voidp wrkmem );
++
++typedef int
++( *lzo_compress_dict_t)(const lzo_bytep src, lzo_uint  src_len,
++                                         lzo_bytep dst, lzo_uintp dst_len,
++                                         lzo_voidp wrkmem,
++                                   const lzo_bytep dict, lzo_uint dict_len );
++
++typedef int
++( *lzo_decompress_dict_t)(const lzo_bytep src, lzo_uint  src_len,
++                                           lzo_bytep dst, lzo_uintp dst_len,
++                                           lzo_voidp wrkmem,
++                                     const lzo_bytep dict, lzo_uint dict_len );
++
++
++/* Callback interface. Currently only the progress indicator ("nprogress")
++ * is used, but this may change in a future release. */
++
++struct lzo_callback_t;
++typedef struct lzo_callback_t lzo_callback_t;
++#define lzo_callback_p lzo_callback_t __LZO_MMODEL *
++
++/* malloc & free function types */
++typedef lzo_voidp ( *lzo_alloc_func_t)
++    (lzo_callback_p self, lzo_uint items, lzo_uint size);
++typedef void      ( *lzo_free_func_t)
++    (lzo_callback_p self, lzo_voidp ptr);
++
++/* a progress indicator callback function */
++typedef void ( *lzo_progress_func_t)
++    (lzo_callback_p, lzo_uint, lzo_uint, int);
++
++struct lzo_callback_t
++{
++    /* custom allocators (set to 0 to disable) */
++    lzo_alloc_func_t nalloc;                /* [not used right now] */
++    lzo_free_func_t nfree;                  /* [not used right now] */
++
++    /* a progress indicator callback function (set to 0 to disable) */
++    lzo_progress_func_t nprogress;
++
++    /* NOTE: the first parameter "self" of the nalloc/nfree/nprogress
++     * callbacks points back to this struct, so you are free to store
++     * some extra info in the following variables. */
++    lzo_voidp user1;
++    lzo_xint user2;
++    lzo_xint user3;
++};
++
++
++/***********************************************************************
++// error codes and prototypes
++************************************************************************/
++
++/* Error codes for the compression/decompression functions. Negative
++ * values are errors, positive values will be used for special but
++ * normal events.
++ */
++#define LZO_E_OK                    0
++#define LZO_E_ERROR                 (-1)
++#define LZO_E_OUT_OF_MEMORY         (-2)    /* [not used right now] */
++#define LZO_E_NOT_COMPRESSIBLE      (-3)    /* [not used right now] */
++#define LZO_E_INPUT_OVERRUN         (-4)
++#define LZO_E_OUTPUT_OVERRUN        (-5)
++#define LZO_E_LOOKBEHIND_OVERRUN    (-6)
++#define LZO_E_EOF_NOT_FOUND         (-7)
++#define LZO_E_INPUT_NOT_CONSUMED    (-8)
++#define LZO_E_NOT_YET_IMPLEMENTED   (-9)    /* [not used right now] */
++
++
++#ifndef lzo_sizeof_dict_t
++#  define lzo_sizeof_dict_t     ((unsigned)sizeof(lzo_bytep))
++#endif
++
++/* lzo_init() should be the first function you call.
++ * Check the return code !
++ *
++ * lzo_init() is a macro to allow checking that the library and the
++ * compiler's view of various types are consistent.
++ */
++#define lzo_init() __lzo_init_v2(LZO_VERSION,(int)sizeof(short),(int)sizeof(int),\
++    (int)sizeof(long),(int)sizeof(lzo_uint32),(int)sizeof(lzo_uint),\
++    (int)lzo_sizeof_dict_t,(int)sizeof(char *),(int)sizeof(lzo_voidp),\
++    (int)sizeof(lzo_callback_t))
++extern int __lzo_init_v2(unsigned,int,int,int,int,int,int,int,int,int);
++
++/* version functions (useful for shared libraries) */
++extern unsigned lzo_version(void);
++extern const char * lzo_version_string(void);
++extern const char * lzo_version_date(void);
++extern const lzo_charp _lzo_version_string(void);
++extern const lzo_charp _lzo_version_date(void);
++
++/* string functions */
++#if 0
++LZO_EXTERN(int)
++lzo_memcmp(const lzo_voidp _s1, const lzo_voidp _s2, lzo_uint _len);
++LZO_EXTERN(lzo_voidp)
++lzo_memcpy(lzo_voidp _dest, const lzo_voidp _src, lzo_uint _len);
++LZO_EXTERN(lzo_voidp)
++lzo_memmove(lzo_voidp _dest, const lzo_voidp _src, lzo_uint _len);
++LZO_EXTERN(lzo_voidp)
++lzo_memset(lzo_voidp _s, int _c, lzo_uint _len);
++#endif
++
++/* checksum functions */
++extern lzo_uint32
++lzo_adler32(lzo_uint32 _adler, const lzo_bytep _buf, lzo_uint _len);
++extern lzo_uint32
++lzo_crc32(lzo_uint32 _c, const lzo_bytep _buf, lzo_uint _len);
++extern const lzo_uint32p
++lzo_get_crc32_table(void);
++
++/* misc. */
++extern int _lzo_config_check(void);
++typedef union { lzo_bytep p; lzo_uint u; } __lzo_pu_u;
++typedef union { lzo_bytep p; lzo_uint32 u32; } __lzo_pu32_u;
++typedef union { void *vp; lzo_bytep bp; lzo_uint32 u32; long l; } lzo_align_t;
++
++/* align a char pointer on a boundary that is a multiple of `size' */
++extern unsigned __lzo_align_gap(const lzo_voidp _ptr, lzo_uint _size);
++#define LZO_PTR_ALIGN_UP(_ptr,_size) \
++    ((_ptr) + (lzo_uint) __lzo_align_gap((const lzo_voidp)(_ptr),(lzo_uint)(_size)))
++
++
++/***********************************************************************
++// deprecated macros - only for backward compatibility with LZO v1.xx
++************************************************************************/
++
++#if defined(LZO_CFG_COMPAT)
++
++#define __LZOCONF_H 1
++
++#if defined(LZO_ARCH_I086)
++#  define __LZO_i386 1
++#elif defined(LZO_ARCH_I386)
++#  define __LZO_i386 1
++#endif
++
++#define __LZO_CMODEL
++#define __LZO_DMODEL
++#define __LZO_ENTRY             __LZO_CDECL
++#define LZO_EXTERN_CDECL        LZO_EXTERN
++#define LZO_ALIGN               LZO_PTR_ALIGN_UP
++
++#define lzo_compress_asm_t      lzo_compress_t
++#define lzo_decompress_asm_t    lzo_decompress_t
++
++#endif /* LZO_CFG_COMPAT */
++
++
++#ifdef __cplusplus
++} /* extern "C" */
++#endif
++
++#endif /* already included */
++
++
++/* vim:set ts=4 et: */
+diff --git a/include/linux/minilzo.h b/include/linux/minilzo.h
+new file mode 100644
+index 0000000..f1b5281
+--- /dev/null
++++ b/include/linux/minilzo.h
+@@ -0,0 +1,97 @@
++/* minilzo.h -- mini subset of the LZO real-time data compression library
++
++   This file is part of the LZO real-time data compression library.
++
++   Copyright (C) 2005 Markus Franz Xaver Johannes Oberhumer
++   Copyright (C) 2004 Markus Franz Xaver Johannes Oberhumer
++   Copyright (C) 2003 Markus Franz Xaver Johannes Oberhumer
++   Copyright (C) 2002 Markus Franz Xaver Johannes Oberhumer
++   Copyright (C) 2001 Markus Franz Xaver Johannes Oberhumer
++   Copyright (C) 2000 Markus Franz Xaver Johannes Oberhumer
++   Copyright (C) 1999 Markus Franz Xaver Johannes Oberhumer
++   Copyright (C) 1998 Markus Franz Xaver Johannes Oberhumer
++   Copyright (C) 1997 Markus Franz Xaver Johannes Oberhumer
++   Copyright (C) 1996 Markus Franz Xaver Johannes Oberhumer
++   All Rights Reserved.
++
++   The LZO library is free software; you can redistribute it and/or
++   modify it under the terms of the GNU General Public License,
++   version 2, as published by the Free Software Foundation.
++
++   The LZO library is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++   GNU General Public License for more details.
++
++   You should have received a copy of the GNU General Public License
++   along with the LZO library; see the file COPYING.
++   If not, write to the Free Software Foundation, Inc.,
++   51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++
++   Markus F.X.J. Oberhumer
++   <markus@oberhumer.com>
++   http://www.oberhumer.com/opensource/lzo/
++ */
++
++/*
++ * NOTE:
++ *   the full LZO package can be found at
++ *   http://www.oberhumer.com/opensource/lzo/
++ */
++
++
++#ifndef __MINILZO_H
++#define __MINILZO_H
++
++#define MINILZO_VERSION         0x2020
++
++#undef LZO_HAVE_CONFIG_H
++#include "lzoconf.h"
++
++//#if !defined(LZO_VERSION) || (LZO_VERSION != MINILZO_VERSION)
++//#  error "version mismatch in header files"
++//#endif
++
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++/* Memory required for the wrkmem parameter.
++ * When the required size is 0, you can also pass a NULL pointer.
++ */
++
++#define LZO1X_MEM_COMPRESS      LZO1X_1_MEM_COMPRESS
++#define LZO1X_1_MEM_COMPRESS    ((lzo_uint32) (16384L * lzo_sizeof_dict_t))
++#define LZO1X_MEM_DECOMPRESS    (0)
++
++/* compression */
++#if 0
++extern int
++lzo1x_1_compress        ( const lzo_bytep src, lzo_uint  src_len,
++                                lzo_bytep dst, lzo_uintp dst_len,
++                                lzo_voidp wrkmem );
++#endif
++
++extern int
++lzo1x_1_compress        ( const lzo_bytep src, lzo_uint  src_len,
++                                lzo_bytep dst, lzo_uintp dst_len );
++
++/* decompression */
++#if 0
++extern int
++lzo1x_decompress        ( const lzo_bytep src, lzo_uint  src_len,
++                                lzo_bytep dst, lzo_uintp dst_len,
++                                lzo_voidp wrkmem );
++#endif
++
++extern int
++lzo1x_decompress        ( const lzo_bytep src, lzo_uint  src_len,
++                                lzo_bytep dst, lzo_uintp dst_len );
++
++#ifdef __cplusplus
++} /* extern "C" */
++#endif
++
++#endif /* already included */
++
+diff --git a/include/linux/page-flags.h b/include/linux/page-flags.h
+index 9cd0d0e..aaca41a 100644
+--- a/include/linux/page-flags.h
++++ b/include/linux/page-flags.h
+@@ -91,6 +91,9 @@
+ #define PG_nosave_free		18	/* Used for system suspend/resume */
+ #define PG_buddy		19	/* Page is free, on buddy lists */
+ 
++#define PG_will_compress        20	/* going, going.... */
++#define PG_compressed           21	/* gone! */
++
+ /* PG_owner_priv_1 users should have descriptive aliases */
+ #define PG_checked		PG_owner_priv_1 /* Used by some filesystems */
+ 
+@@ -108,6 +111,20 @@
+ /*
+  * Manipulation of page state flags
+  */
++#define PageWillCompress(page)          \
++                test_bit(PG_will_compress, &(page)->flags)
++#define SetPageWillCompress(page)       \
++                set_bit(PG_will_compress, &(page)->flags)
++#define ClearPageWillCompress(page)     \
++                clear_bit(PG_will_compress, &(page)->flags)
++
++#define PageCompressed(page)            \
++                test_bit(PG_compressed, &(page)->flags)
++#define SetPageCompressed(page)         \
++                set_bit(PG_compressed, &(page)->flags)
++#define ClearPageCompressed(page)       \
++                clear_bit(PG_compressed, &(page)->flags)
++
+ #define PageLocked(page)		\
+ 		test_bit(PG_locked, &(page)->flags)
+ #define SetPageLocked(page)		\
+diff --git a/include/linux/swap.h b/include/linux/swap.h
+index 0068688..0c753f5 100644
+--- a/include/linux/swap.h
++++ b/include/linux/swap.h
+@@ -121,6 +121,7 @@ enum {
+ 	SWP_ACTIVE	= (SWP_USED | SWP_WRITEOK),
+ 					/* add others here before... */
+ 	SWP_SCANNING	= (1 << 8),	/* refcount in scan_swap_map */
++	SWP_COMPRESSED	= (1 << 10),	/* it's compressed cache for anon pages */
+ };
+ 
+ #define SWAP_CLUSTER_MAX 32
+diff --git a/include/linux/sysctl.h b/include/linux/sysctl.h
+index 9a8970b..e189393 100644
+--- a/include/linux/sysctl.h
++++ b/include/linux/sysctl.h
+@@ -207,6 +207,8 @@ enum
+ 	VM_PANIC_ON_OOM=33,	/* panic at out-of-memory */
+ 	VM_VDSO_ENABLED=34,	/* map VDSO into new processes? */
+ 	VM_MIN_SLAB=35,		 /* Percent pages ignored by zone reclaim */
++	VM_MAX_ANON_CC_SIZE=36,	/* max size for compressed cache for anonymous pages */
++	VM_MAX_FS_CC_SIZE=37,	/* max size for compressed cache for fs-backed pages */
+ 
+ 	/* s390 vm cmm sysctls */
+ 	VM_CMM_PAGES=1111,
+diff --git a/kernel/sysctl.c b/kernel/sysctl.c
+index c904748..d9ae8ef 100644
+--- a/kernel/sysctl.c
++++ b/kernel/sysctl.c
+@@ -49,6 +49,8 @@
+ #include <asm/uaccess.h>
+ #include <asm/processor.h>
+ 
++#include <linux/ccache.h>
++
+ extern int proc_nr_files(ctl_table *table, int write, struct file *filp,
+                      void __user *buffer, size_t *lenp, loff_t *ppos);
+ 
+@@ -615,6 +617,26 @@ static int one_hundred = 100;
+ 
+ static ctl_table vm_table[] = {
+ 	{
++		.ctl_name	= VM_MAX_ANON_CC_SIZE,
++		.procname	= "max_anon_cc_size",
++		.data		= &max_anon_cc_size,
++		.maxlen		= sizeof(unsigned long),
++		.mode		= 0644,
++		.proc_handler	= &sysctl_max_anon_cc_size,
++		.extra1		= (void *)&zero,
++		.extra2		= (void *)&ccache_size_limit,
++	},
++	{
++		.ctl_name	= VM_MAX_FS_CC_SIZE,
++		.procname	= "max_fs_backed_cc_size",
++		.data		= &max_fs_backed_cc_size,
++		.maxlen		= sizeof(unsigned long),
++		.mode		= 0644,
++		.proc_handler	= &sysctl_max_fs_backed_cc_size,
++		.extra1		= (void *)&zero,
++		.extra2		= (void *)&ccache_size_limit,
++	},
++	{
+ 		.ctl_name	= VM_OVERCOMMIT_MEMORY,
+ 		.procname	= "overcommit_memory",
+ 		.data		= &sysctl_overcommit_memory,
+diff --git a/lib/LZO/README.LZO b/lib/LZO/README.LZO
+new file mode 100644
+index 0000000..2601bae
+--- /dev/null
++++ b/lib/LZO/README.LZO
+@@ -0,0 +1,123 @@
++
++ ============================================================================
++ miniLZO -- mini subset of the LZO real-time data compression library
++ ============================================================================
++
++ Author  : Markus Franz Xaver Johannes Oberhumer
++           <markus@oberhumer.com>
++           http://www.oberhumer.com/opensource/lzo/
++ Version : 2.02
++ Date    : 17 Oct 2005
++
++ I've created miniLZO for projects where it is inconvenient to
++ include (or require) the full LZO source code just because you
++ want to add a little bit of data compression to your application.
++
++ miniLZO implements the LZO1X-1 compressor and both the standard and
++ safe LZO1X decompressor. Apart from fast compression it also useful
++ for situations where you want to use pre-compressed data files (which
++ must have been compressed with LZO1X-999).
++
++ miniLZO consists of one C source file and three header files:
++    minilzo.c
++    minilzo.h, lzoconf.h, lzodefs.h
++
++ To use miniLZO just copy these files into your source directory, add
++ minilzo.c to your Makefile and #include minilzo.h from your program.
++ Note: you also must distribute this file (`README.LZO') with your project.
++
++ minilzo.o compiles to about 6 kB (using gcc or Visual C on a i386), and
++ the sources are about 30 kB when packed with zip - so there's no more
++ excuse that your application doesn't support data compression :-)
++
++ For more information, documentation, example programs and other support
++ files (like Makefiles and build scripts) please download the full LZO
++ package from
++    http://www.oberhumer.com/opensource/lzo/
++
++ Have fun,
++  Markus
++
++
++ P.S. minilzo.c is generated automatically from the LZO sources and
++      therefore functionality is completely identical
++
++
++ Appendix A: building miniLZO
++ ----------------------------
++ miniLZO is written such a way that it should compile and run
++ out-of-the-box on most machines.
++
++ If you are running on a very unusual architecture and lzo_init() fails then
++ you should first recompile with `-DLZO_DEBUG' to see what causes the failure.
++ The most probable case is something like `sizeof(char *) != sizeof(long)'.
++ After identifying the problem you can compile by adding some defines
++ like `-DSIZEOF_CHAR_P=8' to your Makefile.
++
++ The best solution is (of course) using Autoconf - if your project uses
++ Autoconf anyway just add `-DMINILZO_HAVE_CONFIG_H' to your compiler
++ flags when compiling minilzo.c. See the LZO distribution for an example
++ how to set up configure.in.
++
++
++ Appendix B: list of public functions available in miniLZO
++ ---------------------------------------------------------
++ Library initialization
++    lzo_init()
++
++ Compression
++    lzo1x_1_compress()
++
++ Decompression
++    lzo1x_decompress()
++    lzo1x_decompress_safe()
++
++ Checksum functions
++    lzo_adler32()
++
++ Version functions
++    lzo_version()
++    lzo_version_string()
++    lzo_version_date()
++
++ Portable (but slow) string functions
++    lzo_memcmp()
++    lzo_memcpy()
++    lzo_memmove()
++    lzo_memset()
++
++
++ Appendix C: suggested macros for `configure.in' when using Autoconf
++ -------------------------------------------------------------------
++ Checks for typedefs and structures
++    AC_CHECK_TYPE(ptrdiff_t,long)
++    AC_TYPE_SIZE_T
++    AC_CHECK_SIZEOF(short)
++    AC_CHECK_SIZEOF(int)
++    AC_CHECK_SIZEOF(long)
++    AC_CHECK_SIZEOF(long long)
++    AC_CHECK_SIZEOF(__int64)
++    AC_CHECK_SIZEOF(void *)
++    AC_CHECK_SIZEOF(size_t)
++    AC_CHECK_SIZEOF(ptrdiff_t)
++
++ Checks for compiler characteristics
++    AC_C_CONST
++
++ Checks for library functions
++    AC_CHECK_FUNCS(memcmp memcpy memmove memset)
++
++
++ Appendix D: Copyright
++ ---------------------
++ LZO and miniLZO are Copyright (C) 1996, 1997, 1998, 1999, 2000, 2001, 2002,
++ 2003, 2004, 2005 Markus Franz Xaver Johannes Oberhumer
++
++ LZO and miniLZO are distributed under the terms of the GNU General
++ Public License (GPL).  See the file COPYING.
++
++ Special licenses for commercial and other applications which
++ are not willing to accept the GNU General Public License
++ are available by contacting the author.
++
++
+diff --git a/lib/LZO/minilzo.c b/lib/LZO/minilzo.c
+new file mode 100644
+index 0000000..e3d0890
+--- /dev/null
++++ b/lib/LZO/minilzo.c
+@@ -0,0 +1,1574 @@
++/* minilzo.c -- mini subset of the LZO real-time data compression library
++
++   This file is part of the LZO real-time data compression library.
++
++   Copyright (C) 2005 Markus Franz Xaver Johannes Oberhumer
++   Copyright (C) 2004 Markus Franz Xaver Johannes Oberhumer
++   Copyright (C) 2003 Markus Franz Xaver Johannes Oberhumer
++   Copyright (C) 2002 Markus Franz Xaver Johannes Oberhumer
++   Copyright (C) 2001 Markus Franz Xaver Johannes Oberhumer
++   Copyright (C) 2000 Markus Franz Xaver Johannes Oberhumer
++   Copyright (C) 1999 Markus Franz Xaver Johannes Oberhumer
++   Copyright (C) 1998 Markus Franz Xaver Johannes Oberhumer
++   Copyright (C) 1997 Markus Franz Xaver Johannes Oberhumer
++   Copyright (C) 1996 Markus Franz Xaver Johannes Oberhumer
++   All Rights Reserved.
++
++   The LZO library is free software; you can redistribute it and/or
++   modify it under the terms of the GNU General Public License,
++   version 2, as published by the Free Software Foundation.
++
++   The LZO library is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++   GNU General Public License for more details.
++
++   You should have received a copy of the GNU General Public License
++   along with the LZO library; see the file COPYING.
++   If not, write to the Free Software Foundation, Inc.,
++   51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++
++   Markus F.X.J. Oberhumer
++   <markus@oberhumer.com>
++   http://www.oberhumer.com/opensource/lzo/
++ */
++
++/*
++ * NOTE:
++ *   the full LZO package can be found at
++ *   http://www.oberhumer.com/opensource/lzo/
++ */
++
++#define __LZO_IN_MINILZO
++#define LZO_BUILD
++
++#if 0
++#include <limits.h>
++#include <stddef.h>
++#include <string.h>
++#include <assert.h>
++#endif
++
++#include <linux/slab.h>
++#include <linux/string.h>
++#include <linux/vmalloc.h>
++
++#undef LZO_HAVE_CONFIG_H
++#include <linux/minilzo.h>
++
++#define assert(condition) do { } while(0)
++//#define assert(condition) do { if (unlikely(!(condition))) BUG(); } while(0)
++
++#ifndef __LZO_CONF_H
++#define __LZO_CONF_H
++
++//NOTE:
++//#if (LZO_ARCH_I086)
++//#  define ACC_MM_AHSHIFT        LZO_MM_AHSHIFT
++//#  define ACC_PTR_FP_OFF(x)     (((const unsigned __far*)&(x))[0])
++//#  define ACC_PTR_FP_SEG(x)     (((const unsigned __far*)&(x))[1])
++//#  define ACC_PTR_MK_FP(s,o)    ((void __far*)(((unsigned long)(s)<<16)+(unsigned)(o)))
++//#endif
++
++#if !defined(lzo_uintptr_t)
++#  if defined(__LZO_MMODEL_HUGE)
++#    define lzo_uintptr_t       unsigned long
++// NOTE:
++//#  elif (LZO_SIZEOF_SIZE_T == LZO_SIZEOF_VOID_P)
++//#    define lzo_uintptr_t       size_t
++//#  elif (LZO_SIZEOF_LONG == LZO_SIZEOF_VOID_P)
++//#    define lzo_uintptr_t       unsigned long
++//#  elif (LZO_SIZEOF_INT == LZO_SIZEOF_VOID_P)
++//#    define lzo_uintptr_t       unsigned int
++//#  elif (LZO_SIZEOF_LONG_LONG == LZO_SIZEOF_VOID_P)
++//#    define lzo_uintptr_t       unsigned long long
++#  else
++#    define lzo_uintptr_t       size_t
++#  endif
++#endif
++
++// ------------------------------------------------
++#define LZO_UNUSED(var)         ((void) var)
++#define __lzo_likely(e)       (likely(e))
++#define __lzo_unlikely(e)     (unlikely(e))
++#define LZO_COMPILE_TIME_ASSERT_HEADER(e)  extern int __lzo_cta[1-2*!(e)];
++
++#define HEAP_ALLOC(var,size) \
++    lzo_align_t __LZO_MMODEL var [ ((size) + (sizeof(lzo_align_t) - 1)) / sizeof(lzo_align_t) ]
++
++#define HEAP_ALLOC_SIZE(size) \
++    (sizeof(lzo_align_t) * (((size) + (sizeof(lzo_align_t) - 1)) / sizeof(lzo_align_t)))
++// -------------------------------------------------
++
++LZO_COMPILE_TIME_ASSERT_HEADER(sizeof(lzo_uintptr_t) >= sizeof(lzo_voidp))
++
++#undef NDEBUG
++#if !defined(LZO_DEBUG)
++#  define NDEBUG 1
++#endif
++//#include <assert.h>
++
++#if 0 && defined(__BOUNDS_CHECKING_ON)
++#  include <unchecked.h>
++#else
++#  define BOUNDS_CHECKING_OFF_DURING(stmt)      stmt
++#  define BOUNDS_CHECKING_OFF_IN_EXPR(expr)     (expr)
++#endif
++
++#if !defined(__lzo_inline)
++#  define __lzo_inline
++#endif
++#if !defined(__lzo_forceinline)
++#  define __lzo_forceinline
++#endif
++#if !defined(__lzo_noinline)
++#  define __lzo_noinline
++#endif
++
++#if 1
++#  define LZO_BYTE(x)       ((unsigned char) (x))
++#else
++#  define LZO_BYTE(x)       ((unsigned char) ((x) & 0xff))
++#endif
++
++#define LZO_MAX(a,b)        ((a) >= (b) ? (a) : (b))
++#define LZO_MIN(a,b)        ((a) <= (b) ? (a) : (b))
++#define LZO_MAX3(a,b,c)     ((a) >= (b) ? LZO_MAX(a,c) : LZO_MAX(b,c))
++#define LZO_MIN3(a,b,c)     ((a) <= (b) ? LZO_MIN(a,c) : LZO_MIN(b,c))
++
++#define lzo_sizeof(type)    ((lzo_uint) (sizeof(type)))
++
++#define LZO_HIGH(array)     ((lzo_uint) (sizeof(array)/sizeof(*(array))))
++
++#define LZO_SIZE(bits)      (1u << (bits))
++#define LZO_MASK(bits)      (LZO_SIZE(bits) - 1)
++
++#define LZO_LSIZE(bits)     (1ul << (bits))
++#define LZO_LMASK(bits)     (LZO_LSIZE(bits) - 1)
++
++#define LZO_USIZE(bits)     ((lzo_uint) 1 << (bits))
++#define LZO_UMASK(bits)     (LZO_USIZE(bits) - 1)
++
++#if !defined(DMUL)
++#if 0
++
++#  define DMUL(a,b) ((lzo_xint) ((lzo_uint32)(a) * (lzo_uint32)(b)))
++#else
++#  define DMUL(a,b) ((lzo_xint) ((a) * (b)))
++#endif
++#endif
++
++#if 1 && !defined(LZO_CFG_NO_UNALIGNED)
++//NOTE: (silent compiler warnings)
++//#if 1 && (LZO_ARCH_AMD64 || LZO_ARCH_I386)
++#if ((defined(LZO_ARCH_AMD64) && LZO_ARCH_AMD64) || (defined(LZO_ARCH_I386) && LZO_ARCH_I386))
++//#  if (LZO_SIZEOF_SHORT == 2)
++#    define LZO_UNALIGNED_OK_2
++//#  endif
++//#  if (LZO_SIZEOF_INT == 4)
++#    define LZO_UNALIGNED_OK_4
++//#  endif
++#endif
++#endif
++
++#if defined(LZO_UNALIGNED_OK_2)
++  LZO_COMPILE_TIME_ASSERT_HEADER(sizeof(short) == 2)
++#endif
++#if defined(LZO_UNALIGNED_OK_4)
++  LZO_COMPILE_TIME_ASSERT_HEADER(sizeof(lzo_uint32) == 4)
++#elif defined(LZO_ALIGNED_OK_4)
++  LZO_COMPILE_TIME_ASSERT_HEADER(sizeof(lzo_uint32) == 4)
++#endif
++
++extern int __lzo_init_done;
++extern const char __lzo_copyright[];
++extern const lzo_bytep lzo_copyright(void);
++
++#ifndef __LZO_PTR_H
++#define __LZO_PTR_H
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++#if !defined(lzo_uintptr_t)
++#  if defined(__LZO_MMODEL_HUGE)
++#    define lzo_uintptr_t   unsigned long
++#  else
++#    define lzo_uintptr_t   acc_uintptr_t
++#    ifdef __ACC_INTPTR_T_IS_POINTER
++#      define __LZO_UINTPTR_T_IS_POINTER 1
++#    endif
++#  endif
++#endif
++
++//TODO:
++//#if (LZO_ARCH_I086)
++//#define PTR(a)              ((lzo_bytep) (a))
++//#define PTR_ALIGNED_4(a)    ((ACC_PTR_FP_OFF(a) & 3) == 0)
++//#define PTR_ALIGNED2_4(a,b) (((ACC_PTR_FP_OFF(a) | ACC_PTR_FP_OFF(b)) & 3) == 0)
++//#else
++#define PTR(a)              ((lzo_uintptr_t) (a))
++#define PTR_LINEAR(a)       PTR(a)
++#define PTR_ALIGNED_4(a)    ((PTR_LINEAR(a) & 3) == 0)
++#define PTR_ALIGNED_8(a)    ((PTR_LINEAR(a) & 7) == 0)
++#define PTR_ALIGNED2_4(a,b) (((PTR_LINEAR(a) | PTR_LINEAR(b)) & 3) == 0)
++#define PTR_ALIGNED2_8(a,b) (((PTR_LINEAR(a) | PTR_LINEAR(b)) & 7) == 0)
++//#endif
++
++#define PTR_LT(a,b)         (PTR(a) < PTR(b))
++#define PTR_GE(a,b)         (PTR(a) >= PTR(b))
++#define PTR_DIFF(a,b)       (PTR(a) - PTR(b))
++#define pd(a,b)             ((lzo_uint) ((a)-(b)))
++
++extern lzo_uintptr_t
++__lzo_ptr_linear(const lzo_voidp ptr);
++
++typedef union
++{
++    char            a_char;
++    unsigned char   a_uchar;
++    short           a_short;
++    unsigned short  a_ushort;
++    int             a_int;
++    unsigned int    a_uint;
++    long            a_long;
++    unsigned long   a_ulong;
++    lzo_int         a_lzo_int;
++    lzo_uint        a_lzo_uint;
++    lzo_int32       a_lzo_int32;
++    lzo_uint32      a_lzo_uint32;
++    ptrdiff_t       a_ptrdiff_t;
++    lzo_uintptr_t   a_lzo_uintptr_t;
++    lzo_voidp       a_lzo_voidp;
++    void *          a_void_p;
++    lzo_bytep       a_lzo_bytep;
++    lzo_bytepp      a_lzo_bytepp;
++    lzo_uintp       a_lzo_uintp;
++    lzo_uint *      a_lzo_uint_p;
++    lzo_uint32p     a_lzo_uint32p;
++    lzo_uint32 *    a_lzo_uint32_p;
++    unsigned char * a_uchar_p;
++    char *          a_char_p;
++}
++lzo_full_align_t;
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif
++
++#define LZO_DETERMINISTIC
++
++#define LZO_DICT_USE_PTR
++#if 0 && (LZO_ARCH_I086)
++#  undef LZO_DICT_USE_PTR
++#endif
++
++#if defined(LZO_DICT_USE_PTR)
++#  define lzo_dict_t    const lzo_bytep
++#  define lzo_dict_p    lzo_dict_t __LZO_MMODEL *
++#else
++#  define lzo_dict_t    lzo_uint
++#  define lzo_dict_p    lzo_dict_t __LZO_MMODEL *
++#endif
++
++#endif
++
++#if !defined(MINILZO_CFG_SKIP_LZO_PTR)
++
++lzo_uintptr_t
++__lzo_ptr_linear(const lzo_voidp ptr)
++{
++    lzo_uintptr_t p;
++
++//TODO:
++//#if (LZO_ARCH_I086)
++//    p = (((lzo_uintptr_t)(ACC_PTR_FP_SEG(ptr))) << (16 - ACC_MM_AHSHIFT)) + (ACC_PTR_FP_OFF(ptr));
++//#else
++    p = (lzo_uintptr_t) PTR_LINEAR(ptr);
++//#endif
++
++    return p;
++}
++
++unsigned
++__lzo_align_gap(const lzo_voidp ptr, lzo_uint size)
++{
++#if defined(__LZO_UINTPTR_T_IS_POINTER)
++    size_t n = (size_t) ptr;
++    n = (((n + size - 1) / size) * size) - n;
++#else
++    lzo_uintptr_t p, n;
++    p = __lzo_ptr_linear(ptr);
++    n = (((p + size - 1) / size) * size) - p;
++#endif
++
++    assert(size > 0);
++    assert((long)n >= 0);
++    assert(n <= s);
++    return (unsigned)n;
++}
++
++#endif
++
++/* If you use the LZO library in a product, you *must* keep this
++ * copyright string in the executable of your product.
++ */
++
++const char __lzo_copyright[] =
++#if !defined(__LZO_IN_MINLZO)
++    LZO_VERSION_STRING;
++#else
++    "\r\n\n"
++    "LZO data compression library.\n"
++    "$Copyright: LZO (C) 1996, 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005 Markus Franz Xaver Johannes Oberhumer\n"
++    "<markus@oberhumer.com>\n"
++    "http://www.oberhumer.com $\n\n"
++    "$Id: LZO version: v" LZO_VERSION_STRING ", " LZO_VERSION_DATE " $\n"
++    "$Built: " __DATE__ " " __TIME__ " $\n"
++    "$Info: " LZO_INFO_STRING " $\n";
++#endif
++
++const lzo_bytep
++lzo_copyright(void)
++{
++    return (const lzo_bytep) __lzo_copyright;
++}
++
++unsigned
++lzo_version(void)
++{
++    return LZO_VERSION;
++}
++
++const char *
++lzo_version_string(void)
++{
++    return LZO_VERSION_STRING;
++}
++
++const char *
++lzo_version_date(void)
++{
++    return LZO_VERSION_DATE;
++}
++
++const lzo_charp
++_lzo_version_string(void)
++{
++    return LZO_VERSION_STRING;
++}
++
++const lzo_charp
++_lzo_version_date(void)
++{
++    return LZO_VERSION_DATE;
++}
++
++#define LZO_BASE 65521u
++#define LZO_NMAX 5552
++
++#define LZO_DO1(buf,i)  s1 += buf[i]; s2 += s1
++#define LZO_DO2(buf,i)  LZO_DO1(buf,i); LZO_DO1(buf,i+1);
++#define LZO_DO4(buf,i)  LZO_DO2(buf,i); LZO_DO2(buf,i+2);
++#define LZO_DO8(buf,i)  LZO_DO4(buf,i); LZO_DO4(buf,i+4);
++#define LZO_DO16(buf,i) LZO_DO8(buf,i); LZO_DO8(buf,i+8);
++
++lzo_uint32
++lzo_adler32(lzo_uint32 adler, const lzo_bytep buf, lzo_uint len)
++{
++    lzo_uint32 s1 = adler & 0xffff;
++    lzo_uint32 s2 = (adler >> 16) & 0xffff;
++    unsigned k;
++
++    if (buf == NULL)
++        return 1;
++
++    while (len > 0)
++    {
++        k = len < LZO_NMAX ? (unsigned) len : LZO_NMAX;
++        len -= k;
++        if (k >= 16) do
++        {
++            LZO_DO16(buf,0);
++            buf += 16;
++            k -= 16;
++        } while (k >= 16);
++        if (k != 0) do
++        {
++            s1 += *buf++;
++            s2 += s1;
++        } while (--k > 0);
++        s1 %= LZO_BASE;
++        s2 %= LZO_BASE;
++    }
++    return (s2 << 16) | s1;
++}
++
++#undef LZO_DO1
++#undef LZO_DO2
++#undef LZO_DO4
++#undef LZO_DO8
++#undef LZO_DO16
++
++#undef ACCCHK_ASSERT
++
++int
++_lzo_config_check(void)
++{
++    lzo_bool r = 1;
++    union { unsigned char c[2*sizeof(lzo_xint)]; lzo_xint l[2]; } u;
++
++#if !defined(LZO_CFG_NO_CONFIG_CHECK)
++#if defined(LZO_ABI_BIG_ENDIAN)
++    u.l[0] = u.l[1] = 0; u.c[sizeof(lzo_xint) - 1] = 128;
++    r &= (u.l[0] == 128);
++#endif
++#if defined(LZO_ABI_LITTLE_ENDIAN)
++    u.l[0] = u.l[1] = 0; u.c[0] = 128;
++    r &= (u.l[0] == 128);
++#endif
++#if defined(LZO_UNALIGNED_OK_2)
++    u.l[0] = u.l[1] = 0;
++    r &= ((* (const lzo_ushortp) (const lzo_voidp) &u.c[1]) == 0);
++#endif
++#if defined(LZO_UNALIGNED_OK_4)
++    u.l[0] = u.l[1] = 0;
++    r &= ((* (const lzo_uint32p) (const lzo_voidp) &u.c[1]) == 0);
++#endif
++#endif
++
++    LZO_UNUSED(u);
++    return r == 1 ? LZO_E_OK : LZO_E_ERROR;
++}
++
++int __lzo_init_done = 0;
++
++int
++__lzo_init_v2(unsigned v, int s1, int s2, int s3, int s4, int s5,
++                          int s6, int s7, int s8, int s9)
++{
++    int r;
++
++#undef ACCCHK_ASSERT
++
++    __lzo_init_done = 1;
++
++    if (v == 0)
++        return LZO_E_ERROR;
++
++    r = (s1 == -1 || s1 == (int) sizeof(short)) &&
++        (s2 == -1 || s2 == (int) sizeof(int)) &&
++        (s3 == -1 || s3 == (int) sizeof(long)) &&
++        (s4 == -1 || s4 == (int) sizeof(lzo_uint32)) &&
++        (s5 == -1 || s5 == (int) sizeof(lzo_uint)) &&
++        (s6 == -1 || s6 == (int) lzo_sizeof_dict_t) &&
++        (s7 == -1 || s7 == (int) sizeof(char *)) &&
++        (s8 == -1 || s8 == (int) sizeof(lzo_voidp)) &&
++        (s9 == -1 || s9 == (int) sizeof(lzo_callback_t));
++    if (!r)
++        return LZO_E_ERROR;
++
++    r = _lzo_config_check();
++    if (r != LZO_E_OK)
++        return r;
++
++    return r;
++}
++
++#define do_compress         _lzo1x_1_do_compress
++
++#if !defined(MINILZO_CFG_SKIP_LZO1X_1_COMPRESS)
++
++#define LZO_NEED_DICT_H
++#define D_BITS          14
++#define D_INDEX1(d,p)       d = DM(DMUL(0x21,DX3(p,5,5,6)) >> 5)
++#define D_INDEX2(d,p)       d = (d & (D_MASK & 0x7ff)) ^ (D_HIGH | 0x1f)
++
++#ifndef __LZO_CONFIG1X_H
++#define __LZO_CONFIG1X_H
++
++#if !defined(LZO1X) && !defined(LZO1Y) && !defined(LZO1Z)
++#  define LZO1X
++#endif
++
++#define LZO_EOF_CODE
++#undef LZO_DETERMINISTIC
++
++#define M1_MAX_OFFSET   0x0400
++#ifndef M2_MAX_OFFSET
++#define M2_MAX_OFFSET   0x0800
++#endif
++#define M3_MAX_OFFSET   0x4000
++#define M4_MAX_OFFSET   0xbfff
++
++#define MX_MAX_OFFSET   (M1_MAX_OFFSET + M2_MAX_OFFSET)
++
++#define M1_MIN_LEN      2
++#define M1_MAX_LEN      2
++#define M2_MIN_LEN      3
++#ifndef M2_MAX_LEN
++#define M2_MAX_LEN      8
++#endif
++#define M3_MIN_LEN      3
++#define M3_MAX_LEN      33
++#define M4_MIN_LEN      3
++#define M4_MAX_LEN      9
++
++#define M1_MARKER       0
++#define M2_MARKER       64
++#define M3_MARKER       32
++#define M4_MARKER       16
++
++#ifndef MIN_LOOKAHEAD
++#define MIN_LOOKAHEAD       (M2_MAX_LEN + 1)
++#endif
++
++#if defined(LZO_NEED_DICT_H)
++
++#ifndef LZO_HASH
++#define LZO_HASH            LZO_HASH_LZO_INCREMENTAL_B
++#endif
++#define DL_MIN_LEN          M2_MIN_LEN
++
++#ifndef __LZO_DICT_H
++#define __LZO_DICT_H
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++#if !defined(D_BITS) && defined(DBITS)
++#  define D_BITS        DBITS
++#endif
++#if !defined(D_BITS)
++#  error "D_BITS is not defined"
++#endif
++#if (D_BITS < 16)
++#  define D_SIZE        LZO_SIZE(D_BITS)
++#  define D_MASK        LZO_MASK(D_BITS)
++#else
++#  define D_SIZE        LZO_USIZE(D_BITS)
++#  define D_MASK        LZO_UMASK(D_BITS)
++#endif
++#define D_HIGH          ((D_MASK >> 1) + 1)
++
++#if !defined(DD_BITS)
++#  define DD_BITS       0
++#endif
++#define DD_SIZE         LZO_SIZE(DD_BITS)
++#define DD_MASK         LZO_MASK(DD_BITS)
++
++#if !defined(DL_BITS)
++#  define DL_BITS       (D_BITS - DD_BITS)
++#endif
++#if (DL_BITS < 16)
++#  define DL_SIZE       LZO_SIZE(DL_BITS)
++#  define DL_MASK       LZO_MASK(DL_BITS)
++#else
++#  define DL_SIZE       LZO_USIZE(DL_BITS)
++#  define DL_MASK       LZO_UMASK(DL_BITS)
++#endif
++
++#if (D_BITS != DL_BITS + DD_BITS)
++#  error "D_BITS does not match"
++#endif
++#if (D_BITS < 8 || D_BITS > 18)
++#  error "invalid D_BITS"
++#endif
++#if (DL_BITS < 8 || DL_BITS > 20)
++#  error "invalid DL_BITS"
++#endif
++#if (DD_BITS < 0 || DD_BITS > 6)
++#  error "invalid DD_BITS"
++#endif
++
++#if !defined(DL_MIN_LEN)
++#  define DL_MIN_LEN    3
++#endif
++#if !defined(DL_SHIFT)
++#  define DL_SHIFT      ((DL_BITS + (DL_MIN_LEN - 1)) / DL_MIN_LEN)
++#endif
++
++#define LZO_HASH_GZIP                   1
++#define LZO_HASH_GZIP_INCREMENTAL       2
++#define LZO_HASH_LZO_INCREMENTAL_A      3
++#define LZO_HASH_LZO_INCREMENTAL_B      4
++
++#if !defined(LZO_HASH)
++#  error "choose a hashing strategy"
++#endif
++
++#undef DM
++#undef DX
++
++#if (DL_MIN_LEN == 3)
++#  define _DV2_A(p,shift1,shift2) \
++        (((( (lzo_xint)((p)[0]) << shift1) ^ (p)[1]) << shift2) ^ (p)[2])
++#  define _DV2_B(p,shift1,shift2) \
++        (((( (lzo_xint)((p)[2]) << shift1) ^ (p)[1]) << shift2) ^ (p)[0])
++#  define _DV3_B(p,shift1,shift2,shift3) \
++        ((_DV2_B((p)+1,shift1,shift2) << (shift3)) ^ (p)[0])
++#elif (DL_MIN_LEN == 2)
++#  define _DV2_A(p,shift1,shift2) \
++        (( (lzo_xint)(p[0]) << shift1) ^ p[1])
++#  define _DV2_B(p,shift1,shift2) \
++        (( (lzo_xint)(p[1]) << shift1) ^ p[2])
++#else
++#  error "invalid DL_MIN_LEN"
++#endif
++#define _DV_A(p,shift)      _DV2_A(p,shift,shift)
++#define _DV_B(p,shift)      _DV2_B(p,shift,shift)
++#define DA2(p,s1,s2) \
++        (((((lzo_xint)((p)[2]) << (s2)) + (p)[1]) << (s1)) + (p)[0])
++#define DS2(p,s1,s2) \
++        (((((lzo_xint)((p)[2]) << (s2)) - (p)[1]) << (s1)) - (p)[0])
++#define DX2(p,s1,s2) \
++        (((((lzo_xint)((p)[2]) << (s2)) ^ (p)[1]) << (s1)) ^ (p)[0])
++#define DA3(p,s1,s2,s3) ((DA2((p)+1,s2,s3) << (s1)) + (p)[0])
++#define DS3(p,s1,s2,s3) ((DS2((p)+1,s2,s3) << (s1)) - (p)[0])
++#define DX3(p,s1,s2,s3) ((DX2((p)+1,s2,s3) << (s1)) ^ (p)[0])
++#define DMS(v,s)        ((lzo_uint) (((v) & (D_MASK >> (s))) << (s)))
++#define DM(v)           DMS(v,0)
++
++#if (LZO_HASH == LZO_HASH_GZIP)
++#  define _DINDEX(dv,p)     (_DV_A((p),DL_SHIFT))
++
++#elif (LZO_HASH == LZO_HASH_GZIP_INCREMENTAL)
++#  define __LZO_HASH_INCREMENTAL
++#  define DVAL_FIRST(dv,p)  dv = _DV_A((p),DL_SHIFT)
++#  define DVAL_NEXT(dv,p)   dv = (((dv) << DL_SHIFT) ^ p[2])
++#  define _DINDEX(dv,p)     (dv)
++#  define DVAL_LOOKAHEAD    DL_MIN_LEN
++
++#elif (LZO_HASH == LZO_HASH_LZO_INCREMENTAL_A)
++#  define __LZO_HASH_INCREMENTAL
++#  define DVAL_FIRST(dv,p)  dv = _DV_A((p),5)
++#  define DVAL_NEXT(dv,p) \
++                dv ^= (lzo_xint)(p[-1]) << (2*5); dv = (((dv) << 5) ^ p[2])
++#  define _DINDEX(dv,p)     ((DMUL(0x9f5f,dv)) >> 5)
++#  define DVAL_LOOKAHEAD    DL_MIN_LEN
++
++#elif (LZO_HASH == LZO_HASH_LZO_INCREMENTAL_B)
++#  define __LZO_HASH_INCREMENTAL
++#  define DVAL_FIRST(dv,p)  dv = _DV_B((p),5)
++#  define DVAL_NEXT(dv,p) \
++                dv ^= p[-1]; dv = (((dv) >> 5) ^ ((lzo_xint)(p[2]) << (2*5)))
++#  define _DINDEX(dv,p)     ((DMUL(0x9f5f,dv)) >> 5)
++#  define DVAL_LOOKAHEAD    DL_MIN_LEN
++
++#else
++#  error "choose a hashing strategy"
++#endif
++
++#ifndef DINDEX
++#define DINDEX(dv,p)        ((lzo_uint)((_DINDEX(dv,p)) & DL_MASK) << DD_BITS)
++#endif
++#if !defined(DINDEX1) && defined(D_INDEX1)
++#define DINDEX1             D_INDEX1
++#endif
++#if !defined(DINDEX2) && defined(D_INDEX2)
++#define DINDEX2             D_INDEX2
++#endif
++
++#if !defined(__LZO_HASH_INCREMENTAL)
++#  define DVAL_FIRST(dv,p)  ((void) 0)
++#  define DVAL_NEXT(dv,p)   ((void) 0)
++#  define DVAL_LOOKAHEAD    0
++#endif
++
++#if !defined(DVAL_ASSERT)
++#if defined(__LZO_HASH_INCREMENTAL) && !defined(NDEBUG)
++static void DVAL_ASSERT(lzo_xint dv, const lzo_bytep p)
++{
++    lzo_xint df;
++    DVAL_FIRST(df,(p));
++    assert(DINDEX(dv,p) == DINDEX(df,p));
++}
++#else
++#  define DVAL_ASSERT(dv,p) ((void) 0)
++#endif
++#endif
++
++#if defined(LZO_DICT_USE_PTR)
++#  define DENTRY(p,in)                          (p)
++#  define GINDEX(m_pos,m_off,dict,dindex,in)    m_pos = dict[dindex]
++#else
++#  define DENTRY(p,in)                          ((lzo_uint) ((p)-(in)))
++#  define GINDEX(m_pos,m_off,dict,dindex,in)    m_off = dict[dindex]
++#endif
++
++#if (DD_BITS == 0)
++
++#  define UPDATE_D(dict,drun,dv,p,in)       dict[ DINDEX(dv,p) ] = DENTRY(p,in)
++#  define UPDATE_I(dict,drun,index,p,in)    dict[index] = DENTRY(p,in)
++#  define UPDATE_P(ptr,drun,p,in)           (ptr)[0] = DENTRY(p,in)
++
++#else
++
++#  define UPDATE_D(dict,drun,dv,p,in)   \
++        dict[ DINDEX(dv,p) + drun++ ] = DENTRY(p,in); drun &= DD_MASK
++#  define UPDATE_I(dict,drun,index,p,in)    \
++        dict[ (index) + drun++ ] = DENTRY(p,in); drun &= DD_MASK
++#  define UPDATE_P(ptr,drun,p,in)   \
++        (ptr) [ drun++ ] = DENTRY(p,in); drun &= DD_MASK
++
++#endif
++
++#if defined(LZO_DICT_USE_PTR)
++
++#define LZO_CHECK_MPOS_DET(m_pos,m_off,in,ip,max_offset) \
++        (m_pos == NULL || (m_off = pd(ip, m_pos)) > max_offset)
++
++#define LZO_CHECK_MPOS_NON_DET(m_pos,m_off,in,ip,max_offset) \
++    (BOUNDS_CHECKING_OFF_IN_EXPR(( \
++        m_pos = ip - (lzo_uint) PTR_DIFF(ip,m_pos), \
++        PTR_LT(m_pos,in) || \
++        (m_off = (lzo_uint) PTR_DIFF(ip,m_pos)) <= 0 || \
++         m_off > max_offset )))
++
++#else
++
++#define LZO_CHECK_MPOS_DET(m_pos,m_off,in,ip,max_offset) \
++        (m_off == 0 || \
++         ((m_off = pd(ip, in) - m_off) > max_offset) || \
++         (m_pos = (ip) - (m_off), 0) )
++
++#define LZO_CHECK_MPOS_NON_DET(m_pos,m_off,in,ip,max_offset) \
++        (pd(ip, in) <= m_off || \
++         ((m_off = pd(ip, in) - m_off) > max_offset) || \
++         (m_pos = (ip) - (m_off), 0) )
++
++#endif
++
++#if defined(LZO_DETERMINISTIC)
++#  define LZO_CHECK_MPOS    LZO_CHECK_MPOS_DET
++#else
++#  define LZO_CHECK_MPOS    LZO_CHECK_MPOS_NON_DET
++#endif
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif
++
++#endif
++
++#endif
++
++#define DO_COMPRESS     lzo1x_1_compress
++
++static __lzo_noinline lzo_uint
++do_compress ( const lzo_bytep in , lzo_uint  in_len,
++                    lzo_bytep out, lzo_uintp out_len,
++                    lzo_voidp wrkmem )
++{
++    register const lzo_bytep ip;
++    lzo_bytep op;
++    const lzo_bytep const in_end = in + in_len;
++    const lzo_bytep const ip_end = in + in_len - M2_MAX_LEN - 5;
++    const lzo_bytep ii;
++    lzo_dict_p const dict = (lzo_dict_p) wrkmem;
++
++    op = out;
++    ip = in;
++    ii = ip;
++
++    ip += 4;
++    for (;;)
++    {
++        register const lzo_bytep m_pos;
++        lzo_uint m_off;
++        lzo_uint m_len;
++        lzo_uint dindex;
++
++        DINDEX1(dindex,ip);
++        GINDEX(m_pos,m_off,dict,dindex,in);
++        if (LZO_CHECK_MPOS_NON_DET(m_pos,m_off,in,ip,M4_MAX_OFFSET))
++            goto literal;
++#if 1
++        if (m_off <= M2_MAX_OFFSET || m_pos[3] == ip[3])
++            goto try_match;
++        DINDEX2(dindex,ip);
++#endif
++        GINDEX(m_pos,m_off,dict,dindex,in);
++        if (LZO_CHECK_MPOS_NON_DET(m_pos,m_off,in,ip,M4_MAX_OFFSET))
++            goto literal;
++        if (m_off <= M2_MAX_OFFSET || m_pos[3] == ip[3])
++            goto try_match;
++        goto literal;
++
++try_match:
++#if 1 && defined(LZO_UNALIGNED_OK_2)
++        if (* (const lzo_ushortp) m_pos != * (const lzo_ushortp) ip)
++#else
++        if (m_pos[0] != ip[0] || m_pos[1] != ip[1])
++#endif
++        {
++        }
++        else
++        {
++            if __lzo_likely(m_pos[2] == ip[2])
++            {
++#if 0
++                if (m_off <= M2_MAX_OFFSET)
++                    goto match;
++                if (lit <= 3)
++                    goto match;
++                if (lit == 3)
++                {
++                    assert(op - 2 > out); op[-2] |= LZO_BYTE(3);
++                    *op++ = *ii++; *op++ = *ii++; *op++ = *ii++;
++                    goto code_match;
++                }
++                if (m_pos[3] == ip[3])
++#endif
++                    goto match;
++            }
++            else
++            {
++#if 0
++#if 0
++                if (m_off <= M1_MAX_OFFSET && lit > 0 && lit <= 3)
++#else
++                if (m_off <= M1_MAX_OFFSET && lit == 3)
++#endif
++                {
++                    register lzo_uint t;
++
++                    t = lit;
++                    assert(op - 2 > out); op[-2] |= LZO_BYTE(t);
++                    do *op++ = *ii++; while (--t > 0);
++                    assert(ii == ip);
++                    m_off -= 1;
++                    *op++ = LZO_BYTE(M1_MARKER | ((m_off & 3) << 2));
++                    *op++ = LZO_BYTE(m_off >> 2);
++                    ip += 2;
++                    goto match_done;
++                }
++#endif
++            }
++        }
++
++literal:
++        UPDATE_I(dict,0,dindex,ip,in);
++        ++ip;
++        if __lzo_unlikely(ip >= ip_end)
++            break;
++        continue;
++
++match:
++        UPDATE_I(dict,0,dindex,ip,in);
++        if (pd(ip,ii) > 0)
++        {
++            register lzo_uint t = pd(ip,ii);
++
++            if (t <= 3)
++            {
++                assert(op - 2 > out);
++                op[-2] |= LZO_BYTE(t);
++            }
++            else if (t <= 18)
++                *op++ = LZO_BYTE(t - 3);
++            else
++            {
++                register lzo_uint tt = t - 18;
++
++                *op++ = 0;
++                while (tt > 255)
++                {
++                    tt -= 255;
++                    *op++ = 0;
++                }
++                assert(tt > 0);
++                *op++ = LZO_BYTE(tt);
++            }
++            do *op++ = *ii++; while (--t > 0);
++        }
++
++        assert(ii == ip);
++        ip += 3;
++        if (m_pos[3] != *ip++ || m_pos[4] != *ip++ || m_pos[5] != *ip++ ||
++            m_pos[6] != *ip++ || m_pos[7] != *ip++ || m_pos[8] != *ip++
++#ifdef LZO1Y
++            || m_pos[ 9] != *ip++ || m_pos[10] != *ip++ || m_pos[11] != *ip++
++            || m_pos[12] != *ip++ || m_pos[13] != *ip++ || m_pos[14] != *ip++
++#endif
++           )
++        {
++            --ip;
++            m_len = pd(ip, ii);
++            assert(m_len >= 3); assert(m_len <= M2_MAX_LEN);
++
++            if (m_off <= M2_MAX_OFFSET)
++            {
++                m_off -= 1;
++#if defined(LZO1X)
++                *op++ = LZO_BYTE(((m_len - 1) << 5) | ((m_off & 7) << 2));
++                *op++ = LZO_BYTE(m_off >> 3);
++#elif defined(LZO1Y)
++                *op++ = LZO_BYTE(((m_len + 1) << 4) | ((m_off & 3) << 2));
++                *op++ = LZO_BYTE(m_off >> 2);
++#endif
++            }
++            else if (m_off <= M3_MAX_OFFSET)
++            {
++                m_off -= 1;
++                *op++ = LZO_BYTE(M3_MARKER | (m_len - 2));
++                goto m3_m4_offset;
++            }
++            else
++#if defined(LZO1X)
++            {
++                m_off -= 0x4000;
++                assert(m_off > 0); assert(m_off <= 0x7fff);
++                *op++ = LZO_BYTE(M4_MARKER |
++                                 ((m_off & 0x4000) >> 11) | (m_len - 2));
++                goto m3_m4_offset;
++            }
++#elif defined(LZO1Y)
++                goto m4_match;
++#endif
++        }
++        else
++        {
++            {
++                const lzo_bytep end = in_end;
++                const lzo_bytep m = m_pos + M2_MAX_LEN + 1;
++                while (ip < end && *m == *ip)
++                    m++, ip++;
++                m_len = pd(ip, ii);
++            }
++            assert(m_len > M2_MAX_LEN);
++
++            if (m_off <= M3_MAX_OFFSET)
++            {
++                m_off -= 1;
++                if (m_len <= 33)
++                    *op++ = LZO_BYTE(M3_MARKER | (m_len - 2));
++                else
++                {
++                    m_len -= 33;
++                    *op++ = M3_MARKER | 0;
++                    goto m3_m4_len;
++                }
++            }
++            else
++            {
++#if defined(LZO1Y)
++m4_match:
++#endif
++                m_off -= 0x4000;
++                assert(m_off > 0); assert(m_off <= 0x7fff);
++                if (m_len <= M4_MAX_LEN)
++                    *op++ = LZO_BYTE(M4_MARKER |
++                                     ((m_off & 0x4000) >> 11) | (m_len - 2));
++                else
++                {
++                    m_len -= M4_MAX_LEN;
++                    *op++ = LZO_BYTE(M4_MARKER | ((m_off & 0x4000) >> 11));
++m3_m4_len:
++                    while (m_len > 255)
++                    {
++                        m_len -= 255;
++                        *op++ = 0;
++                    }
++                    assert(m_len > 0);
++                    *op++ = LZO_BYTE(m_len);
++                }
++            }
++
++m3_m4_offset:
++            *op++ = LZO_BYTE((m_off & 63) << 2);
++            *op++ = LZO_BYTE(m_off >> 6);
++        }
++
++#if 0
++match_done:
++#endif
++        ii = ip;
++        if __lzo_unlikely(ip >= ip_end)
++            break;
++    }
++
++    *out_len = pd(op, out);
++    return pd(in_end,ii);
++}
++
++#if 0
++int
++DO_COMPRESS      ( const lzo_bytep in , lzo_uint  in_len,
++                         lzo_bytep out, lzo_uintp out_len,
++                         lzo_voidp wrkmem )
++#endif
++
++int
++DO_COMPRESS      ( const lzo_bytep in , lzo_uint  in_len,
++                         lzo_bytep out, lzo_uintp out_len )
++{
++    lzo_bytep op = out;
++    lzo_uint t;
++
++    //static HEAP_ALLOC(wrkmem,LZO1X_1_MEM_COMPRESS);
++    //lzo_align_t *wrkmem = kmalloc(HEAP_ALLOC_SIZE(LZO1X_1_MEM_COMPRESS),
++    //				 GFP_KERNEL);
++    lzo_align_t *wrkmem = vmalloc(HEAP_ALLOC_SIZE(LZO1X_1_MEM_COMPRESS));
++    if (!wrkmem) return -ENOMEM;
++
++    if __lzo_unlikely(in_len <= M2_MAX_LEN + 5)
++        t = in_len;
++    else
++    {
++        t = do_compress(in,in_len,op,out_len,wrkmem);
++        op += *out_len;
++    }
++
++    if (t > 0)
++    {
++        const lzo_bytep ii = in + in_len - t;
++
++        if (op == out && t <= 238)
++            *op++ = LZO_BYTE(17 + t);
++        else if (t <= 3)
++            op[-2] |= LZO_BYTE(t);
++        else if (t <= 18)
++            *op++ = LZO_BYTE(t - 3);
++        else
++        {
++            lzo_uint tt = t - 18;
++
++            *op++ = 0;
++            while (tt > 255)
++            {
++                tt -= 255;
++                *op++ = 0;
++            }
++            assert(tt > 0);
++            *op++ = LZO_BYTE(tt);
++        }
++        do *op++ = *ii++; while (--t > 0);
++    }
++
++    *op++ = M4_MARKER | 1;
++    *op++ = 0;
++    *op++ = 0;
++
++    *out_len = pd(op, out);
++    //kfree(wrkmem);
++    vfree(wrkmem);
++    return LZO_E_OK;
++}
++
++#endif
++
++#undef do_compress
++#undef DO_COMPRESS
++#undef LZO_HASH
++
++#undef LZO_TEST_OVERRUN
++#undef DO_DECOMPRESS
++#define DO_DECOMPRESS       lzo1x_decompress
++
++
++#if !defined(MINILZO_CFG_SKIP_LZO1X_DECOMPRESS)
++#if defined(LZO_TEST_OVERRUN)
++#  if !defined(LZO_TEST_OVERRUN_INPUT)
++#    define LZO_TEST_OVERRUN_INPUT       2
++#  endif
++#  if !defined(LZO_TEST_OVERRUN_OUTPUT)
++#    define LZO_TEST_OVERRUN_OUTPUT      2
++#  endif
++#  if !defined(LZO_TEST_OVERRUN_LOOKBEHIND)
++#    define LZO_TEST_OVERRUN_LOOKBEHIND
++#  endif
++#endif
++
++
++#undef TEST_IP
++#undef TEST_OP
++#undef TEST_LB
++#undef TEST_LBO
++#undef NEED_IP
++#undef NEED_OP
++#undef HAVE_TEST_IP
++#undef HAVE_TEST_OP
++#undef HAVE_NEED_IP
++#undef HAVE_NEED_OP
++#undef HAVE_ANY_IP
++#undef HAVE_ANY_OP
++
++#if defined(LZO_TEST_OVERRUN_INPUT)
++#  if (LZO_TEST_OVERRUN_INPUT >= 1)
++#    define TEST_IP             (ip < ip_end)
++#  endif
++#  if (LZO_TEST_OVERRUN_INPUT >= 2)
++#    define NEED_IP(x) \
++            if ((lzo_uint)(ip_end - ip) < (lzo_uint)(x))  goto input_overrun
++#  endif
++#endif
++
++#if defined(LZO_TEST_OVERRUN_OUTPUT)
++#  if (LZO_TEST_OVERRUN_OUTPUT >= 1)
++#    define TEST_OP             (op <= op_end)
++#  endif
++#  if (LZO_TEST_OVERRUN_OUTPUT >= 2)
++#    undef TEST_OP
++#    define NEED_OP(x) \
++            if ((lzo_uint)(op_end - op) < (lzo_uint)(x))  goto output_overrun
++#  endif
++#endif
++
++#if defined(LZO_TEST_OVERRUN_LOOKBEHIND)
++#  define TEST_LB(m_pos)        if (m_pos < out || m_pos >= op) goto lookbehind_overrun
++#  define TEST_LBO(m_pos,o)     if (m_pos < out || m_pos >= op - (o)) goto lookbehind_overrun
++#else
++#  define TEST_LB(m_pos)        ((void) 0)
++#  define TEST_LBO(m_pos,o)     ((void) 0)
++#endif
++
++#if !defined(LZO_EOF_CODE) && !defined(TEST_IP)
++#  define TEST_IP               (ip < ip_end)
++#endif
++
++#if defined(TEST_IP)
++#  define HAVE_TEST_IP
++#else
++#  define TEST_IP               1
++#endif
++#if defined(TEST_OP)
++#  define HAVE_TEST_OP
++#else
++#  define TEST_OP               1
++#endif
++
++#if defined(NEED_IP)
++#  define HAVE_NEED_IP
++#else
++#  define NEED_IP(x)            ((void) 0)
++#endif
++#if defined(NEED_OP)
++#  define HAVE_NEED_OP
++#else
++#  define NEED_OP(x)            ((void) 0)
++#endif
++
++#if defined(HAVE_TEST_IP) || defined(HAVE_NEED_IP)
++#  define HAVE_ANY_IP
++#endif
++#if defined(HAVE_TEST_OP) || defined(HAVE_NEED_OP)
++#  define HAVE_ANY_OP
++#endif
++
++#undef __COPY4
++#define __COPY4(dst,src)    * (lzo_uint32p)(dst) = * (const lzo_uint32p)(src)
++
++#undef COPY4
++#if defined(LZO_UNALIGNED_OK_4)
++#  define COPY4(dst,src)    __COPY4(dst,src)
++#elif defined(LZO_ALIGNED_OK_4)
++#  define COPY4(dst,src)    __COPY4((lzo_uintptr_t)(dst),(lzo_uintptr_t)(src))
++#endif
++
++#if defined(DO_DECOMPRESS)
++/* ----- this is lzo1x_decompress() ------- */
++/*
++int
++DO_DECOMPRESS  ( const lzo_bytep in , lzo_uint  in_len,
++                       lzo_bytep out, lzo_uintp out_len,
++                       lzo_voidp wrkmem )
++*/
++int
++DO_DECOMPRESS  ( const lzo_bytep in , lzo_uint  in_len,
++                       lzo_bytep out, lzo_uintp out_len )
++#endif
++{
++    register lzo_bytep op;
++    register const lzo_bytep ip;
++    register lzo_uint t;
++#if defined(COPY_DICT)
++    lzo_uint m_off;
++    const lzo_bytep dict_end;
++#else
++    register const lzo_bytep m_pos;
++#endif
++
++    const lzo_bytep const ip_end = in + in_len;
++#if defined(HAVE_ANY_OP)
++    lzo_bytep const op_end = out + *out_len;
++#endif
++#if defined(LZO1Z)
++    lzo_uint last_m_off = 0;
++#endif
++
++#if defined(COPY_DICT)
++    if (dict)
++    {
++        if (dict_len > M4_MAX_OFFSET)
++        {
++            dict += dict_len - M4_MAX_OFFSET;
++            dict_len = M4_MAX_OFFSET;
++        }
++        dict_end = dict + dict_len;
++    }
++    else
++    {
++        dict_len = 0;
++        dict_end = NULL;
++    }
++#endif
++
++    *out_len = 0;
++
++    op = out;
++    ip = in;
++
++    if (*ip > 17)
++    {
++        t = *ip++ - 17;
++        if (t < 4)
++            goto match_next;
++        assert(t > 0); NEED_OP(t); NEED_IP(t+1);
++        do *op++ = *ip++; while (--t > 0);
++        goto first_literal_run;
++    }
++
++    while (TEST_IP && TEST_OP)
++    {
++        t = *ip++;
++        if (t >= 16)
++            goto match;
++        if (t == 0)
++        {
++            NEED_IP(1);
++            while (*ip == 0)
++            {
++                t += 255;
++                ip++;
++                NEED_IP(1);
++            }
++            t += 15 + *ip++;
++        }
++        assert(t > 0); NEED_OP(t+3); NEED_IP(t+4);
++#if defined(LZO_UNALIGNED_OK_4) || defined(LZO_ALIGNED_OK_4)
++#if !defined(LZO_UNALIGNED_OK_4)
++        if (PTR_ALIGNED2_4(op,ip))
++        {
++#endif
++        COPY4(op,ip);
++        op += 4; ip += 4;
++        if (--t > 0)
++        {
++            if (t >= 4)
++            {
++                do {
++                    COPY4(op,ip);
++                    op += 4; ip += 4; t -= 4;
++                } while (t >= 4);
++                if (t > 0) do *op++ = *ip++; while (--t > 0);
++            }
++            else
++                do *op++ = *ip++; while (--t > 0);
++        }
++#if !defined(LZO_UNALIGNED_OK_4)
++        }
++        else
++#endif
++#endif
++#if !defined(LZO_UNALIGNED_OK_4)
++        {
++            *op++ = *ip++; *op++ = *ip++; *op++ = *ip++;
++            do *op++ = *ip++; while (--t > 0);
++        }
++#endif
++
++first_literal_run:
++
++        t = *ip++;
++        if (t >= 16)
++            goto match;
++#if defined(COPY_DICT)
++#if defined(LZO1Z)
++        m_off = (1 + M2_MAX_OFFSET) + (t << 6) + (*ip++ >> 2);
++        last_m_off = m_off;
++#else
++        m_off = (1 + M2_MAX_OFFSET) + (t >> 2) + (*ip++ << 2);
++#endif
++        NEED_OP(3);
++        t = 3; COPY_DICT(t,m_off)
++#else
++#if defined(LZO1Z)
++        t = (1 + M2_MAX_OFFSET) + (t << 6) + (*ip++ >> 2);
++        m_pos = op - t;
++        last_m_off = t;
++#else
++        m_pos = op - (1 + M2_MAX_OFFSET);
++        m_pos -= t >> 2;
++        m_pos -= *ip++ << 2;
++#endif
++        TEST_LB(m_pos); NEED_OP(3);
++        *op++ = *m_pos++; *op++ = *m_pos++; *op++ = *m_pos;
++#endif
++        goto match_done;
++
++        do {
++match:
++            if (t >= 64)
++            {
++#if defined(COPY_DICT)
++#if defined(LZO1X)
++                m_off = 1 + ((t >> 2) & 7) + (*ip++ << 3);
++                t = (t >> 5) - 1;
++#elif defined(LZO1Y)
++                m_off = 1 + ((t >> 2) & 3) + (*ip++ << 2);
++                t = (t >> 4) - 3;
++#elif defined(LZO1Z)
++                m_off = t & 0x1f;
++                if (m_off >= 0x1c)
++                    m_off = last_m_off;
++                else
++                {
++                    m_off = 1 + (m_off << 6) + (*ip++ >> 2);
++                    last_m_off = m_off;
++                }
++                t = (t >> 5) - 1;
++#endif
++#else
++#if defined(LZO1X)
++                m_pos = op - 1;
++                m_pos -= (t >> 2) & 7;
++                m_pos -= *ip++ << 3;
++                t = (t >> 5) - 1;
++#elif defined(LZO1Y)
++                m_pos = op - 1;
++                m_pos -= (t >> 2) & 3;
++                m_pos -= *ip++ << 2;
++                t = (t >> 4) - 3;
++#elif defined(LZO1Z)
++                {
++                    lzo_uint off = t & 0x1f;
++                    m_pos = op;
++                    if (off >= 0x1c)
++                    {
++                        assert(last_m_off > 0);
++                        m_pos -= last_m_off;
++                    }
++                    else
++                    {
++                        off = 1 + (off << 6) + (*ip++ >> 2);
++                        m_pos -= off;
++                        last_m_off = off;
++                    }
++                }
++                t = (t >> 5) - 1;
++#endif
++                TEST_LB(m_pos); assert(t > 0); NEED_OP(t+3-1);
++                goto copy_match;
++#endif
++            }
++            else if (t >= 32)
++            {
++                t &= 31;
++                if (t == 0)
++                {
++                    NEED_IP(1);
++                    while (*ip == 0)
++                    {
++                        t += 255;
++                        ip++;
++                        NEED_IP(1);
++                    }
++                    t += 31 + *ip++;
++                }
++#if defined(COPY_DICT)
++#if defined(LZO1Z)
++                m_off = 1 + (ip[0] << 6) + (ip[1] >> 2);
++                last_m_off = m_off;
++#else
++                m_off = 1 + (ip[0] >> 2) + (ip[1] << 6);
++#endif
++#else
++#if defined(LZO1Z)
++                {
++                    lzo_uint off = 1 + (ip[0] << 6) + (ip[1] >> 2);
++                    m_pos = op - off;
++                    last_m_off = off;
++                }
++#elif defined(LZO_UNALIGNED_OK_2) && defined(LZO_ABI_LITTLE_ENDIAN)
++                m_pos = op - 1;
++                m_pos -= (* (const lzo_ushortp) ip) >> 2;
++#else
++                m_pos = op - 1;
++                m_pos -= (ip[0] >> 2) + (ip[1] << 6);
++#endif
++#endif
++                ip += 2;
++            }
++            else if (t >= 16)
++            {
++#if defined(COPY_DICT)
++                m_off = (t & 8) << 11;
++#else
++                m_pos = op;
++                m_pos -= (t & 8) << 11;
++#endif
++                t &= 7;
++                if (t == 0)
++                {
++                    NEED_IP(1);
++                    while (*ip == 0)
++                    {
++                        t += 255;
++                        ip++;
++                        NEED_IP(1);
++                    }
++                    t += 7 + *ip++;
++                }
++#if defined(COPY_DICT)
++#if defined(LZO1Z)
++                m_off += (ip[0] << 6) + (ip[1] >> 2);
++#else
++                m_off += (ip[0] >> 2) + (ip[1] << 6);
++#endif
++                ip += 2;
++                if (m_off == 0)
++                    goto eof_found;
++                m_off += 0x4000;
++#if defined(LZO1Z)
++                last_m_off = m_off;
++#endif
++#else
++#if defined(LZO1Z)
++                m_pos -= (ip[0] << 6) + (ip[1] >> 2);
++#elif defined(LZO_UNALIGNED_OK_2) && defined(LZO_ABI_LITTLE_ENDIAN)
++                m_pos -= (* (const lzo_ushortp) ip) >> 2;
++#else
++                m_pos -= (ip[0] >> 2) + (ip[1] << 6);
++#endif
++                ip += 2;
++                if (m_pos == op)
++                    goto eof_found;
++                m_pos -= 0x4000;
++#if defined(LZO1Z)
++                last_m_off = pd((const lzo_bytep)op, m_pos);
++#endif
++#endif
++            }
++            else
++            {
++#if defined(COPY_DICT)
++#if defined(LZO1Z)
++                m_off = 1 + (t << 6) + (*ip++ >> 2);
++                last_m_off = m_off;
++#else
++                m_off = 1 + (t >> 2) + (*ip++ << 2);
++#endif
++                NEED_OP(2);
++                t = 2; COPY_DICT(t,m_off)
++#else
++#if defined(LZO1Z)
++                t = 1 + (t << 6) + (*ip++ >> 2);
++                m_pos = op - t;
++                last_m_off = t;
++#else
++                m_pos = op - 1;
++                m_pos -= t >> 2;
++                m_pos -= *ip++ << 2;
++#endif
++                TEST_LB(m_pos); NEED_OP(2);
++                *op++ = *m_pos++; *op++ = *m_pos;
++#endif
++                goto match_done;
++            }
++
++#if defined(COPY_DICT)
++
++            NEED_OP(t+3-1);
++            t += 3-1; COPY_DICT(t,m_off)
++
++#else
++
++            TEST_LB(m_pos); assert(t > 0); NEED_OP(t+3-1);
++#if defined(LZO_UNALIGNED_OK_4) || defined(LZO_ALIGNED_OK_4)
++#if !defined(LZO_UNALIGNED_OK_4)
++            if (t >= 2 * 4 - (3 - 1) && PTR_ALIGNED2_4(op,m_pos))
++            {
++                assert((op - m_pos) >= 4);
++#else
++            if (t >= 2 * 4 - (3 - 1) && (op - m_pos) >= 4)
++            {
++#endif
++                COPY4(op,m_pos);
++                op += 4; m_pos += 4; t -= 4 - (3 - 1);
++                do {
++                    COPY4(op,m_pos);
++                    op += 4; m_pos += 4; t -= 4;
++                } while (t >= 4);
++                if (t > 0) do *op++ = *m_pos++; while (--t > 0);
++            }
++            else
++#endif
++            {
++copy_match:
++                *op++ = *m_pos++; *op++ = *m_pos++;
++                do *op++ = *m_pos++; while (--t > 0);
++            }
++
++#endif
++
++match_done:
++#if defined(LZO1Z)
++            t = ip[-1] & 3;
++#else
++            t = ip[-2] & 3;
++#endif
++            if (t == 0)
++                break;
++
++match_next:
++            assert(t > 0); assert(t < 4); NEED_OP(t); NEED_IP(t+1);
++#if 0
++            do *op++ = *ip++; while (--t > 0);
++#else
++            *op++ = *ip++;
++            if (t > 1) { *op++ = *ip++; if (t > 2) { *op++ = *ip++; } }
++#endif
++            t = *ip++;
++        } while (TEST_IP && TEST_OP);
++    }
++
++#if defined(HAVE_TEST_IP) || defined(HAVE_TEST_OP)
++    *out_len = pd(op, out);
++    return LZO_E_EOF_NOT_FOUND;
++#endif
++
++eof_found:
++    assert(t == 1);
++    *out_len = pd(op, out);
++    return (ip == ip_end ? LZO_E_OK :
++           (ip < ip_end  ? LZO_E_INPUT_NOT_CONSUMED : LZO_E_INPUT_OVERRUN));
++
++#if defined(HAVE_NEED_IP)
++input_overrun:
++    *out_len = pd(op, out);
++    return LZO_E_INPUT_OVERRUN;
++#endif
++
++#if defined(HAVE_NEED_OP)
++output_overrun:
++    *out_len = pd(op, out);
++    return LZO_E_OUTPUT_OVERRUN;
++#endif
++
++#if defined(LZO_TEST_OVERRUN_LOOKBEHIND)
++lookbehind_overrun:
++    *out_len = pd(op, out);
++    return LZO_E_LOOKBEHIND_OVERRUN;
++#endif
++}
++
++#endif
++
++/***** End of minilzo.c *****/
+diff --git a/lib/Makefile b/lib/Makefile
+index 992a39e..e64987b 100644
+--- a/lib/Makefile
++++ b/lib/Makefile
+@@ -5,7 +5,8 @@
+ lib-y := ctype.o string.o vsprintf.o cmdline.o \
+ 	 rbtree.o radix-tree.o dump_stack.o \
+ 	 idr.o div64.o int_sqrt.o bitmap.o extable.o prio_tree.o \
+-	 sha1.o irq_regs.o reciprocal_div.o
++	 sha1.o irq_regs.o reciprocal_div.o \
++	 WKdm/WKdm.o WK4x4/WK4x4.o LZO/minilzo.o
+ 
+ lib-$(CONFIG_MMU) += ioremap.o
+ lib-$(CONFIG_SMP) += cpumask.o
+diff --git a/lib/WK4x4/README b/lib/WK4x4/README
+new file mode 100644
+index 0000000..811c1f2
+--- /dev/null
++++ b/lib/WK4x4/README
+@@ -0,0 +1,70 @@
++WK2-v0.2
++
++Since the dictionary updates are applied by literally re-ordering
++elements within each set by copying values, we reduce the cost of that
++re-ordering by storing only the full pattern.  (Previously, both full
++and partial patterns were stored.)
++
++We also re-introduce the measurement procedure so that this version
++can be used with the compression testing code and the page-dump
++traces.
++
++One final and unexpected change provided a surprising speed
++improvement:  The DictionaryElement structure was changed to a type
++definition, as the structure contained only one element after the
++high-bits pattern member was eliminated.  (The Dictionary structure
++was also eliminated, as it too contained only one member,
++specifically the array of dictionary elements.  However, this
++particular removal did not result in a speed increase.)  I am unsure
++of the reason for the speedup, but it is non-trivial.
++=====
++WK2-v0.1
++
++We skip the modifications made in WK1 to apply orthogonal changes from
++WK0.  In particular, the dictionary is no longer a linked list of
++LRU-ordered word patterns, but rather a 4x4 set associative cache.
++Each set is maintained in LRU order, although by literal movement of
++patterns in the set rather than through a linked list.
++
++Note that we change the use of the fourth available tag value.
++Previously, it was used to indicate an exact hit in the first queue
++position.  However, now there are four sets, each with its own first
++queue position.  In order to simplify the changes, the extra tag will
++be used to indicate a pattern of all zeros.
++
++=====
++WK0-v0.2
++
++This version contains a small improvement on the previous one--the
++dictionary position is encoded as an array index.  Thus, in the
++decoding phase, an LRU-ordered traversal of the dictionary in no
++longer necessary, and the needed dictionary item can be immediately
++accessed.
++
++=====
++WK0-v0.1
++
++This first version of WK0 is a reasonably straightforward
++implementation of a recency-based compression scheme that operates on
++machine-word sized tokens.  Here are some key pieces of information
++that are likely to help in comparing this version of the algorithm
++with later versions:
++
++- 16 element dictionary that stores both full and partial patterns.
++- Partial matching is based on the top 22 bits of a 32 bit word.
++- Partial matches are attempted first, then exact if the partial
++succeeds.
++- Encoding is performed by adding tag bits, dictionary position (if
++needed), and literal bits (if needed) to the compressed stream one at
++a time.  (Compression can actually be done in one encoding step, as
++the requisite knowledge is available at encoding time.  For
++decompression, however, the compressed stream must be parsed one item
++at a time, making decoding slow.)
++- Dictionary position numbers are encoded as LRU-ordered indices.
++That means that upon decoding, the dictionary must be traversed in LRU
++order.
++
++There may be more needed information, but it depends on what changes
++are made later.  Note that each new version will have its own README
++with updates to this information.
++=====
+diff --git a/lib/WK4x4/WK4x4.c b/lib/WK4x4/WK4x4.c
+new file mode 100644
+index 0000000..4ff1f2e
+--- /dev/null
++++ b/lib/WK4x4/WK4x4.c
+@@ -0,0 +1,999 @@
++/* 
++   WK4x4-v0.2 -- Wilson-Kaplan-4x4 version 0.2
++
++   Compresses buffers using a dictionary based match and partial match
++   scheme.
++
++   Scott F. Kaplan -- sfkaplan@cs.utexas.edu
++   September 1997 */
++
++/* ============================================================ */
++/* Included files */
++
++//#include <unistd.h>
++//#include <math.h>
++#include <linux/WK4x4.h>
++
++/* ============================================================ */
++/* Types and structures */
++
++/* A structure to store each element of the dictionary. */
++//typedef WK_word DictionaryElement;
++
++/* ============================================================ */
++/* Pre-processor constants */
++
++#define BITS_PER_WORD 32
++#define BYTES_PER_WORD 4
++#define NUMBER_OF_SETS 4
++#define ENTRIES_PER_SET 4
++#define ALL_ONES_MASK 0xFFFFFFFF
++
++#define BITS_PER_WORD_SHIFT 5
++#define BITS_PER_WORD_MASK ((1<<BITS_PER_WORD_SHIFT) - 1)
++
++#define ZERO_TAG 0x0
++#define PARTIAL_TAG 0x1
++#define MISS_TAG 0x2
++#define EXACT_TAG 0x3
++
++#define BITS_PER_BYTE 8
++
++/* ============================================================ */
++/* Global macros */
++
++/* Strip the low bits of a pattern to give the high bits pattern.
++   The stripped patterns are used for initial tests of partial
++   matches. */
++#define STRIP_LOW_BITS(pattern) (pattern & 0xFFFFFC00)
++
++/* String the high bits of a pattern so the low order bits can
++   be included in an encoding of a partial match. */
++#define STRIP_HIGH_BITS(pattern) (pattern & 0x3FF)
++
++/* This macro defined the contents of the initial index table.  The
++   sets that compose the dictionary are stored in a single array.
++   Given an index to some element in the dictionary, that index can be
++   used with this table to obtain the index of the first element of
++   that set in the dictionary array. */
++#define INITIAL_INDEX_TABLE_CONTENTS { \
++  0, 0, 0, 0, \
++  4, 4, 4, 4, \
++  8, 8, 8, 8, \
++  12, 12, 12, 12 \
++}
++
++/* This macro defines the contents of the hash table, into which the
++   hash function will look to determine in which set to search for a
++   pattern.  The table contents has been generated through the
++   pseudo-random number function lrand48(). */
++#define HASH_TABLE_CONTENTS { \
++  8, \
++  0, \
++  8, \
++  4, \
++  0, \
++  8, \
++  4, \
++  8, \
++  8, \
++  0, \
++  0, \
++  12, \
++  12, \
++  0, \
++  8, \
++  8, \
++  12, \
++  4, \
++  0, \
++  4, \
++  8, \
++  4, \
++  4, \
++  4, \
++  8, \
++  4, \
++  8, \
++  0, \
++  12, \
++  4, \
++  12, \
++  8, \
++  12, \
++  0, \
++  8, \
++  0, \
++  12, \
++  4, \
++  0, \
++  0, \
++  12, \
++  0, \
++  8, \
++  4, \
++  8, \
++  8, \
++  4, \
++  8, \
++  12, \
++  12, \
++  8, \
++  4, \
++  0, \
++  8, \
++  8, \
++  8, \
++  0, \
++  0, \
++  4, \
++  12, \
++  0, \
++  12, \
++  8, \
++  8, \
++  8, \
++  8, \
++  12, \
++  4, \
++  8, \
++  8, \
++  12, \
++  12, \
++  8, \
++  12, \
++  12, \
++  4, \
++  8, \
++  4, \
++  4, \
++  8, \
++  4, \
++  8, \
++  0, \
++  0, \
++  0, \
++  0, \
++  0, \
++  4, \
++  4, \
++  4, \
++  4, \
++  4, \
++  0, \
++  12, \
++  0, \
++  12, \
++  4, \
++  12, \
++  8, \
++  0, \
++  4, \
++  4, \
++  8, \
++  4, \
++  12, \
++  4, \
++  8, \
++  12, \
++  12, \
++  8, \
++  8, \
++  0, \
++  12, \
++  4, \
++  4, \
++  8, \
++  8, \
++  8, \
++  0, \
++  4, \
++  12, \
++  8, \
++  4, \
++  0, \
++  8, \
++  0, \
++  4, \
++  0, \
++  8, \
++  4, \
++  8, \
++  12, \
++  12, \
++  12, \
++  4, \
++  0, \
++  8, \
++  12, \
++  0, \
++  0, \
++  0, \
++  12, \
++  0, \
++  4, \
++  0, \
++  12, \
++  4, \
++  0, \
++  8, \
++  4, \
++  12, \
++  0, \
++  4, \
++  0, \
++  4, \
++  12, \
++  12, \
++  8, \
++  4, \
++  8, \
++  0, \
++  4, \
++  0, \
++  0, \
++  4, \
++  0, \
++  0, \
++  0, \
++  0, \
++  12, \
++  0, \
++  12, \
++  8, \
++  0, \
++  8, \
++  4, \
++  0, \
++  8, \
++  4, \
++  4, \
++  12, \
++  0, \
++  12, \
++  0, \
++  12, \
++  0, \
++  8, \
++  12, \
++  8, \
++  8, \
++  12, \
++  4, \
++  12, \
++  12, \
++  12, \
++  8, \
++  8, \
++  12, \
++  8, \
++  12, \
++  12, \
++  12, \
++  8, \
++  0, \
++  0, \
++  4, \
++  8, \
++  0, \
++  12, \
++  4, \
++  0, \
++  4, \
++  4, \
++  0, \
++  4, \
++  12, \
++  4, \
++  0, \
++  12, \
++  12, \
++  4, \
++  0, \
++  4, \
++  0, \
++  12, \
++  0, \
++  12, \
++  8, \
++  12, \
++  0, \
++  4, \
++  12, \
++  4, \
++  4, \
++  12, \
++  12, \
++  12, \
++  0, \
++  12, \
++  4, \
++  8, \
++  0, \
++  12, \
++  4, \
++  8, \
++  0, \
++  4, \
++  4, \
++  12, \
++  8, \
++  4, \
++  12, \
++  8, \
++  12, \
++  8, \
++  0 \
++}
++
++
++static unsigned int hashTable [] = HASH_TABLE_CONTENTS;
++
++
++/* Some output macros for debugging.  These macros are pre-processed
++   into nothing if the DEBUG_PAGE_COMPRESS symbol is not defined. */
++#if defined DEBUG_WK
++#define DEBUG_PRINT_1(string) printf (string)
++#define DEBUG_PRINT_2(string,value) printf(string, value)
++#else
++#define DEBUG_PRINT_1(string)
++#define DEBUG_PRINT_2(string, value)
++#endif
++
++/* ============================================================ */
++/* Macros for WK4x4_compress and WK4x4_decompress only */
++
++/* Set up the dictionary before performing compression or
++   decompression.  Each element is loaded with some value, the
++   high-bits version of that value, and a next pointer. */
++#define PRELOAD_DICTIONARY { \
++  dictionary[0] = 1; \
++  dictionary[1] = 1; \
++  dictionary[2] = 1; \
++  dictionary[3] = 1; \
++  dictionary[4] = 1; \
++  dictionary[5] = 1; \
++  dictionary[6] = 1; \
++  dictionary[7] = 1; \
++  dictionary[8] = 1; \
++  dictionary[9] = 1; \
++  dictionary[10] = 1; \
++  dictionary[11] = 1; \
++  dictionary[12] = 1; \
++  dictionary[13] = 1; \
++  dictionary[14] = 1; \
++  dictionary[15] = 1; \
++}
++
++/* In the set the starts at index initialIndex, copy the zeroth item
++   into the first slot, leaving the zeroth slot open. */
++#define SLIDE_TOP_ONE_DOWN \
++  dictionary[initialIndex + 1] = \
++    dictionary[initialIndex]
++
++/* In the set that starts at index initialIndex, copy the first item
++   into the second slot, and then the zeroth item into the first slot,
++   leaving the zeroth slot open. */
++#define SLIDE_TOP_TWO_DOWN { \
++  dictionary[initialIndex + 2] = \
++    dictionary[initialIndex + 1]; \
++  SLIDE_TOP_ONE_DOWN; \
++}
++
++/* In the set that starts at index initialIndex, copy the second item
++   into the third slot, the first item into the second slot, and then
++   the zeroth item into the first slot, leaving the zeroth slot
++   open. */
++#define SLIDE_TOP_THREE_DOWN { \
++  dictionary[initialIndex + 3] = \
++    dictionary[initialIndex + 2]; \
++  SLIDE_TOP_TWO_DOWN; \
++}
++
++/* ============================================================ */
++/* WK4x4_compress macros and procedure */
++
++/* When a word that missed completely is encountered, it needs to be
++   inserted into the dictionary in favor of the LRU entry in that
++   set.  Slide all other items in that set down, and insert this new
++   pattern as the first entry in that set.
++   Note that this macro is not the same one used to perform the same
++   task when decompressing, as extra information (the high bits
++   pattern and the set) are already available during compression, but
++   will have to be calculated for decompression. */
++#define INSERT_NEW_COMPRESSED_PATTERN { \
++  SLIDE_TOP_THREE_DOWN; \
++  dictionary[initialIndex] = sourcePattern; \
++}
++
++/* Given a word with its low bits set to zero, hash that word into an
++   index (corresponding to the zero-th entry the appropriate set.  The
++   hash into the table is determine by bits 10 through 21. */
++#define HASH(pattern) \
++  hashTable[((pattern) >> 10) & 0x000000FF]
++
++/* Add the bits given by bitsToEncodeExpr to the destination buffer. */
++#define ADD_TO_DESTINATION(bitsToEncodeExpr, numberOfBitsToEncode) { \
++  if (numberOfBitsToEncode > remainingBits) { \
++    /* The number of bits to be encoded exceeds the number of bits
++       available in the current encoding word.  So, append as many bits
++       as will fit into the current word, store that word, and then
++       begin a new encoding word with the remaining bits. */ \
++    unsigned int bitsInSecondWord = numberOfBitsToEncode - remainingBits; \
++    WK_word bitsToEncode = (bitsToEncodeExpr); \
++    *destinationBuffer = ((encodingWord << remainingBits) | \
++			  (bitsToEncode >> bitsInSecondWord)); \
++    DEBUG_PRINT_2("Crossing word boundary: %8x\n", *destinationBuffer); \
++    destinationBuffer++; \
++    /* It's safe not to mask out the high bits already stored in the
++       previous encoding word, as those high bits will be shifted out
++       later, as this encoding word is filled. */ \
++    encodingWord = bitsToEncode; \
++    remainingBits = BITS_PER_WORD - bitsInSecondWord; \
++  } else if (numberOfBitsToEncode < remainingBits) { \
++    /* The number of bits to be encoded is less than the number of
++       bits remaining in the current encoding word.  Simply append
++       all the bits to the current encoding word. */ \
++    DEBUG_PRINT_1("Within word boundary\n"); \
++    encodingWord <<= numberOfBitsToEncode; \
++    encodingWord |= (bitsToEncodeExpr); \
++    remainingBits -= numberOfBitsToEncode; \
++  } else { \
++    /* The number of bits to be encoded is exactly the number of
++       bits remaining in the current encoding word.  Append the bits
++       to the current encoding word, store that word, and initialize
++       a new encoding word by resetting the remaining bits counter. */ \
++    if (numberOfBitsToEncode == BITS_PER_WORD) { \
++      *destinationBuffer = (bitsToEncodeExpr); \
++    } else { \
++      *destinationBuffer = ((encodingWord << remainingBits) | \
++			    (bitsToEncodeExpr)); \
++    } \
++    DEBUG_PRINT_2("Hitting word boundary: %8x\n", *destinationBuffer); \
++    destinationBuffer++; \
++    remainingBits = BITS_PER_WORD; \
++  } \
++}
++
++
++/* Create the encoding for a word that did not match any dictionary
++   entry and add that information to the end of the desintation buffer. */
++#define ENCODE_MISS { \
++  DEBUG_PRINT_1("Encoding miss\n"); \
++  ADD_TO_DESTINATION(0x2,2); \
++  ADD_TO_DESTINATION(sourcePattern,BITS_PER_WORD); \
++}
++
++/* Create the encoding of a partial match and add that information
++   to the end of the destination buffer. */
++#define ENCODE_PARTIAL { \
++  DEBUG_PRINT_2("Encoding partial: %1x\n", currentIndex); \
++  ADD_TO_DESTINATION(0x4000 | \
++		     (currentIndex << 10) | \
++		     STRIP_HIGH_BITS(sourcePattern), \
++		     16); \
++}
++
++/* Create the encoding of a partial match and add that information
++   to the end of the destination buffer. */
++#define ENCODE_EXACT { \
++  DEBUG_PRINT_2("Encoding exact: %1x\n", currentIndex); \
++  ADD_TO_DESTINATION(0x30 | currentIndex, 6); \
++}
++
++/* Create the encoding of an exact match at the first position and add
++   that information to the end of the destination buffer. */
++#define ENCODE_ZERO { \
++  DEBUG_PRINT_1("Encoding zero\n"); \
++  ADD_TO_DESTINATION(ZERO_TAG, 2); \
++}
++
++#define COPY_SOURCE_TO_ZEROTH_POSITION \
++  dictionary[initialIndex] = sourcePattern
++
++
++/* Attempt a partial match and, if needed, an exact match between
++   the given pattern and the zeroth dictionary element in the given
++   set. */
++#define COMPARE_ZEROTH_ELEMENT { \
++  currentIndex = initialIndex; \
++  if (STRIP_LOW_BITS(dictionary[currentIndex]) ==  \
++      sourceHighBitsPattern) { \
++    if (dictionary[currentIndex] == sourcePattern) { \
++      ENCODE_EXACT; \
++    } else { \
++      ENCODE_PARTIAL; \
++      dictionary[currentIndex] = sourcePattern; \
++    } \
++    continue; \
++  } \
++}
++
++/* Attempt a partial match and, if needed, an exact match between
++   the given pattern and the first dictionary element in the given
++   set.  Re-order the set if a match occurs. */
++#define COMPARE_FIRST_ELEMENT { \
++  currentIndex++; \
++  if (STRIP_LOW_BITS(dictionary[currentIndex]) ==  \
++      sourceHighBitsPattern) { \
++    if (dictionary[currentIndex] == sourcePattern) { \
++      ENCODE_EXACT; \
++    } else { \
++      ENCODE_PARTIAL; \
++    } \
++    SLIDE_TOP_ONE_DOWN; \
++    COPY_SOURCE_TO_ZEROTH_POSITION; \
++    continue; \
++  } \
++}
++
++/* Attempt a partial match and, if needed, an exact match between
++   the given pattern and the zeroth dictionary element in the given
++   set.  Re-order the set if a match occurs. */
++#define COMPARE_SECOND_ELEMENT { \
++  currentIndex++; \
++  if (STRIP_LOW_BITS(dictionary[currentIndex]) ==  \
++      sourceHighBitsPattern) { \
++    if (dictionary[currentIndex] == sourcePattern) { \
++      ENCODE_EXACT; \
++    } else { \
++      ENCODE_PARTIAL; \
++    } \
++    SLIDE_TOP_TWO_DOWN; \
++    COPY_SOURCE_TO_ZEROTH_POSITION; \
++    continue; \
++  } \
++}
++
++/* Attempt a partial match and, if needed, an exact match between
++   the given pattern and the zeroth dictionary element in the given
++   set.  Re-order the set if a match occurs. */
++#define COMPARE_THIRD_ELEMENT { \
++  currentIndex++; \
++  if (STRIP_LOW_BITS(dictionary[currentIndex]) ==  \
++      sourceHighBitsPattern) { \
++    if (dictionary[currentIndex] == sourcePattern) { \
++      ENCODE_EXACT; \
++    } else { \
++      ENCODE_PARTIAL; \
++    } \
++    SLIDE_TOP_THREE_DOWN; \
++    COPY_SOURCE_TO_ZEROTH_POSITION; \
++    continue; \
++  } \
++}
++
++/* Given pointers to source buffer (sourceBuffer) of uncompressed data
++   and a destination buffer (destinationBuffer) into which compressed
++   data can be placed, as well as the number of words in the source
++   buffer (words), compress the contents of the source and place the
++   results in the destination.  Return the number of bytes placed into
++   the destination. */
++unsigned int
++WK4x4_compress (WK_word* sourceBuffer,
++		WK_word* destinationBuffer,
++		unsigned int words) {
++  DictionaryElement dictionary[DICTIONARY_SIZE];
++  //unsigned int hashTable [] = HASH_TABLE_CONTENTS;
++  int wordIndex;
++  unsigned int remainingBits = BITS_PER_WORD;
++  WK_word encodingWord = 0;
++  WK_word* destinationBufferStartingPoint = destinationBuffer;
++
++  /* Initialize the elements with values and set its pointers. */
++  PRELOAD_DICTIONARY;
++
++  /* Loop through each word in the source page. */
++  for (wordIndex = 0;  wordIndex < words; wordIndex++) {
++    register WK_word sourcePattern;
++    register WK_word sourceHighBitsPattern;
++    unsigned int initialIndex;
++    unsigned int currentIndex;
++
++    /* Load the current pattern into a register. */
++    sourcePattern = sourceBuffer[wordIndex];
++
++    /* If this word is all zeros, encode it as such. */
++    if (sourcePattern == 0) {
++      ENCODE_ZERO;
++      continue;
++    }
++
++    /* Load a partial matching pattern (i.e. the low bits have all
++       been set to zero) into another register. */
++    sourceHighBitsPattern = STRIP_LOW_BITS(sourcePattern);
++
++    /* Determine which set to search in the dictionary through a hash
++       function.  Note that the hash function returns the array index
++       at which we begin searching, since the sets are stored linearly
++       in an array. */
++    initialIndex = HASH(sourcePattern);
++    currentIndex = initialIndex;
++
++    /* Compare the source word to each element in the set by comparing
++       first the high bits and then the full pattern.  If a match is
++       made, the encoding will be performed and a "continue" statement
++       will cause a skip to the next word in the source page. */
++    COMPARE_ZEROTH_ELEMENT; /* 0 */
++    COMPARE_FIRST_ELEMENT; /* 1 */
++    COMPARE_SECOND_ELEMENT; /* 2 */
++    COMPARE_THIRD_ELEMENT; /* 3 */
++
++    /* If we've reached this point, we've missed at every element
++       of the dictionary.  Encode the miss and update the
++       dictionary. */
++    ENCODE_MISS;
++    INSERT_NEW_COMPRESSED_PATTERN;
++
++  }
++
++  /* If there are any bits stored in the current encoding word, shift
++     those bits to the top of the word and store them. */
++  if (remainingBits < BITS_PER_WORD) {
++    *destinationBuffer = (encodingWord << remainingBits);
++    DEBUG_PRINT_2("Flushing last word: %8x\n", *destinationBuffer);
++    destinationBuffer++;
++  }
++
++  /* Return the number of bytes placed into the compression buffer. */
++  return ((unsigned int)(destinationBuffer -
++			 destinationBufferStartingPoint)) *
++    BYTES_PER_WORD;
++
++}
++
++/* ============================================================ */
++/* WK4x4_decompress macros and procedure */
++
++/* When a word that missed completely is encountered, it needs to be
++   inserted into the dictionary in favor of the LRU entry in that
++   set.  Slide all other items in that set down, and insert this new
++   pattern as the first entry in that set.
++   Note that this macro is not the same one used to perform the same
++   task when compressing, as extra information (the high bits
++   pattern and the set) are already available during compression, but
++   will have to be calculated for decompression. */
++#define INSERT_NEW_DECOMPRESSED_PATTERN { \
++  initialIndex = HASH(*destinationBuffer); \
++  SLIDE_TOP_THREE_DOWN; \
++  dictionary[initialIndex] = *destinationBuffer; \
++}
++
++/* Based on some current index and the initial index for the set in
++   which the current index resides, slide the elements of that set
++   down such that the current index's contents are clobbered, and the
++   zeroth slot in the set is open. */
++#define SLIDE_SOME_NUMBER_OF_ELEMENTS \
++  switch (currentIndex - initialIndex) { \
++  case 3: \
++    dictionary[initialIndex + 3] = \
++      dictionary[initialIndex + 2]; \
++  case 2: \
++    dictionary[initialIndex + 2] = \
++      dictionary[initialIndex + 1]; \
++  case 1: \
++    dictionary[initialIndex + 1] = \
++      dictionary[initialIndex]; \
++  } \
++
++/* Extract the given number of bits from the source buffer and
++   place those bits, by themselves, into the target variable. */
++#define EXTRACT_BITS(numberOfBitsToExtract, targetVariable) { \
++  if (numberOfBitsToExtract > remainingBits) { \
++    /* The set of bits to be extracted are split across the current
++       decoding word and the next one.  Extract the bits available in
++       the current word and place them into their final position in
++       the target variable.  Advance to the next decoding word in
++       the source buffer and extract the remaining needed bits into
++       the target variable. */ \
++    unsigned int bitsInSecondWord = numberOfBitsToExtract - remainingBits; \
++    targetVariable = (decodingWord >> \
++		      (BITS_PER_WORD - numberOfBitsToExtract)); \
++    sourceBuffer++; \
++    decodingWord = *sourceBuffer; \
++    DEBUG_PRINT_2("Crossing word boundary: %8x\n", decodingWord); \
++    targetVariable |= (decodingWord >> (BITS_PER_WORD - bitsInSecondWord)); \
++    decodingWord <<= bitsInSecondWord; \
++    remainingBits = BITS_PER_WORD - bitsInSecondWord; \
++  } else if (numberOfBitsToExtract < remainingBits) { \
++    /* All of the bits to be extracted are available in the current
++       decoding word.  Extract those bits, place them into the target,
++       and update the current decoding word accordingly. */ \
++    DEBUG_PRINT_1("Within word boundary\n"); \
++    targetVariable = (decodingWord >> \
++		      (BITS_PER_WORD - numberOfBitsToExtract)); \
++    decodingWord <<= numberOfBitsToExtract; \
++    remainingBits -= numberOfBitsToExtract; \
++  } else { \
++    /* The number of bits requested is exactly the number of bits left in
++       the current decoding word.  Copy those bits and advance the
++       current decoding word to the next word in the source buffer. */ \
++    targetVariable = (decodingWord >> \
++		      (BITS_PER_WORD - numberOfBitsToExtract)); \
++    sourceBuffer++; \
++    decodingWord = *sourceBuffer; \
++    DEBUG_PRINT_2("Hitting word boundary: %8x\n", decodingWord); \
++    remainingBits = BITS_PER_WORD; \
++  } \
++}
++
++/* Given a pointer to a source buffer (sourceBuffer) of compressed
++   data and a pointer to a destination buffer (destinationBuffer) into
++   which uncompressed data can be placed, as well as the number of
++   uncompressed words that will be written to the destination buffer
++   (words), decompress the data into the destination buffer. */
++int
++WK4x4_decompress (WK_word* sourceBuffer,
++		  WK_word* destinationBuffer,
++		  unsigned int words) {
++  /* The dictionary array is divided into sets.  Each entry in the
++     dictionary array is really an entry in one of the dictionary's
++     sets.  Each set begins at a particular offset within the
++     dictionary array.  Given an index into the dictionary array (and
++     thus into a set), the initial index table provides the index at
++     which that set begins in the dictionary array. */
++  DictionaryElement dictionary[DICTIONARY_SIZE];
++  unsigned int initialIndexTable [] = INITIAL_INDEX_TABLE_CONTENTS;
++  //unsigned int hashTable [] = HASH_TABLE_CONTENTS;
++  unsigned int wordIndex;
++  unsigned int remainingBits = BITS_PER_WORD;
++  WK_word decodingWord = *sourceBuffer;
++  
++  DEBUG_PRINT_2("\n-----\nBeginning decompression: %8x\n", decodingWord);
++
++  /* Initialize the elements with values and set its pointers. */
++  PRELOAD_DICTIONARY;
++
++  /* Loop through each encoded word in the source buffer, and iterate
++     through the words of the destination buffer as decompression
++     occurs. */
++  for (wordIndex = 0;
++       wordIndex < words;
++       wordIndex++, destinationBuffer++) {
++    unsigned int tag;
++    unsigned int currentIndex;
++    unsigned int initialIndex;
++    register WK_word lowBitsWord;
++    register WK_word highBitsWord;
++
++    /* Extract the tag from the current word. */
++    EXTRACT_BITS(2, tag);
++
++    /* Based on that tag, determine how to decode the rest of the
++       word. */
++    switch (tag) {
++
++    case ZERO_TAG:
++      /* Append a zero word to the destination. */
++      *destinationBuffer = 0;
++      break;
++
++    case MISS_TAG:
++      DEBUG_PRINT_1("Decoding miss\n");
++      /* Extract the whole word and append it to the destination
++	 page. */
++      EXTRACT_BITS(BITS_PER_WORD, *destinationBuffer);
++      /* Update the dictionary by inserting this pattern in place of
++	 the oldest pattern in the LRU queue, and making that position
++	 the new head. */
++      INSERT_NEW_DECOMPRESSED_PATTERN;
++      break;
++
++    case PARTIAL_TAG:
++      /* Extract the index of the dictionary entry that this word
++	 matched. */
++      EXTRACT_BITS(4, currentIndex);
++      DEBUG_PRINT_2("Decoding partial: %1x\n", currentIndex);
++      /* Extract the low bits. */
++      EXTRACT_BITS(10, lowBitsWord);
++      /* Grab the high bits pattern from the proper dictionary
++	 entry. */
++      highBitsWord = 
++	STRIP_LOW_BITS(dictionary[currentIndex]);
++      /* Append to the destination page the combination of the high
++	 and low bits words. */
++      *destinationBuffer = highBitsWord | lowBitsWord;
++      /* Update the dictionary by moving the accessed entry to the
++	 head of its set.  Note that we also update the full pattern
++	 with the word that was just reconstructed. */
++      initialIndex = initialIndexTable[currentIndex];
++      SLIDE_SOME_NUMBER_OF_ELEMENTS;
++      dictionary[initialIndex] = *destinationBuffer;
++      break;
++
++    case EXACT_TAG:
++      /* Extract the index of the dictionary entry that this word
++	 matched. */
++      EXTRACT_BITS(4, currentIndex);
++      DEBUG_PRINT_2("Decoding exact: %1x\n", currentIndex);
++      /* Grab the pattern from the given entry in the dictionary
++	 and append it to the destination page. */
++      *destinationBuffer = dictionary[currentIndex];
++      /* Update the dictionary by moving the accessed entry to the
++	 head of its set. */
++      initialIndex = initialIndexTable[currentIndex];
++      SLIDE_SOME_NUMBER_OF_ELEMENTS;
++      dictionary[initialIndex] = *destinationBuffer;
++      break;
++
++    default:
++      DEBUG_PRINT_2("***Bad tag value: %1x\n", tag);
++      return -1;
++
++    }
++  }
++  return 0;
++}
++
++/* ============================================================ */
++/* WK4x4_measureCompress macros and procedure */
++
++/* Add to the exact or partial count for this queue position. */
++#define COUNT_EXACT { \
++  exactMatchCountArray[currentIndex]++; \
++  bitsUsedForEncoding += 6; \
++}
++
++#define COUNT_ZERO bitsUsedForEncoding += 2
++
++#define COUNT_PARTIAL { \
++  partialMatchCountArray[currentIndex]++; \
++  bitsUsedForEncoding += 16; \
++}
++
++#define COUNT_MISS bitsUsedForEncoding += 34
++
++/* Attempt a partial match and, if needed, an exact match between
++   the given pattern and the zeroth dictionary element in the given
++   set. */
++#define COMPARE_ZEROTH_ELEMENT_FOR_MEASUREMENT { \
++  currentIndex = initialIndex; \
++  if (STRIP_LOW_BITS(dictionary[currentIndex]) ==  \
++      sourceHighBitsPattern) { \
++    if (dictionary[currentIndex] == sourcePattern) { \
++      COUNT_EXACT; \
++    } else { \
++      COUNT_PARTIAL; \
++      dictionary[currentIndex] = sourcePattern; \
++    } \
++    continue; \
++  } \
++}
++
++/* Attempt a partial match and, if needed, an exact match between
++   the given pattern and the first dictionary element in the given
++   set.  Re-order the set if a match occurs. */
++#define COMPARE_FIRST_ELEMENT_FOR_MEASUREMENT { \
++  currentIndex++; \
++  if (STRIP_LOW_BITS(dictionary[currentIndex]) ==  \
++      sourceHighBitsPattern) { \
++    if (dictionary[currentIndex] == sourcePattern) { \
++      COUNT_EXACT; \
++    } else { \
++      COUNT_PARTIAL; \
++    } \
++    SLIDE_TOP_ONE_DOWN; \
++    COPY_SOURCE_TO_ZEROTH_POSITION; \
++    continue; \
++  } \
++}
++
++/* Attempt a partial match and, if needed, an exact match between
++   the given pattern and the zeroth dictionary element in the given
++   set.  Re-order the set if a match occurs. */
++#define COMPARE_SECOND_ELEMENT_FOR_MEASUREMENT { \
++  currentIndex++; \
++  if (STRIP_LOW_BITS(dictionary[currentIndex]) ==  \
++      sourceHighBitsPattern) { \
++    if (dictionary[currentIndex] == sourcePattern) { \
++      COUNT_EXACT; \
++    } else { \
++      COUNT_PARTIAL; \
++    } \
++    SLIDE_TOP_TWO_DOWN; \
++    COPY_SOURCE_TO_ZEROTH_POSITION; \
++    continue; \
++  } \
++}
++
++/* Attempt a partial match and, if needed, an exact match between
++   the given pattern and the zeroth dictionary element in the given
++   set.  Re-order the set if a match occurs. */
++#define COMPARE_THIRD_ELEMENT_FOR_MEASUREMENT { \
++  currentIndex++; \
++  if (STRIP_LOW_BITS(dictionary[currentIndex]) ==  \
++      sourceHighBitsPattern) { \
++    if (dictionary[currentIndex] == sourcePattern) { \
++      COUNT_EXACT; \
++    } else { \
++      COUNT_PARTIAL; \
++    } \
++    SLIDE_TOP_THREE_DOWN; \
++    COPY_SOURCE_TO_ZEROTH_POSITION; \
++    continue; \
++  } \
++}
++
++/* Given a pointer to a source buffer (sourceBuffer) of uncompressed
++   data, the number of words stored in that buffer (words), and two
++   arrays for counting the number of exact (exactMatchCountArray) and
++   partial (partialMatchCountArray) matches at each LRU position,
++   compress the source and record what types of hits (partial or
++   exact) occurred at each queue position.  Return the number of words
++   that would be placed into a destination buffer (if there were
++   one). */
++unsigned int
++WK4x4_measureCompress (WK_word* sourceBuffer,
++		       unsigned int words,
++		       unsigned int* exactMatchCountArray,
++		       unsigned int* partialMatchCountArray) {
++  DictionaryElement dictionary[DICTIONARY_SIZE];
++//   DictionaryElement dictionary[DICTIONARY_SIZE];
++//   unsigned int hashTable [] = HASH_TABLE_CONTENTS;
++  unsigned int wordIndex;
++  unsigned int index;
++  unsigned int bitsUsedForEncoding = 0;
++
++  /* Initialize the elements with values and set its pointers. */
++  PRELOAD_DICTIONARY;
++
++  /* Loop through the match information arrays and clear their
++     values. */
++  for (index = 0; index < DICTIONARY_SIZE; index++) {
++    exactMatchCountArray[index] = 0;
++    partialMatchCountArray[index] = 0;
++  }
++
++  /* Loop through each word in the source page. */
++  for (wordIndex = 0;  wordIndex < words; wordIndex++) {
++    register WK_word sourcePattern;
++    register WK_word sourceHighBitsPattern;
++    unsigned int initialIndex;
++    unsigned int currentIndex;
++
++    /* Load the current pattern into a register. */
++    sourcePattern = sourceBuffer[wordIndex];
++
++    /* If this word is all zeros, encode it as such. */
++    if (sourcePattern == 0) {
++      COUNT_ZERO;
++      continue;
++    }
++
++    /* Load a partial matching pattern (i.e. the low bits have all
++       been set to zero) into another register. */
++    sourceHighBitsPattern = STRIP_LOW_BITS(sourcePattern);
++
++    /* Determine which set to search in the dictionary through a hash
++       function.  Note that the hash function returns the array index
++       at which we begin searching, since the sets are stored linearly
++       in an array. */
++    initialIndex = HASH(sourcePattern);
++    currentIndex = initialIndex;
++
++    /* Compare the source word to each element in the set by comparing
++       first the high bits and then the full pattern.  If a match is
++       made, the encoding will be performed and a "continue" statement
++       will cause a skip to the next word in the source page. */
++    COMPARE_ZEROTH_ELEMENT_FOR_MEASUREMENT; /* 0 */
++    COMPARE_FIRST_ELEMENT_FOR_MEASUREMENT; /* 1 */
++    COMPARE_SECOND_ELEMENT_FOR_MEASUREMENT; /* 2 */
++    COMPARE_THIRD_ELEMENT_FOR_MEASUREMENT; /* 3 */
++
++    /* If we've reached this point, we've missed at every element
++       of the dictionary.  Encode the miss and update the
++       dictionary. */
++    COUNT_MISS;
++    INSERT_NEW_COMPRESSED_PATTERN;
++
++  }
++
++  /* Return the number of bytes used to store the compressed
++     region. */
++  //return ((unsigned int)ceil((double)bitsUsedForEncoding /
++  //                           (double)BITS_PER_WORD)) *
++  //  BYTES_PER_WORD;
++
++  return (unsigned int)((bitsUsedForEncoding/BITS_PER_WORD + 
++	!!(bitsUsedForEncoding & BITS_PER_WORD_MASK))*BYTES_PER_WORD);
++}
+diff --git a/lib/WKdm/WKdm.c b/lib/WKdm/WKdm.c
+new file mode 100644
+index 0000000..3220ce3
+--- /dev/null
++++ b/lib/WKdm/WKdm.c
+@@ -0,0 +1,779 @@
++/* direct-mapped partial matching compressor with simple 22/10 split
++ *
++ *  Compresses buffers using a dictionary based match and partial match
++ *  (high bits only or full match) scheme.
++ *
++ *  Paul Wilson -- wilson@cs.utexas.edu
++ *  Scott F. Kaplan -- sfkaplan@cs.utexas.edu
++ *  September 1997
++ *
++ *  Modified to make it work in kernel mode by Nitin Gupta
++ *  (as part of Red Hat LoC'05 program)
++ *  -- Reduce memory footprint from about 7K in original to just 4K now
++ *  -- Reduced kernel stack usage to just few works (original several KBs)
++ *  -- Eliminated dependencies on user-space libraries
++ *  -- Removed all floating point operation with their (functionally
++ *     equivalent) integer operations. 
++ */
++
++
++/* compressed output format, in memory order
++ *  1. a four-word HEADER containing four one-word values:
++ *     i.   a one-word code saying what algorithm compressed the data
++ *     ii.  an integer WORD offset into the page saying
++ *          where the queue position area starts
++ *     iii. an integer WORD offset into the page saying where
++ *          the low-bits area starts
++ *     iv.  an integer WORD offset into the page saying where the
++ *          low-bits area ends
++ *
++ *  2. a 64-word TAGS AREA holding one two-bit tag for each word in 
++ *     the original (1024-word) page, packed 16 per word
++ *
++ *  3. a variable-sized FULL WORDS AREA (always word aligned and an
++ *     integral number of words) holding full-word patterns that
++ *     were not in the dictionary when encoded (i.e., dictionary misses)
++ *
++ *  4. a variable-sized QUEUE POSITIONS AREA (always word aligned and
++ *     an integral number of words) holding four-bit queue positions,
++ *     packed eight per word.
++ *
++ *  5. a variable-sized LOW BITS AREA (always word aligned and an
++ *     integral number of words) holding ten-bit low-bit patterns
++ *     (from partial matches), packed three per word. 
++ */
++
++
++
++/* ============================================================ */
++/* Included files */
++
++/*
++#include <stdio.h>
++#include <unistd.h>
++#include <math.h>
++#include <strings.h>
++*/
++
++// kern includes-------------
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/proc_fs.h>
++#include <linux/string.h>
++#include <linux/mm.h>
++#include <asm/uaccess.h>
++// -------------------------------
++
++#include <linux/WKdm.h>
++
++#define WKdm_WORK_MEM	(2*300*sizeof(WK_word) + 1200*sizeof(unsigned short))
++
++/* at the moment we have dependencies on the page size.  That should
++ * be changed to work for any power-of-two size that's at least 16
++ * words, or something like that
++ */
++
++#define PAGE_SIZE_IN_WORDS 1024
++#define PAGE_SIZE_IN_BYTES 4096
++
++#define DICTIONARY_SIZE 16
++
++/*
++ * macros defining the basic layout of stuff in a page
++ */
++#define HEADER_SIZE_IN_WORDS 4
++#define TAGS_AREA_OFFSET 4
++#define TAGS_AREA_SIZE 64
++
++/* the next few are used during compression to write the header */
++#define SET_QPOS_AREA_START(compr_dest_buf,qpos_start_addr)  \
++        (compr_dest_buf[1] = qpos_start_addr - compr_dest_buf)
++#define SET_LOW_BITS_AREA_START(compr_dest_buf,lb_start_addr) \
++        (compr_dest_buf[2] = lb_start_addr - compr_dest_buf)
++#define SET_LOW_BITS_AREA_END(compr_dest_buf,lb_end_addr) \
++        (compr_dest_buf[3] = lb_end_addr - compr_dest_buf)
++
++/* the next few are only use during decompression to read the header */
++#define TAGS_AREA_START(decomp_src_buf)       \
++        (decomp_src_buf + TAGS_AREA_OFFSET)
++#define TAGS_AREA_END(decomp_src_buf)         \
++        (TAGS_AREA_START(decomp_src_buf) + TAGS_AREA_SIZE)
++#define FULL_WORD_AREA_START(the_buf) TAGS_AREA_END(the_buf)
++#define QPOS_AREA_START(decomp_src_buf)       \
++        (decomp_src_buf + decomp_src_buf[1])   
++#define LOW_BITS_AREA_START(decomp_src_buf)   \
++        (decomp_src_buf + (decomp_src_buf[2]))
++#define QPOS_AREA_END(the_buf) LOW_BITS_AREA_START(the_buf)
++#define LOW_BITS_AREA_END(decomp_src_buf)     \
++        (decomp_src_buf + (decomp_src_buf[3]))
++
++/* ============================================================ */
++/* Types and structures */
++
++/* A structure to store each element of the dictionary. */
++//typedef WK_word DictionaryElement;
++
++/* ============================================================ */
++/* Misc constants */
++
++#define BITS_PER_WORD 32
++#define BYTES_PER_WORD 4
++#define NUM_LOW_BITS 10
++#define LOW_BITS_MASK 0x3FF
++#define ALL_ONES_MASK 0xFFFFFFFF
++
++#define TWO_BITS_PACKING_MASK 0x03030303
++#define FOUR_BITS_PACKING_MASK 0x0F0F0F0F
++#define TEN_LOW_BITS_MASK 0x000003FF
++#define TWENTY_TWO_HIGH_BITS_MASK 0xFFFFFC00
++
++/* Tag values.  NOTE THAT CODE MAY DEPEND ON THE NUMBERS USED.
++ * Check for conditionals doing arithmetic on these things
++ * before changing them
++ */
++#define ZERO_TAG 0x0
++#define PARTIAL_TAG 0x1
++#define MISS_TAG 0x2
++#define EXACT_TAG 0x3
++
++#define BITS_PER_BYTE 8
++
++/* ============================================================ */
++/* Global macros */
++
++/* Shift out the low bits of a pattern to give the high bits pattern.
++   The stripped patterns are used for initial tests of partial
++   matches. */
++#define HIGH_BITS(word_pattern) (word_pattern >> NUM_LOW_BITS)
++
++/* String the high bits of a pattern so the low order bits can
++   be included in an encoding of a partial match. */
++#define LOW_BITS(word_pattern) (word_pattern & LOW_BITS_MASK)
++
++#if defined DEBUG_WK
++#define DEBUG_PRINT_1(string) printk (string)
++#define DEBUG_PRINT_2(string,value) printk(string, value)
++#else
++#define DEBUG_PRINT_1(string)
++#define DEBUG_PRINT_2(string, value)
++#endif
++
++/* Set up the dictionary before performing compression or
++   decompression.  Each element is loaded with some value, the
++   high-bits version of that value, and a next pointer. */
++#define PRELOAD_DICTIONARY { \
++  dictionary[0] = 1; \
++  dictionary[1] = 1; \
++  dictionary[2] = 1; \
++  dictionary[3] = 1; \
++  dictionary[4] = 1; \
++  dictionary[5] = 1; \
++  dictionary[6] = 1; \
++  dictionary[7] = 1; \
++  dictionary[8] = 1; \
++  dictionary[9] = 1; \
++  dictionary[10] = 1; \
++  dictionary[11] = 1; \
++  dictionary[12] = 1; \
++  dictionary[13] = 1; \
++  dictionary[14] = 1; \
++  dictionary[15] = 1; \
++}
++
++/* these are the constants for the hash function lookup table.
++ * Only zero maps to zero.  The rest of the tabale is the result
++ * of appending 17 randomizations of the multiples of 4 from
++ * 4 to 56.  Generated by a Scheme script in hash.scm. 
++ */
++#define HASH_LOOKUP_TABLE_CONTENTS { \
++   0, 52,  8, 56, 16, 12, 28, 20,  4, 36, 48, 24, 44, 40, 32, 60, \
++   8, 12, 28, 20,  4, 60, 16, 36, 24, 48, 44, 32, 52, 56, 40, 12, \
++   8, 48, 16, 52, 60, 28, 56, 32, 20, 24, 36, 40, 44,  4,  8, 40, \
++  60, 32, 20, 44,  4, 36, 52, 24, 16, 56, 48, 12, 28, 16,  8, 40, \
++  36, 28, 32, 12,  4, 44, 52, 20, 24, 48, 60, 56, 40, 48,  8, 32, \
++  28, 36,  4, 44, 20, 56, 60, 24, 52, 16, 12, 12,  4, 48, 20,  8, \
++  52, 16, 60, 24, 36, 44, 28, 56, 40, 32, 36, 20, 24, 60, 40, 44, \
++  52, 16, 32,  4, 48,  8, 28, 56, 12, 28, 32, 40, 52, 36, 16, 20, \
++  48,  8,  4, 60, 24, 56, 44, 12,  8, 36, 24, 28, 16, 60, 20, 56, \
++  32, 40, 48, 12,  4, 44, 52, 44, 40, 12, 56,  8, 36, 24, 60, 28, \
++  48,  4, 32, 20, 16, 52, 60, 12, 24, 36,  8,  4, 16, 56, 48, 44, \
++  40, 52, 32, 20, 28, 32, 12, 36, 28, 24, 56, 40, 16, 52, 44,  4, \
++  20, 60,  8, 48, 48, 52, 12, 20, 32, 44, 36, 28,  4, 40, 24,  8, \
++  56, 60, 16, 36, 32,  8, 40,  4, 52, 24, 44, 20, 12, 28, 48, 56, \
++  16, 60,  4, 52, 60, 48, 20, 16, 56, 44, 24,  8, 40, 12, 32, 28, \
++  36, 24, 32, 12,  4, 20, 16, 60, 36, 28,  8, 52, 40, 48, 44, 56  \
++}
++
++#define HASH_TO_DICT_BYTE_OFFSET(pattern) \
++        (hashLookupTable[((pattern) >> 10) & 0xFF])
++
++/* EMIT... macros emit bytes or words into the intermediate arrays
++ */
++
++#define EMIT_BYTE(fill_ptr, byte_value) {*fill_ptr = byte_value; fill_ptr++;}
++#define EMIT_WORD(fill_ptr,word_value) {*fill_ptr = word_value; fill_ptr++;}
++
++/* RECORD... macros record the results of modeling in the intermediate
++ * arrays
++ */
++
++#define RECORD_ZERO { EMIT_BYTE(next_tag,ZERO_TAG); }
++
++#define RECORD_EXACT(queue_posn)  EMIT_BYTE(next_tag,EXACT_TAG);  \
++                                  EMIT_BYTE(next_qp,(queue_posn)); 
++
++#define RECORD_PARTIAL(queue_posn,low_bits_pattern) { \
++   EMIT_BYTE(next_tag,PARTIAL_TAG);                   \
++   EMIT_BYTE(next_qp,(queue_posn));                   \
++   EMIT_WORD(next_low_bits,(low_bits_pattern))  }
++
++#define RECORD_MISS(word_pattern) EMIT_BYTE(next_tag,MISS_TAG); \
++                                  EMIT_WORD(next_full_patt,(word_pattern)); 
++
++unsigned int hashLookupTable [] = HASH_LOOKUP_TABLE_CONTENTS;
++
++
++/***********************************************************************
++ *                   THE PACKING ROUTINES
++ */
++
++/* WK_pack_2bits()
++ * Pack some multiple of four words holding two-bit tags (in the low
++ * two bits of each byte) into an integral number of words, i.e.,
++ * one fourth as many.  
++ * NOTE: Pad the input out with zeroes to a multiple of four words!
++ */
++WK_word*
++WK_pack_2bits(WK_word* source_buf,
++              WK_word* source_end,
++	      WK_word* dest_buf) {
++   register WK_word* src_next = source_buf;
++   WK_word* dest_next = dest_buf;
++  
++   while (src_next < source_end) {
++      register WK_word temp = src_next[0];
++      temp |= (src_next[1] << 2);
++      temp |= (src_next[2] << 4);
++      temp |= (src_next[3] << 6);
++    
++      dest_next[0] = temp;
++      dest_next++;     
++      src_next += 4;
++   }
++  
++   return dest_next;
++
++}
++
++/* WK_pack_4bits()
++ * Pack an even number of words holding 4-bit patterns in the low bits
++ * of each byte into half as many words.
++ * note: pad out the input with zeroes to an even number of words!
++ */
++
++WK_word*
++WK_pack_4bits(WK_word* source_buf,
++	      WK_word* source_end,
++	      WK_word* dest_buf) {
++   register WK_word* src_next = source_buf;
++   WK_word* dest_next = dest_buf;
++  
++   /* this loop should probably be unrolled */
++   while (src_next < source_end) {
++     register WK_word temp = src_next[0];
++     temp |= (src_next[1] << 4);
++    
++     dest_next[0] = temp;
++     dest_next++;     
++     src_next += 2;
++   }
++
++   return dest_next;
++
++}
++
++/* pack_3_tenbits()
++ * Pack a sequence of three ten bit items into one word.
++ * note: pad out the input with zeroes to an even number of words!
++ */
++// WK_word*
++// WK_pack_3_tenbits(WK_word* source_buf,
++// 		  WK_word* source_end,
++// 		  WK_word* dest_buf) {
++WK_word*
++WK_pack_3_tenbits(unsigned short* source_buf,
++		  unsigned short* source_end,
++		  WK_word* dest_buf) {
++
++   //register WK_word* src_next = source_buf;
++   register unsigned short* src_next = source_buf;
++   WK_word* dest_next = dest_buf;
++  
++   /* this loop should probably be unrolled */
++   /* while (src_next < source_end) {
++      register WK_word temp = src_next[0];
++      temp |= (src_next[1] << 10);
++      temp |= (src_next[2] << 20);
++    */
++   while (src_next < source_end) {
++      register WK_word temp = src_next[2];
++      temp = (temp << 10) | src_next[1];
++      temp = (temp << 10) | src_next[0];
++    
++      dest_next[0] = temp;
++      dest_next++;     
++      src_next += 3;
++   }
++
++   return dest_next;
++
++}
++
++/***************************************************************************
++ *          THE UNPACKING ROUTINES should GO HERE
++ */
++
++
++#define GET_NEXT_TAG tags[tagsIndex++]
++#define GET_NEXT_FULL_PATTERN fullPatterns[fullPatternsIndex++]
++#define GET_NEXT_LOW_BITS lowBits[lowBitsIndex++]
++#define GET_NEXT_DICTIONARY_INDEX dictionaryIndices[dictionaryIndicesIndex++]
++
++/*  WK_unpack_2bits takes any number of words containing 16 two-bit values
++ *  and unpacks them into four times as many words containg those
++ *  two bit values as bytes (with the low two bits of each byte holding
++ *  the actual value.
++ */
++WK_word*
++WK_unpack_2bits(WK_word *input_buf,
++                WK_word *input_end,
++                WK_word *output_buf) {
++
++  register WK_word *input_next = input_buf;
++  register WK_word *output_next = output_buf;
++  register WK_word packing_mask = TWO_BITS_PACKING_MASK;
++
++  /* loop to repeatedly grab one input word and unpack it into
++   * 4 output words.  This loop could be unrolled a little---it's
++   * designed to be easy to do that.
++   */   
++  while (input_next < input_end) {
++    register WK_word temp = input_next[0];
++    DEBUG_PRINT_2("Unpacked tags word: %.8x\n", temp);
++    output_next[0] = temp & packing_mask;
++    output_next[1] = (temp >> 2) & packing_mask;
++    output_next[2] = (temp >> 4) & packing_mask;
++    output_next[3] = (temp >> 6) & packing_mask;
++    
++    output_next += 4;
++    input_next++;
++  }
++
++  return output_next;
++
++}
++
++/* unpack four bits consumes any number of words (between input_buf
++ * and input_end) holding 8 4-bit values per word, and unpacks them
++ * into twice as many words, with each value in a separate byte.
++ * (The four-bit values occupy the low halves of the bytes in the
++ * result).
++ */
++WK_word*
++WK_unpack_4bits(WK_word *input_buf,
++                WK_word *input_end,
++                WK_word *output_buf) {
++
++  register WK_word *input_next = input_buf;
++  register WK_word *output_next = output_buf;
++  register WK_word packing_mask = FOUR_BITS_PACKING_MASK;
++  
++  
++  /* loop to repeatedly grab one input word and unpack it into
++   * 4 output words.  This loop should probably be unrolled
++   * a little---it's designed to be easy to do that.
++   */   
++  while (input_next < input_end) {
++    register WK_word temp = input_next[0];
++    DEBUG_PRINT_2("Unpacked dictionary indices word: %.8x\n", temp);
++    output_next[0] = temp & packing_mask;
++    output_next[1] = (temp >> 4) & packing_mask;
++    
++    output_next += 2;
++    input_next++;
++  }
++  
++  return output_next;
++
++}
++
++/* unpack_3_tenbits unpacks three 10-bit items from (the low 30 bits of)
++ * a 32-bit word
++ */
++// WK_word*
++// WK_unpack_3_tenbits(WK_word *input_buf,
++//                     WK_word *input_end,
++//                     WK_word *output_buf) {
++unsigned short*
++WK_unpack_3_tenbits(WK_word *input_buf,
++                    WK_word *input_end,
++                    unsigned short *output_buf) {
++
++  register WK_word *input_next = input_buf;
++  register unsigned short *output_next = output_buf;
++  register WK_word packing_mask = LOW_BITS_MASK;
++  
++  /* loop to fetch words of input, splitting each into three
++   * words of output with 10 meaningful low bits.  This loop
++   * probably ought to be unrolled and maybe coiled
++   */
++  while (input_next < input_end) {
++    register WK_word temp = input_next[0];
++    
++    output_next[0] = temp & packing_mask;
++    output_next[1] = (temp >> 10) & packing_mask;
++    output_next[2] = temp >> 20;
++    
++    input_next++;
++    output_next += 3;
++  }
++  
++  return output_next;
++
++}
++/***************************************************************************
++ *  WKdm_compress()---THE COMPRESSOR
++ */
++
++unsigned int
++WKdm_compress (WK_word* src_buf,
++               WK_word* dest_buf,
++	       unsigned int num_input_words)
++{
++  //static DictionaryElement dictionary[DICTIONARY_SIZE];
++  DictionaryElement dictionary[DICTIONARY_SIZE];
++  //char hashLookupTable [] = HASH_LOOKUP_TABLE_CONTENTS;
++
++  /* arrays that hold output data in intermediate form during modeling */
++  /* and whose contents are packed into the actual output after modeling */
++
++  /* sizes of these arrays should be increased if you want to compress
++   * pages larger than 4KB
++   */
++  //WK_word tempTagsArray[300];         /* tags for everything          */
++  //WK_word tempQPosArray[300];         /* queue positions for matches  */
++  //WK_word tempLowBitsArray[1200];     /* low bits for partial matches */
++
++  /* is kmalloc+kfree call thrice per compress() call too much overhead? */
++  //   WK_word *tempTagsArray = kmalloc(sizeof(WK_word)*300, GFP_KERNEL);
++  //   WK_word *tempQPosArray = kmalloc(sizeof(WK_word)*300, GFP_KERNEL);
++  //   /* WK_word *tempLowBitsArray = kmalloc(sizeof(WK_word)*1200, GFP_KERNEL); */
++  //   unsigned short *tempLowBitsArray = kmalloc(sizeof(unsigned short)*1200, GFP_KERNEL);
++
++  WK_word *tempTagsArray, *tempQPosArray, *next_full_patt,
++		*next_input_word, *end_of_input;
++  char *next_tag, *next_qp;
++  unsigned short *tempLowBitsArray, *next_low_bits;
++  /* boundary_tmp will be used for keeping track of what's where in
++   * the compressed page during packing
++   */
++  WK_word* boundary_tmp;
++  WK_word *Work_mem = kmalloc(WKdm_WORK_MEM, GFP_KERNEL);
++  if (!Work_mem) return -ENOMEM;
++
++  tempTagsArray = Work_mem;
++  tempQPosArray = Work_mem + 300;
++  tempLowBitsArray = (unsigned short *)(Work_mem + 600);
++  //static WK_word tempTagsArray[300];
++  //static WK_word tempQPosArray[300];
++  /* WK_word *tempLowBitsArray = kmalloc(sizeof(WK_word)*1200, GFP_KERNEL); */
++  //static unsigned short tempLowBitsArray[1200];
++
++  /* Fill pointers for filling intermediate arrays (of queue positions
++   * and low bits) during encoding.
++   * Full words go straight to the destination buffer area reserved
++   * for them.  (Right after where the tags go.)
++   */
++  next_tag = (char *) tempTagsArray;
++  next_qp = (char *) tempQPosArray;
++  //WK_word* next_low_bits = tempLowBitsArray;
++  next_low_bits = tempLowBitsArray;
++
++  next_input_word = src_buf;
++  end_of_input = src_buf + num_input_words;
++
++  PRELOAD_DICTIONARY;
++
++  next_full_patt = dest_buf + TAGS_AREA_OFFSET + (num_input_words / 16);
++
++  while (next_input_word < end_of_input)
++  {
++     WK_word *dict_location;
++     WK_word dict_word;
++     WK_word input_word = *next_input_word;
++
++     /* compute hash value, which is a byte offset into the dictionary,
++      * and add it to the base address of the dictionary. Cast back and
++      * forth to/from char * so no shifts are needed
++      */
++     dict_location =
++       (WK_word *)
++       (((char*) dictionary) + HASH_TO_DICT_BYTE_OFFSET(input_word));
++
++     dict_word = *dict_location;
++
++     if (input_word == dict_word)
++     {
++        RECORD_EXACT(dict_location - dictionary); 
++	//printk("EXACT\n");
++     }
++     else if (input_word == 0) {
++	//printk("ZERO\n");
++        RECORD_ZERO;
++     }
++     else
++     {
++        WK_word input_high_bits = HIGH_BITS(input_word);
++        if (input_high_bits == HIGH_BITS(dict_word)) {
++	  RECORD_PARTIAL(dict_location - dictionary, LOW_BITS(input_word));
++          //printk("PARTIAL\n");
++          *dict_location = input_word;
++        }
++        else {
++	  RECORD_MISS(input_word);
++          //printk("MISS\n");
++          *dict_location = input_word;
++        }
++     }
++     next_input_word++;
++  }
++
++  /* Record (into the header) where we stopped writing full words,
++   * which is where we will pack the queue positions.  (Recall
++   * that we wrote the full words directly into the dest buffer
++   * during modeling.
++   */
++
++  SET_QPOS_AREA_START(dest_buf,next_full_patt);
++
++  /* Pack the tags into the tags area, between the page header
++   * and the full words area.  We don't pad for the packer
++   * because we assume that the page size is a multiple of 16.
++   */     
++
++  boundary_tmp = WK_pack_2bits(tempTagsArray,
++		               (WK_word *) next_tag,
++			       dest_buf + HEADER_SIZE_IN_WORDS);
++
++  /* Pack the queue positions into the area just after
++   * the full words.  We have to round up the source
++   * region to a multiple of two words.
++   */
++
++  {
++    unsigned int num_bytes_to_pack = next_qp - (char *) tempQPosArray;
++    //unsigned int num_packed_words = ceil((double) num_bytes_to_pack / 8);
++    unsigned int num_packed_words = (num_bytes_to_pack>>3) + !!(num_bytes_to_pack & 7);
++    unsigned int num_source_words = num_packed_words * 2;
++    WK_word* endQPosArray = tempQPosArray + num_source_words;
++
++    /* Pad out the array with zeros to avoid corrupting real packed
++       values. */
++    for (; /* next_qp is already set as desired */
++	 next_qp < (char*)endQPosArray;
++	 next_qp++) {
++      *next_qp = 0;
++    }
++    
++    boundary_tmp = WK_pack_4bits(tempQPosArray,
++			         endQPosArray,
++				 next_full_patt);
++
++    /* Record (into the header) where we stopped packing queue positions,
++     * which is where we will start packing low bits.
++     */
++    SET_LOW_BITS_AREA_START(dest_buf,boundary_tmp);
++
++  }
++
++  /* Pack the low bit patterns into the area just after
++   * the queue positions.  We have to round up the source
++   * region to a multiple of three words.
++   */
++
++  {
++    //WK_word* endLowBitsArray;
++    unsigned short* endLowBitsArray;
++    unsigned int num_tenbits_to_pack =
++      next_low_bits - tempLowBitsArray;
++    //unsigned int num_packed_words = ceil((double) num_tenbits_to_pack / 3);
++    unsigned int num_packed_words = num_tenbits_to_pack / 3;
++    //unsigned int num_source_words = num_packed_words * 3;
++    unsigned int num_source_shorts = num_packed_words * 3;
++    if (num_tenbits_to_pack!=num_source_shorts) {
++        num_packed_words++;
++        num_source_shorts=num_packed_words*3;
++    }
++    endLowBitsArray = tempLowBitsArray + num_source_shorts;
++
++    /* Pad out the array with zeros to avoid corrupting real packed
++       values. */
++
++    for (; /* next_low_bits is already set as desired */
++	 next_low_bits < endLowBitsArray;
++	 next_low_bits++) {
++      *next_low_bits = 0;
++    }
++
++    
++    boundary_tmp = WK_pack_3_tenbits (tempLowBitsArray,
++		                      endLowBitsArray,
++				      boundary_tmp);
++
++    SET_LOW_BITS_AREA_END(dest_buf,boundary_tmp);
++
++  }
++
++  //kfree(tempTagsArray);
++  //kfree(tempQPosArray);
++  //kfree(tempLowBitsArray);
++  kfree(Work_mem);
++
++  return ((char *) boundary_tmp - (char *) dest_buf);
++
++}
++
++/*********************************************************************
++ * WKdm_decompress --- THE DECOMPRESSOR                                 
++ * Expects WORD pointers to the source and destination buffers
++ * and a page size in words.  The page size had better be 1024 unless     
++ * somebody finds the places that are dependent on the page size and 
++ * fixes them
++ */
++
++unsigned int
++WKdm_decompress (WK_word* src_buf,
++		 WK_word* dest_buf,
++		 unsigned int words) {
++
++  //static DictionaryElement dictionary[DICTIONARY_SIZE];
++  DictionaryElement dictionary[DICTIONARY_SIZE];
++  //unsigned int hashLookupTable [] = HASH_LOOKUP_TABLE_CONTENTS;
++
++  /* arrays that hold output data in intermediate form during modeling */
++  /* and whose contents are packed into the actual output after modeling */
++
++  /* sizes of these arrays should be increased if you want to compress
++   * pages larger than 4KB
++   */
++//   WK_word tempTagsArray[300];        /* tags for everything          */
++//   WK_word tempQPosArray[300];        /* queue positions for matches  */
++//   WK_word tempLowBitsArray[1200];    /* low bits for partial matches */
++
++//   WK_word *tempTagsArray = kmalloc(sizeof(WK_word)*300, GFP_KERNEL);
++//   WK_word *tempQPosArray = kmalloc(sizeof(WK_word)*300, GFP_KERNEL);
++//   /*WK_word *tempLowBitsArray = kmalloc(sizeof(WK_word)*1200, GFP_KERNEL); */
++//   unsigned short *tempLowBitsArray = kmalloc(sizeof(unsigned short)*1200, GFP_KERNEL);
++
++  WK_word *tempTagsArray, *tempQPosArray;
++  unsigned short *tempLowBitsArray;
++  WK_word *Work_mem = kmalloc(WKdm_WORK_MEM, GFP_ATOMIC);
++  if (!Work_mem) return -ENOMEM;
++
++  tempTagsArray = Work_mem;
++  tempQPosArray = Work_mem + 300;
++  tempLowBitsArray = (unsigned short *)(Work_mem + 600);
++
++
++  //static WK_word tempTagsArray[300];
++  //static WK_word tempQPosArray[300];
++  /* WK_word *tempLowBitsArray = kmalloc(sizeof(WK_word)*1200, GFP_KERNEL); */
++  //static unsigned short tempLowBitsArray[1200];
++
++  PRELOAD_DICTIONARY;
++
++  WK_unpack_2bits(TAGS_AREA_START(src_buf),
++                  TAGS_AREA_END(src_buf),
++                  tempTagsArray);
++
++  WK_unpack_4bits(QPOS_AREA_START(src_buf),
++                  QPOS_AREA_END(src_buf),
++                  tempQPosArray);
++
++  WK_unpack_3_tenbits(LOW_BITS_AREA_START(src_buf),
++                      LOW_BITS_AREA_END(src_buf),
++                      tempLowBitsArray);
++
++  {
++    register char *next_tag = (char *) tempTagsArray;
++    char *tags_area_end =
++       ((char *) tempTagsArray) + PAGE_SIZE_IN_WORDS;
++    char *next_q_pos = (char *) tempQPosArray;
++    //WK_word *next_low_bits = tempLowBitsArray;
++    unsigned short *next_low_bits = tempLowBitsArray;
++    WK_word *next_full_word = FULL_WORD_AREA_START(src_buf);
++
++    WK_word *next_output = dest_buf;
++
++    /* this loop should probably be unrolled. Maybe we should unpack
++     * as 4 bit values, giving two consecutive tags, and switch on
++     * that 16 ways to decompress 2 words at a whack
++     */
++    while (next_tag < tags_area_end) {
++
++       char tag = next_tag[0];
++
++       switch(tag) {
++
++         case ZERO_TAG: {
++            //printk("D:ZERO\n");
++            *next_output = 0;
++            break;
++         }
++         case EXACT_TAG: {
++            WK_word *dict_location = dictionary + *(next_q_pos++);
++	    //printk("D:EXACT\n");
++            /* no need to replace dict. entry if matched exactly */
++            *next_output = *dict_location;
++            break;
++         }
++         case PARTIAL_TAG: {
++            WK_word *dict_location = dictionary + *(next_q_pos++);
++	    //printk("D:EXACT\n");
++            {
++               WK_word temp = *dict_location;
++
++               /* strip out low bits */
++               temp = ((temp >> NUM_LOW_BITS) << NUM_LOW_BITS);
++
++               /* add in stored low bits from temp array */
++               temp = temp | *(next_low_bits++);
++
++               *dict_location = temp;      /* replace old value in dict. */
++               *next_output = temp;    /* and echo it to output */
++            }
++            break;
++         }
++         case MISS_TAG: {
++            WK_word missed_word = *(next_full_word++);
++            WK_word *dict_location = 
++              (WK_word *)
++              (((char *) dictionary) + HASH_TO_DICT_BYTE_OFFSET(missed_word));
++	    //printk("D:MISS\n");
++            *dict_location = missed_word;
++            *next_output = missed_word;
++            break;
++         }
++       }
++       next_tag++;
++       next_output++;
++    }
++
++  }
++
++  //kfree(tempTagsArray);
++  //kfree(tempQPosArray);
++  //kfree(tempLowBitsArray);
++  kfree(Work_mem);
++  return 0;
++}
+diff --git a/mm/Makefile b/mm/Makefile
+index f3c077e..4ab11fe 100644
+--- a/mm/Makefile
++++ b/mm/Makefile
+@@ -11,7 +11,7 @@ obj-y			:= bootmem.o filemap.o mempool.o oom_kill.o fadvise.o \
+ 			   page_alloc.o page-writeback.o pdflush.o \
+ 			   readahead.o swap.o truncate.o vmscan.o \
+ 			   prio_tree.o util.o mmzone.o vmstat.o backing-dev.o \
+-			   $(mmu-y)
++			   ccache.o $(mmu-y)
+ 
+ ifeq ($(CONFIG_MMU)$(CONFIG_BLOCK),yy)
+ obj-y			+= bounce.o
+diff --git a/mm/ccache.c b/mm/ccache.c
+new file mode 100644
+index 0000000..a5e53ca
+--- /dev/null
++++ b/mm/ccache.c
+@@ -0,0 +1,889 @@
++#include <linux/highmem.h>
++#include <linux/pagemap.h>
++
++#include <linux/bit_spinlock.h>
++#include <linux/proc_fs.h>
++#include <linux/ccache.h>
++#include <linux/minilzo.h>
++#include <linux/WK4x4.h>
++#include <linux/WKdm.h>
++
++#include "internal.h"
++
++#define PAGES_TO_KB	(1 << (PAGE_SHIFT-10))
++
++static DEFINE_SPINLOCK(ccache_lock);
++
++
++static int anon_cc_started = 0, fs_backed_cc_started = 0;
++unsigned long max_anon_cc_size = 0, max_fs_backed_cc_size = 0;
++static atomic_t anon_cc_size, fs_backed_cc_size;	/* current sizes */
++const unsigned long ccache_size_limit = MAX_SWAP_OFFSET - 1;
++
++static struct list_head pages_head, mcl_head, lru_head;
++static struct chunk *free_head = NULL;
++
++/* show ccache stats via /proc/ccache_stats */
++static struct proc_dir_entry *proc_ccache_stats;
++
++static unsigned int next_algo = 1;
++
++typedef int (*compress_t) (unsigned char *src, unsigned long src_len,
++				unsigned char *dest, unsigned long *dest_len);
++
++typedef int (*decompress_t) (unsigned char *src, unsigned long src_len,
++				unsigned char *dest);
++struct comp_algo {
++	char name[10];
++	compress_t compress;
++	decompress_t decompress;
++};
++
++static struct comp_algo comp_algo[MAX_COMP_ALGOS];
++
++static inline void set_algo_idx(struct chunk_head *ch, int algo_idx)
++{
++	unsigned long idx = algo_idx;
++	idx = idx << CH_ALGO_BITS_START;
++	ch->flags |= idx;
++}
++
++static inline int get_algo_idx(struct chunk_head *ch)
++{
++	unsigned int algo = ch->flags & CH_ALGO_BITS_MASK;
++	algo = algo >> CH_ALGO_BITS_START;
++	CC_DEBUG("==== got_algo_idx=%d ====", algo);
++	return algo;
++}
++
++/* Guess what algo might be suitable to compress this page */
++static int guess_algo(struct page *page)
++{
++	/*
++	 * possible things: Run a NULL counter on page. If no. of
++	 * NULLs exceed a threshold, use WKdm/WK4x4 else LZO.
++	 * (as suggested by John Moser)
++	 */
++
++	/* cyclically select algos */
++	next_algo++;
++	next_algo %= 3;
++	return next_algo;
++}
++
++static int WKdm_compress_wrapper (unsigned char *src, unsigned long src_len,
++				unsigned char *dest, unsigned long *dest_len)
++{
++	CC_DEBUG2("start");
++	*dest_len = WKdm_compress((WK_word*)src, (WK_word*)dest, 1024);
++	if (*dest_len > 0)
++		return 0;
++	return *dest_len;
++}
++
++static int WKdm_decompress_wrapper (unsigned char *src, unsigned long src_len,
++				unsigned char *dest)
++{
++	unsigned int ret;
++	CC_DEBUG2("start");
++	ret = WKdm_decompress((WK_word*)src, (WK_word*)dest, 1024);
++	return ret;
++}
++
++static int WK4x4_compress_wrapper (unsigned char *src, unsigned long src_len,
++				unsigned char *dest, unsigned long *dest_len)
++{
++	CC_DEBUG2("start");
++	*dest_len = WK4x4_compress((WK_word*)src, (WK_word*)dest, 1024);
++	if (*dest_len > 0)
++		return 0;
++	return *dest_len;
++}
++
++static int WK4x4_decompress_wrapper (unsigned char *src, unsigned long src_len,
++				unsigned char *dest)
++{
++	int ret;
++	CC_DEBUG2("start");
++	ret = WK4x4_decompress((WK_word*)src, (WK_word*)dest, 1024);
++	return ret;
++}
++
++static int LZO_compress_wrapper (unsigned char *src, unsigned long src_len,
++				unsigned char *dest, unsigned long *dest_len)
++{
++	int ret;
++	CC_DEBUG2("start");
++	ret = lzo1x_1_compress((lzo_bytep)src, PAGE_SIZE, (lzo_bytep)dest, (lzo_uintp)dest_len);
++	if (ret == LZO_E_OK) {
++		CC_DEBUG2("compression done: dest_len=%lu", *dest_len);
++		return 0;
++	} else {
++		CC_DEBUG2("compression failed!");
++		return -ENOMEM;
++	}
++}
++
++
++static int LZO_decompress_wrapper (unsigned char *src, unsigned long src_len,
++				unsigned char *dest)
++{
++	int ret, dest_len;
++	CC_DEBUG2("start");
++	ret = lzo1x_decompress((lzo_bytep)src, (lzo_uint)src_len,
++		(lzo_bytep)dest, (lzo_uintp)(&dest_len));
++	if (ret == LZO_E_OK) {
++		CC_DEBUG2("decompression done");
++		return 0;
++	} else {
++		CC_DEBUG2("decompression failed!");
++		return -ENOMEM;
++	}
++}
++
++/*
++ * Add a page, create a chunk of size PAGE_SIZE,
++ * add this chunk to free list and master chunk list.
++ */
++static int expand_ccache(void)
++{
++	struct page *page;
++	struct chunk *chunk;
++
++	page = alloc_page(GFP_KERNEL);
++	if (!page)
++		goto out;
++
++	/* get from slab */
++	chunk = kmalloc(sizeof(struct chunk), GFP_KERNEL);
++	if (!chunk)
++		goto out;
++
++	chunk->start_addr = page_address(page);
++	chunk->size = PAGE_SIZE;
++	SetChunkFree(chunk);
++	ClearChunkMerged(chunk);
++	spin_lock(&ccache_lock);
++	chunk->next = free_head;
++	free_head = chunk;
++	list_add_tail(&chunk->chunks, &mcl_head);
++	list_add_tail(&page->lru, &pages_head);
++	spin_unlock(&ccache_lock);
++	CC_DEBUG2("success");
++	return 0;
++out:
++	if (page)
++		__free_page(page);
++	CC_DEBUG("allocation error");
++	return -ENOMEM;
++}
++
++/*
++ * Break 'chunk' at 'size'.
++ * Create a new chunk with size 'ChunkSize(chunk) - size'
++ */
++static int break_chunk(struct chunk *chunk, int size)
++{
++	struct chunk* new_chunk;
++	BUG_ON(!size);
++
++	CC_DEBUG2("start");
++
++	/* get from slab */
++	new_chunk = kmalloc(sizeof(struct chunk), GFP_KERNEL);
++	if (!new_chunk)
++		goto out;
++
++	new_chunk->start_addr = chunk->start_addr + size;
++	new_chunk->size = ChunkSize(chunk) - size;
++	SetChunkFree(new_chunk);
++
++	chunk->size = size;
++
++	/* 'chunk' is the last one since we had to break it */
++	chunk->next = NULL;
++
++	spin_lock(&ccache_lock);
++	/* add new_chunk to free list */
++	new_chunk->next = free_head;
++	free_head = new_chunk;
++
++	/* add new_chunk to MCL just next to chunk */
++	list_add(&new_chunk->chunks, &chunk->chunks);
++	spin_unlock(&ccache_lock);
++	return 0;
++out:
++	CC_DEBUG("failed!");
++	return -ENOMEM;
++}
++
++static int merge_chunk(struct chunk *chunk)
++{
++	struct chunk *tmp_chunk = NULL;
++	void *page_start = (void *)((unsigned long)(chunk->start_addr) &
++				PAGE_MASK);
++	void *page_end = page_start + PAGE_SIZE;
++	int back = 1;
++
++	spin_lock(&ccache_lock);
++	if (chunk->chunks.prev != &mcl_head)
++		tmp_chunk = list_entry(chunk->chunks.prev, struct chunk, chunks);
++repeat:
++	if (tmp_chunk	&& ChunkFree(tmp_chunk)
++			&& (tmp_chunk->start_addr >= page_start)
++			&& (tmp_chunk->start_addr < page_end)) {
++		CC_DEBUG2("size=%d", ChunkSize(tmp_chunk));
++		if (back)
++			chunk->start_addr = tmp_chunk->start_addr;
++		chunk->size = ChunkSize(chunk) + ChunkSize(tmp_chunk); 
++		list_del_init(&tmp_chunk->chunks);
++		SetChunkMerged(tmp_chunk);
++		tmp_chunk->start_addr = (void *)ATM_POISON;
++	}
++	/* and now forward */
++	if (!back) {
++		SetChunkFree(chunk);
++		spin_unlock(&ccache_lock);
++		return 0;
++	}
++	back = 0;
++	tmp_chunk = NULL;
++	if (chunk->chunks.next != &mcl_head)
++		tmp_chunk = list_entry(chunk->chunks.next, struct chunk, chunks);
++	goto repeat;
++}
++
++/*
++ * put back all chunks connected to this chunk_head
++ * back on free list and free the chunk_head
++ */
++static void free_chunk_head(struct chunk_head *ch)
++{
++	struct chunk *chunk, *tmp;
++	CC_DEBUG("free_chunk_head: chunk_head=%p", ch);
++	if (!ch)
++		return;
++	chunk = ch->chunk_list;
++
++	/* put back all chunks on free list */
++	while (chunk) {
++		tmp = chunk->next;
++		merge_chunk(chunk);
++		spin_lock(&ccache_lock);
++		chunk->next = free_head;
++		free_head = chunk;
++		spin_unlock(&ccache_lock);
++		chunk = tmp;
++	}
++	kfree(ch);
++}
++
++/*
++ * Get a no. of chunks from free list for 'total_size'.
++ * Allocate more chunks if required.
++ * Return a chunk_head poiting to first of these chunks
++ */
++static struct chunk_head* get_enough_chunks(unsigned int total_size)
++{
++	int ret = -ENOMEM, rem = total_size;
++	struct chunk *chunk, *tail = NULL;
++	/* take this from slab */
++	struct chunk_head *ch = kmalloc(sizeof(struct chunk_head), GFP_KERNEL);
++	if (!ch)
++		goto out;
++	ch->chunk_list = NULL;
++repeat:
++	spin_lock(&ccache_lock);
++	while (free_head) {
++		chunk = free_head;
++		free_head = chunk->next;
++		ClearChunkFree(chunk);
++		spin_unlock(&ccache_lock);
++		if (ChunkMerged(chunk)) {
++			CC_DEBUG2("merged chunk found: size=%d",
++					ChunkSize(chunk));
++			kfree(chunk);
++			CC_DEBUG2("merged chunk freed");
++			spin_lock(&ccache_lock);
++			continue;
++		}
++		/* This is the first chunk */
++		if (!ch->chunk_list) {
++			ch->chunk_list = chunk;
++			tail = chunk;
++		} else
++			tail->next = chunk;
++		tail = chunk;
++		chunk->next = NULL;
++		if ((rem - ChunkSize(chunk)) < 0) {
++			ret = break_chunk(chunk, rem);
++			if (ret)
++				goto out;
++		}
++		rem -= ChunkSize(chunk);
++		ch->flags = 0;
++		if (!rem)
++			return ch;
++		spin_lock(&ccache_lock);
++	}
++	spin_unlock(&ccache_lock);
++
++	/* Free list didn't have enough chunks. Get more! */
++	ret = expand_ccache();
++	if (ret)
++		goto out;
++
++	goto repeat;
++out:
++	CC_INFO("function failed!!!");
++	/* put chunks back on free list */
++	free_chunk_head(ch);
++	return NULL;
++}
++
++/* no checks here, do them before calling */
++static int copy_to_chunks(struct chunk_head *ch, struct page *page,
++				unsigned int comp_size)
++{
++	struct chunk *chunk;
++	unsigned int offset=0;
++	chunk = ch->chunk_list;
++	while (chunk) {
++		memcpy(chunk->start_addr, page_address(page)+offset,
++						ChunkSize(chunk));
++		offset += ChunkSize(chunk);
++		chunk = chunk->next;
++	}
++	CC_DEBUG2("end");
++	return 0;
++}
++
++static int compress(struct page *page, struct page *comp_page, int algo_idx)
++{
++	int ret;
++	unsigned long comp_data_len;
++
++	/* prepare params for real compress */
++	unsigned char *src = (unsigned char *)page_address(page);
++	unsigned char *comp_data = (unsigned char *)page_address(comp_page);
++	CC_DEBUG2("compress algo: %d", algo_idx);
++	ret = comp_algo[algo_idx].compress(src, PAGE_SIZE, comp_data, &comp_data_len);
++	if (!ret)
++		return comp_data_len;
++	return ret;
++}
++
++static int decompress(struct page *decomp_page, struct page *comp_page,
++			int comp_size, int algo_idx)
++{
++	int ret;
++	
++	/* prepare params for real decompress */
++	unsigned char *comp_data = page_address(comp_page);
++	unsigned char *decomp_data = page_address(decomp_page);
++	ret = comp_algo[algo_idx].decompress(comp_data, comp_size, decomp_data);
++	return ret;
++}
++
++static int proc_read_ccache_stats(char *page, char **start, off_t off,
++                   int count, int *eof, void *data)
++{
++	int len = 0;
++
++	if (off > 0) {
++		*eof = 1;
++		return 0;
++	}
++
++	if (!fs_backed_cc_started)
++		goto print_anon;
++	len = sprintf(page,
++		"fs_backed_cc_size: %d\n", atomic_read(&fs_backed_cc_size));
++print_anon:
++	if (!anon_cc_started)
++		goto out;
++	len += sprintf(page + len,
++		"anon_cc_size: %d\n", atomic_read(&anon_cc_size));
++out:
++	return len;
++}
++
++int init_ccache(void)
++{
++	if (anon_cc_started || fs_backed_cc_started) return 0;
++
++	INIT_LIST_HEAD(&pages_head);
++	INIT_LIST_HEAD(&lru_head);
++	INIT_LIST_HEAD(&mcl_head);
++	free_head = NULL;
++
++	/* initial ccache storage of 1 page (1 chunk of PAGE_SIZE) */
++	expand_ccache();
++
++	/* later allow register/deregister algos at runtime */
++	strcpy(comp_algo[WKdm_IDX].name, "WKdm");
++	comp_algo[WKdm_IDX].compress = WKdm_compress_wrapper;
++	comp_algo[WKdm_IDX].decompress = WKdm_decompress_wrapper;
++
++	strcpy(comp_algo[WK4x4_IDX].name, "WK4x4");
++	comp_algo[WK4x4_IDX].compress = WK4x4_compress_wrapper;
++	comp_algo[WK4x4_IDX].decompress = WK4x4_decompress_wrapper;
++
++	strcpy(comp_algo[LZO_IDX].name, "LZO");
++	comp_algo[LZO_IDX].compress = LZO_compress_wrapper;
++	comp_algo[LZO_IDX].decompress = LZO_decompress_wrapper;
++
++	/* export ccache stats via /proc */
++	proc_ccache_stats = create_proc_entry( "ccache_stats",
++					0644, NULL);
++	BUG_ON(!proc_ccache_stats);
++	proc_ccache_stats->read_proc = proc_read_ccache_stats;
++
++	return 0;
++}
++
++int sysctl_max_anon_cc_size(ctl_table *table, int write,
++	struct file *file, void __user *buffer, size_t *length, loff_t *ppos)
++{
++	int ret=0;
++
++	if (anon_cc_started && !write) {
++		CC_INFO("Current anon ccache size: %d",
++			atomic_read(&anon_cc_size));
++	}
++
++	if (anon_cc_started && write) {
++		CC_INFO("Compressed Cache resizing not yet supported.");
++		ret = -EPERM;
++		goto out;
++	}
++
++	proc_doulongvec_minmax(table, write, file, buffer, length, ppos);
++	if (!write)
++		goto out;
++	ret = set_anon_cc_size(max_anon_cc_size);
++	if (!ret)
++		CC_INFO("Max anon ccache size: %lu pages", max_anon_cc_size);
++	anon_cc_started=1;
++out:
++	return ret;
++}
++
++int sysctl_max_fs_backed_cc_size(ctl_table *table, int write,
++	struct file *file, void __user *buffer, size_t *length, loff_t *ppos)
++{
++	int ret = 0;
++
++	if (fs_backed_cc_started && !write) {
++		CC_INFO("Current fs-backed ccache size: %d",
++			atomic_read(&fs_backed_cc_size));
++	}
++
++	if (fs_backed_cc_started && write) {
++		CC_INFO("Compressed Cache resizing not yet supported.");
++		ret = -EPERM;
++		goto out;
++	}
++
++	proc_doulongvec_minmax(table, write, file, buffer, length, ppos);
++	if (!write)
++		goto out;
++
++	ret = init_ccache();
++	if (ret) {
++		CC_INFO("Error Initializing ccache");
++		goto out;
++	}
++	
++	CC_INFO("Max filesystem backed ccache size: %lu pages\n",
++			max_fs_backed_cc_size);
++	atomic_set(&fs_backed_cc_size, 0);
++	fs_backed_cc_started = 1;
++out:
++	return ret;
++}
++
++void inline release_chunk_heads_or_pages(struct page **pages,
++					unsigned int start,
++					unsigned int end)
++{
++	int i;
++	for (i = start; i < end; i++) {
++		if (PageCompressed(pages[i]))
++			release_chunk_head((struct chunk_head *)pages[i]);
++		else
++			page_cache_release(pages[i]);
++	}
++}
++
++int should_add_to_ccache(struct page *page)
++{
++	if (PageWillCompress(page) || PageCompressed(page)) {
++		CC_INFO("****** BUG: Flag already set: 0x%08lx ******",
++				page->flags);
++		BUG();
++		return 0;
++	}
++
++	/* Pass page-cache (filesystem backed) pages */
++	if (PageMappedToDisk(page)		&&
++			!PageSwapCache(page)	&&	
++			page_mapping(page)	&&
++			!PagePrivate(page)	&&
++			!PageDirty(page)	&&
++			fs_backed_cc_started) {
++		return atomic_add_unless(&fs_backed_cc_size, 1,
++				max_fs_backed_cc_size);
++	}
++
++	/* Pass swap-cache (anonymous) pages */
++	if (anon_cc_started			&&
++			PageSwapCache(page)	&&
++			is_page_in_virt_swap(page)) {
++		return 1;
++	}
++
++	return 0;
++}
++
++/*
++ * given chunk_head, gather the chunks into a page,
++ * decompress it, and return resulting page.
++ */
++static struct page *cc_readpage(struct chunk_head *ch)
++{
++	int ret = -ENOMEM, algo_idx;
++	unsigned int comp_size=0;
++	struct page *decomp_page, *comp_page, *tmp_page;
++	void *comp_data;
++	struct chunk *chunk, *tmp;
++	CC_DEBUG2("start");
++
++	/* collect compressed page from chunks */
++#if 0
++	comp_page = alloc_page(GFP_ATOMIC);
++#endif
++	/*
++	 * This allocation must never sleep and must never fail.
++	 * -- Doing GFP_ATOMIC will guarantee that I doesn't sleep
++	 * but alloc may fail!
++	 * -- Doing GFP_KERNEL giver higher chances that alloc will
++	 * be successfull but it may sleep (and hence doesn't work)!
++	 * -- What to do??
++	 */
++	comp_page = alloc_page(GFP_ATOMIC);
++	if (!comp_page) {
++		CC_INFO("comp_page alloc failed!!!\n");
++		BUG();
++		return NULL;
++	}
++	comp_data = page_address(comp_page);
++#if 0
++	decomp_page = alloc_page(GFP_ATOMIC);
++#endif
++	/* same comments apply as for comp_page alloc */
++	decomp_page = alloc_page(GFP_ATOMIC);
++	if (!decomp_page) {
++		CC_INFO("decomp_page alloc failed!!!\n");
++		BUG();	// we normally hit this after some OOM kills :)
++		return NULL;
++	}
++
++	chunk = ch->chunk_list;
++#if 0
++	spin_lock(&ccache_lock);
++	list_del_init(&ch->lru);
++	spin_unlock(&ccache_lock);
++#endif
++
++	while (chunk) {
++		memcpy(comp_data, chunk->start_addr, ChunkSize(chunk));
++		comp_data += ChunkSize(chunk);
++		comp_size += ChunkSize(chunk);
++		tmp = chunk->next;
++		merge_chunk(chunk);
++
++		/*
++		 * NOTE: should keep some min no. of free pages
++		 * in ccache. So, shouldn't free it immediately.
++		 */
++		/*
++		 * free chunk and page if it spans whole page,
++	 	 * otherwise, add it to free list.
++		 */
++		if (ChunkSize(chunk) == PAGE_SIZE) {
++			tmp_page = virt_to_page(chunk->start_addr);
++			spin_lock(&ccache_lock);
++			list_del_init(&tmp_page->lru);
++			list_del_init(&chunk->chunks);
++			spin_unlock(&ccache_lock);
++			CC_DEBUG("freeing page");
++			__free_page(tmp_page);
++			kfree(chunk);
++		} else {
++			/* add to free list */
++			spin_lock(&ccache_lock);
++			chunk->next = free_head;
++			free_head = chunk;
++			spin_unlock(&ccache_lock);
++		}
++		chunk = tmp;
++	}
++	comp_data -= comp_size;
++	CC_DEBUG2("decomp size: %d", comp_size);
++
++	algo_idx = get_algo_idx(ch);
++
++	ret = decompress(decomp_page, comp_page, comp_size, algo_idx);
++	if (ret < 0) {
++		CC_INFO("decompress failed: %d", ret);
++		BUG();
++	}
++
++	page_cache_get(decomp_page);	/* pagecache/swapcache ref */
++	decomp_page->flags |= (ch->flags & CH_PAGE_FLAGS_MASK);
++	ClearPageCompressed(decomp_page);	/* chunk_head has this set */
++	ClearPageLocked(decomp_page);	/* chunk_head is locked */
++	if (PageSwapCache(decomp_page))
++		set_page_private(decomp_page, ch->offset);
++	else
++		decomp_page->index = ch->offset;
++	
++	CC_DEBUG2("decomp_page->_count=%d", page_count(decomp_page));
++	CC_DEBUG2("decomp_page->_mapcount=%d", page_mapcount(decomp_page));
++	CC_DEBUG2("decomp_page->flags=0x%08lx", decomp_page->flags);
++
++	set_page_private(comp_page, 0);
++	__free_page(comp_page);
++
++	return decomp_page;
++}
++
++int cc_writepage(struct page *page)
++{
++	int ret = -ENOMEM;
++	int comp_size, algo_idx;
++	struct chunk_head *ch = NULL;
++	struct page *tmp_page = NULL, **slot;
++	struct address_space *mapping =  page_mapping(page);
++	
++	/* checked again under lock */
++	if (page_count(page) != 2) {
++		CC_DEBUG2("(start) Page count not 2 (%d)"
++			"flags=0x%08lx", page_count(page), page->flags);
++		if (!PageSwapCache(page))
++			atomic_dec(&fs_backed_cc_size);
++		return -EBUSY;
++	}
++
++	CC_DEBUG2("mapping=%p, flags=0x%08lx, index=%lu",
++			mapping, page->flags, page->index);
++
++	tmp_page = alloc_pages(GFP_KERNEL, 1);	/* page may expand */
++	if (!tmp_page)
++		goto out;
++	
++	algo_idx = guess_algo(page);
++
++	comp_size = compress(page, tmp_page, algo_idx);
++	CC_DEBUG("comp_size=%d", comp_size);
++
++	if (comp_size < 0) {
++		CC_INFO("alloc err in compression algo");
++		ret = -ENOMEM;
++		goto out;
++	}
++
++	if (comp_size >= PAGE_SIZE) {
++		CC_DEBUG("page expand");
++		ret = -EEXPAND;
++		goto out;
++	}
++
++	/* now copy tmp_page to chunks */
++	CC_DEBUG2("before get_enough_chunks");
++	ch = get_enough_chunks(comp_size);
++	if (!ch) {
++		CC_INFO("failed get_enough_chunks!");
++		ret = -ENOMEM;
++		goto out;
++	}
++	CC_DEBUG2("after get_enough_chunks");
++
++#if 0
++	CC_DEBUG2("before chunk_head lru add");
++	spin_lock(&ccache_lock);
++	list_add(&ch->lru, &lru_head);
++	spin_unlock(&ccache_lock);
++	CC_DEBUG2("after chunk_head lru add");
++#endif
++
++	CC_DEBUG2("before copy_to_chunks");
++	copy_to_chunks(ch, tmp_page, comp_size);
++	CC_DEBUG2("after copy_to_chunks");
++	__free_pages(tmp_page, 1);
++	tmp_page = NULL;
++
++	/* chunk_head now ready to anchor in place of page */
++	CC_DEBUG2("before WLQ");
++	write_lock_irq(&mapping->tree_lock);	// <---
++	CC_DEBUG2("after WLQ");
++	if (page_count(page) != 2) {
++		CC_DEBUG2("page count not 2 (%d) flags=0x%08lx",
++			page_count(page), page->flags);
++		ret = -EBUSY;
++		goto out_locked;
++	}
++
++#if 0
++	SetPageWriteback(page);
++	slot=(struct page **)radix_tree_tag_set_slot(&mapping->page_tree,
++				page_index(page),
++				PAGECACHE_TAG_WRITEBACK);
++#endif
++
++	slot = (struct page **)radix_tree_lookup_slot(&mapping->page_tree,
++						page_index(page));
++	BUG_ON(!slot);
++	/* set chunk_head fields */
++	ch->flags = 0;
++	ch->offset = page_index(page);
++	CC_DEBUG2("set ch offset=%lx", ch->offset);
++
++	ch->flags |= (page->flags & CH_PAGE_FLAGS_MASK); /* see ccache.h */
++	ClearPageWillCompress(ch);	/* NOTE: for chunk_head only, not page */
++	ClearPageLocked(ch);		/* NOTE: again, only for chunk_head */
++	SetPageCompressed(ch);
++	set_algo_idx(ch, algo_idx);
++	atomic_set(&ch->_count, 1);	/* page/swap cache ref */
++	
++	/* replace radix node with chunk_head */
++	CC_DEBUG2("before set slot");
++	//*slot = (struct page *)ch;
++	radix_tree_replace_slot((void **)slot, (void *)ch);
++	CC_DEBUG2("after set slot");
++
++	if (PageSwapCache(page))
++		atomic_inc(&anon_cc_size);
++	
++	/* or else it will be bad_page() when freed */
++	page->mapping = NULL;
++	ClearPageDirty(page);
++	ClearPageSwapCache(page);
++	set_page_private(page, 0);
++	page->index = 0;
++
++	CC_DEBUG2("before WUQ");
++	write_unlock_irq(&mapping->tree_lock);	// --->
++	CC_DEBUG2("after WUQ");
++
++	/*
++	 * put pagecache/swapcache ref.
++	 * Now only reclaim path ref remains
++	 */
++	__put_page(page);
++	CC_DEBUG2("after put_page, before unlock page");
++
++	unlock_page(page);	/* page unlocked only when success */
++	CC_DEBUG("success");
++	return 0;
++out_locked:
++	CC_DEBUG2("in out_locked: before WUQ");
++	write_unlock_irq(&mapping->tree_lock);
++	CC_DEBUG2("in out_locked: after WUQ");
++out:
++	if (!PageSwapCache(page))
++		atomic_dec(&fs_backed_cc_size);
++	if (ch)
++		free_chunk_head(ch);
++	if (tmp_page)
++		__free_pages(tmp_page, 1);
++	return ret;
++}
++
++struct page *handle_ccache_fault(struct chunk_head *ch,
++				struct address_space *mapping)
++{
++	struct page *page, **slot;
++	CC_DEBUG2("start");
++	if (bit_spin_trylock(PG_locked, &ch->flags)) {
++		CC_DEBUG2("got lock on comp page");
++		/*
++		 * We have lock on chunk_head.
++		 * Either its already decompressed
++		 * or do so now.
++		 */
++
++		/* check if already decompressed */
++		if (!ch->chunk_list) {
++			bit_spin_unlock(PG_locked, &ch->flags);
++			CC_DEBUG("page already decompressed");
++			read_lock_irq(&mapping->tree_lock);
++			page = radix_tree_lookup(&mapping->page_tree,
++							ch->offset);
++			if (page)
++				page_cache_get(page);
++			read_unlock_irq(&mapping->tree_lock);
++			release_chunk_head(ch);
++			return page;
++		}
++
++		/* Decompress page and return it */
++		page = cc_readpage(ch);
++		CC_DEBUG2("after cc_readpage");
++
++		if (!page) {
++			CC_INFO("cc_readpage failed!!!");
++			bit_spin_unlock(PG_locked, &ch->flags);
++			return NULL;
++		}
++		page->mapping = mapping;
++
++		write_lock_irq(&mapping->tree_lock);
++		page_cache_get(page);
++		slot = (struct page **)radix_tree_lookup_slot(
++						&mapping->page_tree,
++						page_index(page));
++		BUG_ON(!slot);
++		//*slot = page;
++		radix_tree_replace_slot((void **)slot, (void *)page);
++		ch->chunk_list = NULL;
++		write_unlock_irq(&mapping->tree_lock);
++
++		release_chunk_head(ch);	/* removed from page/swap cache */
++
++		CC_DEBUG2("before ch spin unlock");
++		bit_spin_unlock(PG_locked, &ch->flags);
++		CC_DEBUG2("after ch spin unlock");
++		release_chunk_head(ch);
++		lru_cache_add_active(page);
++
++		if (PageSwapCache(page))
++			atomic_dec(&anon_cc_size);
++		else
++			atomic_dec(&fs_backed_cc_size);
++
++		return page;
++	}
++	CC_DEBUG("comp page locked");
++	/*
++	 * It's locked, someone is already
++	 * decompressing it. Wait till its done
++	 */
++	wait_on_chunk_head(&ch->flags);
++	CC_DEBUG("after wait on chunk_head");
++
++	read_lock_irq(&mapping->tree_lock);
++	/*
++	 * either slot has disappeared, or it
++	 * points to decompressed page or NULL
++	 */
++	page = radix_tree_lookup(&mapping->page_tree,
++			ch->offset);
++	if (page)
++		page_cache_get(page);
++	read_unlock_irq(&mapping->tree_lock);
++
++	release_chunk_head(ch);
++	return page;
++}
+diff --git a/mm/filemap.c b/mm/filemap.c
+index 5dfc093..65121c7 100644
+--- a/mm/filemap.c
++++ b/mm/filemap.c
+@@ -33,6 +33,8 @@
+ #include "filemap.h"
+ #include "internal.h"
+ 
++#include <linux/ccache.h>
++
+ /*
+  * FIXME: remove all knowledge of the buffer layer from the core VM
+  */
+@@ -598,8 +600,18 @@ struct page * find_get_page(struct address_space *mapping, unsigned long offset)
+ 
+ 	read_lock_irq(&mapping->tree_lock);
+ 	page = radix_tree_lookup(&mapping->page_tree, offset);
+-	if (page)
++	if (page) {
+ 		page_cache_get(page);
++		if (PageCompressed(page)) {
++			CC_DEBUG("flags=0x%08lx", page->flags);
++			read_unlock_irq(&mapping->tree_lock);
++			page = handle_ccache_fault
++				((struct chunk_head *)page, mapping);
++			if (page)
++				CC_DEBUG("got flags=0x%08lx", page->flags);
++			return page;
++		}
++	}
+ 	read_unlock_irq(&mapping->tree_lock);
+ 	return page;
+ }
+@@ -622,9 +634,28 @@ struct page *find_lock_page(struct address_space *mapping,
+ 
+ 	read_lock_irq(&mapping->tree_lock);
+ repeat:
++#if 0
++	slot = (struct page **)radix_tree_lookup_slot(&mapping->page_tree, offset);
++#endif
+ 	page = radix_tree_lookup(&mapping->page_tree, offset);
+ 	if (page) {
+ 		page_cache_get(page);
++		if (PageCompressed(page)) {
++			CC_DEBUG("flags=0x%08lx", page->flags);
++			read_unlock_irq(&mapping->tree_lock);
++			page = handle_ccache_fault((struct chunk_head *)page,
++							mapping);
++			if (page)
++				CC_DEBUG("got flags=0x%08lx", page->flags);
++			if (!page)
++				return NULL;
++			read_lock_irq(&mapping->tree_lock);
++			if (unlikely(page->mapping != mapping ||
++				     page->index != offset)) {
++				page_cache_release(page);
++				goto repeat;
++			}
++		}
+ 		if (TestSetPageLocked(page)) {
+ 			read_unlock_irq(&mapping->tree_lock);
+ 			__lock_page(page);
+@@ -709,13 +740,42 @@ unsigned find_get_pages(struct address_space *mapping, pgoff_t start,
+ {
+ 	unsigned int i;
+ 	unsigned int ret;
++	unsigned int nr_comp_pages = 0;
+ 
+ 	read_lock_irq(&mapping->tree_lock);
+ 	ret = radix_tree_gang_lookup(&mapping->page_tree,
+ 				(void **)pages, start, nr_pages);
+-	for (i = 0; i < ret; i++)
++#if 0
++	ret = radix_tree_gang_lookup_slots(&mapping->page_tree,
++				(void **)pages, start, nr_pages);
++#endif
++	for (i = 0; i < ret; i++) {
+ 		page_cache_get(pages[i]);
++		if (PageCompressed(pages[i]))
++			nr_comp_pages++;
++	}
+ 	read_unlock_irq(&mapping->tree_lock);
++
++	if (!nr_comp_pages) goto out;
++
++	CC_DEBUG("compressed pages: %d/%d", nr_comp_pages, ret);
++	for (i = 0; (i < ret) && nr_comp_pages; i++) {
++		CC_DEBUG("in loop: i=%d", i);
++		if (!PageCompressed(pages[i]))
++			continue;
++		pages[i] = handle_ccache_fault
++				((struct chunk_head *)pages[i], mapping);
++		if (pages[i]) {
++			nr_comp_pages--;
++			continue;
++		}
++		CC_INFO("HCF returned null");
++		release_chunk_heads_or_pages(pages, i + 1, ret);
++		ret = i;
++		CC_INFO("done release ch_or_pages: ret=%d", ret);
++		break;
++	}
++out:
+ 	return ret;
+ }
+ 
+@@ -736,18 +796,52 @@ unsigned find_get_pages_contig(struct address_space *mapping, pgoff_t index,
+ {
+ 	unsigned int i;
+ 	unsigned int ret;
++	unsigned int nr_comp_pages = 0;
+ 
+ 	read_lock_irq(&mapping->tree_lock);
++#if 0
++	ret = radix_tree_gang_lookup_slots(&mapping->page_tree,
++				(void **)pages, index, nr_pages);
++#endif
+ 	ret = radix_tree_gang_lookup(&mapping->page_tree,
+ 				(void **)pages, index, nr_pages);
+ 	for (i = 0; i < ret; i++) {
++		if (PageCompressed(pages[i])) {
++			if (((struct chunk_head *)pages[i])->offset != index)
++				break;
++			page_cache_get(pages[i]);
++			nr_comp_pages++;
++			index++;
++			continue;
++		}
+ 		if (pages[i]->mapping == NULL || pages[i]->index != index)
+ 			break;
+-
+ 		page_cache_get(pages[i]);
+ 		index++;
+ 	}
+ 	read_unlock_irq(&mapping->tree_lock);
++
++	if (!nr_comp_pages) goto out;
++
++	ret = i;
++	for (i = 0; (i < ret) && nr_comp_pages; i++) {
++		CC_DEBUG("in loop: i=%d", i);
++		if (!PageCompressed(pages[i]))
++			continue;
++		pages[i] = handle_ccache_fault
++				((struct chunk_head *)pages[i], mapping);
++		if (pages[i]) {
++			nr_comp_pages--;
++			continue;
++		}
++		CC_INFO("HCF returned null");
++		release_chunk_heads_or_pages(pages, i + 1, ret);
++		ret = i;
++		CC_INFO("done release ch_or_pages: ret=%d", ret);
++		break;
++	}
++	i = ret;
++out:
+ 	return i;
+ }
+ 
+@@ -767,15 +861,44 @@ unsigned find_get_pages_tag(struct address_space *mapping, pgoff_t *index,
+ {
+ 	unsigned int i;
+ 	unsigned int ret;
++	unsigned int nr_comp_pages = 0;
+ 
+ 	read_lock_irq(&mapping->tree_lock);
++#if 0
++	ret = radix_tree_gang_lookup_tag_slots(&mapping->page_tree,
++				(void **)pages, *index, nr_pages, tag);
++#endif
+ 	ret = radix_tree_gang_lookup_tag(&mapping->page_tree,
+ 				(void **)pages, *index, nr_pages, tag);
+-	for (i = 0; i < ret; i++)
++	for (i = 0; i < ret; i++) {
+ 		page_cache_get(pages[i]);
++		if (PageCompressed(pages[i]))
++			nr_comp_pages++;
++	}
++	read_unlock_irq(&mapping->tree_lock);
++
++	if (!nr_comp_pages) goto out;
++
++	CC_DEBUG("compressed pages found: %d", nr_comp_pages);
++	for (i = 0; (i < ret) && nr_comp_pages; i++) {
++		CC_DEBUG("in loop: i=%d", i);
++		if (!PageCompressed(pages[i]))
++			continue;
++		pages[i] = handle_ccache_fault
++				((struct chunk_head *)pages[i], mapping);
++		if (pages[i]) {
++			nr_comp_pages--;
++			continue;
++		}
++		CC_INFO("HCF returned null");
++		release_chunk_heads_or_pages(pages, i + 1, ret);
++		ret = i;
++		CC_INFO("done release ch_or_pages: ret=%d", ret);
++		break;
++	}
++out:
+ 	if (ret)
+ 		*index = pages[ret - 1]->index + 1;
+-	read_unlock_irq(&mapping->tree_lock);
+ 	return ret;
+ }
+ 
+diff --git a/mm/swapfile.c b/mm/swapfile.c
+index a2d9bb4..f2df6b2 100644
+--- a/mm/swapfile.c
++++ b/mm/swapfile.c
+@@ -32,6 +32,8 @@
+ #include <asm/tlbflush.h>
+ #include <linux/swapops.h>
+ 
++#include <linux/ccache.h>
++
+ DEFINE_SPINLOCK(swap_lock);
+ unsigned int nr_swapfiles;
+ long total_swap_pages;
+@@ -62,8 +64,13 @@ void swap_unplug_io_fn(struct backing_dev_info *unused_bdi, struct page *page)
+ 	down_read(&swap_unplug_sem);
+ 	entry.val = page_private(page);
+ 	if (PageSwapCache(page)) {
+-		struct block_device *bdev = swap_info[swp_type(entry)].bdev;
++		struct block_device *bdev;
+ 		struct backing_dev_info *bdi;
++		if (is_page_in_virt_swap(page)) {
++			CC_DEBUG("vswap page found");
++			goto out;
++		}
++		bdev = swap_info[swp_type(entry)].bdev;
+ 
+ 		/*
+ 		 * If the page is removed from swapcache from under us (with a
+@@ -78,6 +85,7 @@ void swap_unplug_io_fn(struct backing_dev_info *unused_bdi, struct page *page)
+ 		bdi = bdev->bd_inode->i_mapping->backing_dev_info;
+ 		blk_run_backing_dev(bdi, page);
+ 	}
++out:
+ 	up_read(&swap_unplug_sem);
+ }
+ 
+@@ -149,6 +157,8 @@ checks:	if (!(si->flags & SWP_WRITEOK))
+ 		si->swap_map[offset] = 1;
+ 		si->cluster_next = offset + 1;
+ 		si->flags -= SWP_SCANNING;
++		if (si->flags & SWP_COMPRESSED)
++			CC_DEBUG("vswap offset: %lu", offset);
+ 		return offset;
+ 	}
+ 
+@@ -299,6 +309,11 @@ void swap_free(swp_entry_t entry)
+ 
+ 	p = swap_info_get(entry);
+ 	if (p) {
++		if (p->flags & SWP_COMPRESSED) {
++			CC_DEBUG("swap_map[%lu]=%d",
++				swp_offset(entry),
++				p->swap_map[swp_offset(entry)]);
++		}
+ 		swap_entry_free(p, swp_offset(entry));
+ 		spin_unlock(&swap_lock);
+ 	}
+@@ -1202,7 +1217,8 @@ asmlinkage long sys_swapoff(const char __user * specialfile)
+ 	spin_lock(&swap_lock);
+ 	for (type = swap_list.head; type >= 0; type = swap_info[type].next) {
+ 		p = swap_info + type;
+-		if ((p->flags & SWP_ACTIVE) == SWP_ACTIVE) {
++		if (((p->flags & SWP_ACTIVE) == SWP_ACTIVE)
++			&& !(p->flags & SWP_COMPRESSED)) {
+ 			if (p->swap_file->f_mapping == mapping)
+ 				break;
+ 		}
+@@ -1362,6 +1378,9 @@ static int swap_show(struct seq_file *swap, void *v)
+ 		return 0;
+ 	}
+ 
++	if (ptr->flags & SWP_COMPRESSED)
++		return 0;
++
+ 	file = ptr->swap_file;
+ 	len = seq_path(swap, file->f_path.mnt, file->f_path.dentry, " \t\n\\");
+ 	seq_printf(swap, "%*s%s\t%u\t%u\t%d\n",
+@@ -1405,6 +1424,126 @@ static int __init procswaps_init(void)
+ __initcall(procswaps_init);
+ #endif /* CONFIG_PROC_FS */
+ 
++int __is_page_in_virt_swap(struct page *page)
++{
++	swp_entry_t entry = (swp_entry_t) { page_private(page) };
++	unsigned int type = swp_type(entry);
++	if (swap_info[type].flags & SWP_COMPRESSED) {
++		CC_DEBUG2("this is virt swap");
++		return 1;
++	}
++	return 0;
++}
++
++int is_page_in_virt_swap(struct page *page)
++{
++	struct swap_info_struct * p;
++	swp_entry_t entry = (swp_entry_t) { page_private(page) };
++
++	p = swap_info_get(entry);
++	if (p) {
++		if (p->flags & SWP_COMPRESSED) {
++			spin_unlock(&swap_lock);
++			return 1;
++		}
++		spin_unlock(&swap_lock);
++	}
++	return 0;
++}
++
++int set_anon_cc_size(unsigned long num_pages)
++{
++	int i, error, prev;
++	unsigned int type;
++	unsigned long maxpages;
++	struct swap_info_struct *p;
++	struct swap_extent *new_se;
++
++	init_ccache();
++
++	error=0;
++	spin_lock(&swap_lock);
++	p = swap_info;
++	for (type = 0 ; type < nr_swapfiles ; type++,p++)
++		if (!(p->flags & SWP_USED)) break;
++
++	if (type > swp_type(pte_to_swp_entry(swp_entry_to_pte(swp_entry(~0UL,0))))) {
++		spin_unlock(&swap_lock);
++		goto out;
++	}
++	if (type >= nr_swapfiles)
++		nr_swapfiles = type+1;
++
++	maxpages = num_pages;
++
++	INIT_LIST_HEAD(&p->extent_list);
++	p->flags = SWP_USED | SWP_COMPRESSED;
++	p->swap_file = NULL;
++	p->bdev = NULL;
++	p->old_block_size = 0;
++	p->lowest_bit = 1;
++	p->highest_bit = maxpages - 1;
++	p->cluster_nr = 0;
++	p->inuse_pages = 0;
++	p->max = maxpages;
++	p->pages = maxpages - 1;
++	p->cluster_next = 1;
++	p->prio = 100;
++	p->next = -1;
++	spin_unlock(&swap_lock);
++
++	/* initialize swap map */
++	if (!(p->swap_map = vmalloc(maxpages * sizeof(short)))) {
++		error = -ENOMEM;
++		goto out;
++	}
++	memset(p->swap_map, 0, maxpages * sizeof(short));
++	p->swap_map[0] = SWAP_MAP_BAD;
++
++	/* initialize swap extents */
++	new_se = kmalloc(sizeof(struct swap_extent), GFP_KERNEL);
++	if (new_se == NULL) {
++		error = -ENOMEM;
++		goto out;
++	}
++	new_se->start_page = 0;
++	new_se->nr_pages = maxpages;
++	new_se->start_block = 0;
++	list_add_tail(&new_se->list, &p->extent_list);
++	
++	p->curr_swap_extent = new_se;
++
++	mutex_lock(&swapon_mutex);
++	spin_lock(&swap_lock);
++	p->flags = SWP_ACTIVE | SWP_COMPRESSED;
++	nr_swap_pages += maxpages - 1;
++	total_swap_pages += maxpages - 1;
++
++	/* insert swap space into swap_list */
++	prev = -1;
++	for (i = swap_list.head; i >= 0; i = swap_info[i].next) {
++		if (p->prio >= swap_info[i].prio) {
++			break;
++		}
++		prev = i;
++	}
++	p->next = i;
++	if (prev < 0) {
++		swap_list.head = swap_list.next = p - swap_info;
++	} else {
++		swap_info[prev].next = p - swap_info;
++	}
++	spin_unlock(&swap_lock);
++	mutex_unlock(&swapon_mutex);
++
++	return error;	// can only be 0 here now...
++out:
++	printk(KERN_WARNING "Error initializing anon compressed swap.\n");
++	return error;
++}
++
++EXPORT_SYMBOL(set_anon_cc_size);
++
+ /*
+  * Written 01/25/92 by Simmule Turner, heavily changed by Linus.
+  *
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index db023e2..1b419a1 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -42,6 +42,7 @@
+ #include <asm/div64.h>
+ 
+ #include <linux/swapops.h>
++#include <linux/ccache.h>
+ 
+ #include "internal.h"
+ 
+@@ -328,6 +329,28 @@ static pageout_t pageout(struct page *page, struct address_space *mapping)
+ 	 * congestion state of the swapdevs.  Easy to fix, if needed.
+ 	 * See swapfile.c:page_queue_congested().
+ 	 */
++	if (PageWillCompress(page)) {
++		int ret;
++		ret = cc_writepage(page);
++		switch(ret) {
++		case 0:
++			return PAGE_SUCCESS;
++		case -EEXPAND:
++		case -EBUSY:
++		case -ENOMEM:
++			ClearPageWillCompress(page);
++			if (!PageSwapCache(page)) {
++				if (!PageDirty(page))
++					return PAGE_CLEAN;
++				CC_DEBUG2("Go ahead with pageout");
++				goto reclaim_it;
++			}
++			return PAGE_KEEP;
++		}
++	}
++
++	BUG_ON(PageWillCompress(page));
++reclaim_it:
+ 	if (!is_page_cache_freeable(page))
+ 		return PAGE_KEEP;
+ 	if (!mapping) {
+@@ -517,14 +540,19 @@ static unsigned long shrink_page_list(struct list_head *page_list,
+ 			}
+ 		}
+ 
+-		if (PageDirty(page)) {
++		if (should_add_to_ccache(page))
++			SetPageWillCompress(page);
++
++		if (PageDirty(page) || PageWillCompress(page)) {
++			if (!PageDirty(page))
++				goto do_pageout;
+ 			if (referenced)
+ 				goto keep_locked;
+ 			if (!may_enter_fs)
+ 				goto keep_locked;
+ 			if (!sc->may_writepage)
+ 				goto keep_locked;
+-
++do_pageout:
+ 			/* Page is dirty, try to write it out here */
+ 			switch(pageout(page, mapping)) {
+ 			case PAGE_KEEP:
+@@ -532,6 +560,10 @@ static unsigned long shrink_page_list(struct list_head *page_list,
+ 			case PAGE_ACTIVATE:
+ 				goto activate_locked;
+ 			case PAGE_SUCCESS:
++				if (PageWillCompress(page)) {
++					ClearPageWillCompress(page);
++					goto free_it_unlocked;
++				}
+ 				if (PageWriteback(page) || PageDirty(page))
+ 					goto keep;
+ 				/*
+@@ -581,6 +613,7 @@ static unsigned long shrink_page_list(struct list_head *page_list,
+ 
+ free_it:
+ 		unlock_page(page);
++free_it_unlocked:
+ 		nr_reclaimed++;
+ 		if (!pagevec_add(&freed_pvec, page))
+ 			__pagevec_release_nonlru(&freed_pvec);
+@@ -590,6 +623,8 @@ activate_locked:
+ 		SetPageActive(page);
+ 		pgactivate++;
+ keep_locked:
++		if (PageWillCompress(page))
++			ClearPageWillCompress(page);
+ 		unlock_page(page);
+ keep:
+ 		list_add(&page->lru, &ret_pages);

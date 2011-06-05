@@ -1,0 +1,104 @@
+From: Greg Kroah-Hartman <gregkh@suse.de>
+Subject: Linux 2.6.32.8
+Patch-mainline: 2.6.32.8
+
+Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+
+Automatically created from "patches.kernel.org/patch-2.6.32.7-8" by xen-port-patches.py
+
+--- sle11sp1-2010-03-11.orig/arch/x86/kernel/process-xen.c	2009-11-06 10:52:23.000000000 +0100
++++ sle11sp1-2010-03-11/arch/x86/kernel/process-xen.c	2010-02-09 17:12:56.000000000 +0100
+@@ -93,18 +93,6 @@ void flush_thread(void)
+ {
+ 	struct task_struct *tsk = current;
+ 
+-#ifdef CONFIG_X86_64
+-	if (test_tsk_thread_flag(tsk, TIF_ABI_PENDING)) {
+-		clear_tsk_thread_flag(tsk, TIF_ABI_PENDING);
+-		if (test_tsk_thread_flag(tsk, TIF_IA32)) {
+-			clear_tsk_thread_flag(tsk, TIF_IA32);
+-		} else {
+-			set_tsk_thread_flag(tsk, TIF_IA32);
+-			current_thread_info()->status |= TS_COMPAT;
+-		}
+-	}
+-#endif
+-
+ 	clear_tsk_thread_flag(tsk, TIF_DEBUG);
+ 
+ 	tsk->thread.debugreg0 = 0;
+--- sle11sp1-2010-03-11.orig/arch/x86/kernel/process_64-xen.c	2010-03-17 14:37:05.000000000 +0100
++++ sle11sp1-2010-03-11/arch/x86/kernel/process_64-xen.c	2010-03-17 14:38:41.000000000 +0100
+@@ -615,6 +615,17 @@ sys_clone(unsigned long clone_flags, uns
+ 	return do_fork(clone_flags, newsp, regs, 0, parent_tid, child_tid);
+ }
+ 
++void set_personality_ia32(void)
++{
++	/* inherit personality from parent */
++
++	/* Make sure to be in 32bit mode */
++	set_thread_flag(TIF_IA32);
++
++	/* Prepare the first "return" to user space */
++	current_thread_info()->status |= TS_COMPAT;
++}
++
+ unsigned long get_wchan(struct task_struct *p)
+ {
+ 	unsigned long stack;
+--- sle11sp1-2010-03-11.orig/arch/x86/kernel/quirks-xen.c	2009-11-06 10:52:23.000000000 +0100
++++ sle11sp1-2010-03-11/arch/x86/kernel/quirks-xen.c	2010-02-09 17:12:56.000000000 +0100
+@@ -492,6 +492,19 @@ void force_hpet_resume(void)
+ 		break;
+ 	}
+ }
++
++/*
++ * HPET MSI on some boards (ATI SB700/SB800) has side effect on
++ * floppy DMA. Disable HPET MSI on such platforms.
++ */
++static void force_disable_hpet_msi(struct pci_dev *unused)
++{
++	hpet_msi_disable = 1;
++}
++
++DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_SBX00_SMBUS,
++			 force_disable_hpet_msi);
++
+ #endif
+ 
+ #if defined(CONFIG_PCI) && defined(CONFIG_NUMA)
+--- sle11sp1-2010-03-11.orig/arch/x86/kernel/setup-xen.c	2010-01-04 12:50:03.000000000 +0100
++++ sle11sp1-2010-03-11/arch/x86/kernel/setup-xen.c	2010-02-09 17:12:56.000000000 +0100
+@@ -736,19 +736,27 @@ static struct dmi_system_id __initdata b
+ 			DMI_MATCH(DMI_BIOS_VENDOR, "Phoenix/MSC"),
+ 		},
+ 	},
+-	{
+ 	/*
+-	 * AMI BIOS with low memory corruption was found on Intel DG45ID board.
+-	 * It hase different DMI_BIOS_VENDOR = "Intel Corp.", for now we will
++	 * AMI BIOS with low memory corruption was found on Intel DG45ID and
++	 * DG45FC boards.
++	 * It has a different DMI_BIOS_VENDOR = "Intel Corp.", for now we will
+ 	 * match only DMI_BOARD_NAME and see if there is more bad products
+ 	 * with this vendor.
+ 	 */
++	{
+ 		.callback = dmi_low_memory_corruption,
+ 		.ident = "AMI BIOS",
+ 		.matches = {
+ 			DMI_MATCH(DMI_BOARD_NAME, "DG45ID"),
+ 		},
+ 	},
++	{
++		.callback = dmi_low_memory_corruption,
++		.ident = "AMI BIOS",
++		.matches = {
++			DMI_MATCH(DMI_BOARD_NAME, "DG45FC"),
++		},
++	},
+ #endif
+ 	{}
+ };

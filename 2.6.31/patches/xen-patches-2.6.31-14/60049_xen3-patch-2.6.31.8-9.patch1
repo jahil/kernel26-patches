@@ -1,0 +1,37 @@
+Subject: Linux 2.6.31.9
+From: Greg Kroah-Hartman <gregkh@suse.de>
+
+Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+
+Automatically created from "patches.kernel.org/patch-2.6.31.8-9" by xen-port-patches.py
+
+--- 11.2-2010-01-11.orig/arch/x86/kernel/pci-dma-xen.c	2009-09-02 11:59:54.000000000 +0200
++++ 11.2-2010-01-11/arch/x86/kernel/pci-dma-xen.c	2010-01-11 16:22:31.000000000 +0100
+@@ -257,7 +257,7 @@ static __init int iommu_setup(char *p)
+ 		if (!strncmp(p, "allowdac", 8))
+ 			forbid_dac = 0;
+ 		if (!strncmp(p, "nodac", 5))
+-			forbid_dac = -1;
++			forbid_dac = 1;
+ 		if (!strncmp(p, "usedac", 6)) {
+ 			forbid_dac = -1;
+ 			return 1;
+--- 11.2-2010-01-11.orig/arch/x86/kernel/setup-xen.c	2009-10-20 16:33:29.000000000 +0200
++++ 11.2-2010-01-11/arch/x86/kernel/setup-xen.c	2010-01-11 16:23:29.000000000 +0100
+@@ -107,6 +107,7 @@
+ #ifdef CONFIG_X86_64
+ #include <asm/numa_64.h>
+ #endif
++#include <asm/mce.h>
+ 
+ #ifdef CONFIG_XEN
+ #include <asm/hypervisor.h>
+@@ -1259,6 +1260,8 @@ void __init setup_arch(char **cmdline_p)
+ #endif
+ #endif
+ #endif /* CONFIG_XEN */
++
++	mcheck_intel_therm_init();
+ }
+ 
+ #if defined(CONFIG_X86_32) && !defined(CONFIG_XEN)

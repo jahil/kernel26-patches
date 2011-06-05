@@ -1,0 +1,93 @@
+2007-06-24      * Made conntrack hash types separately configurable.
+                * Improved checking for invalid hash types.
+                * Updated, extended, and fixed README.
+
+2007-06-09      * Factored common code out of esfq_init() and esfq_change().
+                * Fixed Kconfig to depend on NF_CONNTRACK instead of
+                  NF_CONNTRACK_ENABLED.
+                * Made minor cosmetic changes to (hopefully) adhere to kernel
+                  standards.
+                * Removed all traces of obsolete direct hashing.
+                * Returned "divisor" maximum to 14; I can't reproduce the
+                  problems I had had earlier.
+                * Added ctnatchg hash type (thanks to Ben Pfountz).
+                * Fixed and updated README.
+
+2007-05-20      * Removed dst_direct, src_direct, and fwmark_direct hash
+                  types.
+                * Rewrote esfq_change() so it works.
+                * Separated code out of a few functions for usage in
+                  esfq_change().
+                * ESFQ now depends on NF_CONNTRACK_ENABLED.
+                * Updated README.
+
+2007-02-15      * Fixed compilation for 2.6.20.
+                * Isolated hash-able variables into their own struct.
+                * Instead of considering only the final 32 bits of an IPv4
+                  address, use jhash to hash all 128 bits into a single u32.
+                * For classic hash type, find the hashes of source,
+                  destination, and protocol/port all at once, rather than
+                  XOR-ing source and protocol/port before hashing.
+                * Added ctorigdst, ctorigsrc, ctrepldst, and ctreplsrc hash
+                  types.
+                * Deprecated dst_direct, src_direct, and fwmark_direct hash
+                  types.
+                * Fixed silly gcc "suggest parentheses" warnings.
+                * Fixed incorrect depth maximum on 64-bit.
+                * Keep track of backlog (sync to a recent sch_sfq.c change).
+                * Cleaned up Kconfig description.
+                * Updated and fixed README. 
+                * Added problem/solution section to the README.
+
+2007-01-22      * The original hash types now use jhash.
+                * Fixed compilation for 2.6.19.x.
+                * Updated README.
+
+2006-01-30      * Added BUGS section to the README.
+                * Made tc only accept divisor <14 instead of <15.
+                * Fixed kernel panic when qdisc creation fails (thanks to
+                  Alex).
+                * Synced with most recent sch_sfq.c change.
+                * Updated README.
+
+2005-11-02      * Removed README.old
+                * Proofread and improved wording slightly in README.
+
+2005-10-23      * Cast (unsigned int *) to (int *) to avoid compiler warning.
+                * Added fwmark hash type (thanks to Robert Kurjata).
+                * Added fwmark_direct, src_direct, and dst_direct hash types.
+                * Updated and expanded README.
+                * Made printk messages more clear and consistent.
+
+2005-03-31      * Kernel patch no longer interferes with original sfq.
+                * Updated README.
+
+2004-11-06      * Updated to Linux 2.6.10-rc1 (synced with sch_sfq.c rev 1.18)
+                * Updated to iproute2-2.6.9-041019 (patch by Piotr Neuman)
+                * Updated versions listed in the README.
+
+2004-09-30      * Fixed the README so it didn't refer to a nonexistent esfq
+                  tar file.
+                * Updated "current" Linux kernel in the README.
+
+2004-09-08      * Updated this ChangeLog.
+                * Created a new README file.
+                * Old README file is included as README.old.
+                * Updated iproute2 patch to apply to iproute2-2.6.9.
+                * Reworded some of the Kconfig help text.
+                * Everything bundled together in a tar file.
+
+2004-08-25      * In the Authors section, credit given to Alexander Clouter
+                * and to Corey Hickey.
+
+2004-08-12      * Updated to Linux 2.6.8-rc4.
+
+2004-03-11      * Updated to Linux 2.6.4.
+
+2003-12-07      * Ported to Linux 2.6.0-test11.
+
+2002-June-06    * Fixed handling of default parameters - v0.2
+                * Removed esfq_drop not needed on init
+2002-June-05    * First public release. v0.1
+2002-June-01    * Added perturbation to dst/src hashes.
+2002-April-02   * Started - adding hashes and options

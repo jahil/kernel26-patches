@@ -1,0 +1,297 @@
+ESFQ for Linux 2.6
+
+ESFQ is the Enhanced Stochastic Fairness Queueing discipline.
+
+For current information on ESFQ, go to http://fatooh.org/esfq-2.6/
+
+The ESFQ packages are named according to the current version of the Linux
+kernel. They may or may not work with earlier versions; I only test using the
+latest. If you find that the most recent ESFQ package available does not work
+with the newest kernel release, please send me an email. My address is
+bugfood-c [at] fatooh [dot] org.
+
+=============INSTALLATION=============
+
+1.  Download the ESFQ tar file from http://fatooh.org/esfq-2.6/
+    current: http://fatooh.org/esfq-2.6/esfq-2.6.20.tar.gz
+
+2.  Download iproute2 from http://linux-net.osdl.org/index.php/Iproute2
+    current: http://developer.osdl.org/dev/iproute2/download/iproute2-2.6.19-061214.tar.gz
+
+3.  Download Linux 2.6 from http://www.kernel.org/
+    current: http://www.kernel.org/pub/linux/kernel/v2.6/linux-2.6.20.tar.bz2
+
+4.  Untar the files you downloaded, somewhere. Commands in the following
+    instructions are examples; you'll have to modify them depending on where
+    you untarred the files.
+
+5.  Patch the kernel with ESFQ.
+    $ cd /usr/src/linux
+    $ patch -p1 --dry-run < ~/esfq-2.6.20/esfq-kernel.patch
+    (and, if it works...)
+    $ patch -p1 < ~/esfq-2.6.20/esfq-kernel.patch
+
+6.  Configure the kernel to include ESFQ.
+    a. The easiest way is use an old config file, if you have it. The config
+       you use doesn't have to be from the same kernel version, but if it isn't
+       you'll probably be asked other questions besides ESFQ.
+      $ cd /usr/src/linux
+      $ cp /boot/config-2.6.20 .config
+      $ make oldconfig
+      When you get to ESFQ, choose y, or m to use it as a module.
+      
+    b. If you want to use 'make menuconfig' instead, ESFQ is buried in:
+       Networking --->
+        Networking options --->
+         QoS and/or fair queueing --->
+          < >   ESFQ queue
+
+    c. In order for the fwmark and fwmark_direct hashes to work, you must enable
+       support for "Network Packet Filtering".
+
+7.  Compile and install the kernel as usual. You can reboot to the new kernel
+    now if you want to. ESFQ will not work, though, until you compile a patched
+    version of tc (in iproute2).
+    
+8.  Patch the iproute2 package so tc can use ESFQ.
+    cd /usr/local/src/iproute2-2.6.19-061214
+    patch -p1 --dry-run < ~/esfq-2.6.20/esfq-iproute2.patch
+    (and, if it works...)
+    patch -p1 < ~/esfq-2.6.20/esfq-iproute2.patch
+   
+9.  Compile iproute2.
+    $ make
+    a. You don't necessarily have to install the entire patched version of
+       iproute2 if you don't want to (perhaps you would rather keep your
+       distribution's package). All you need is the tc binary.
+       # cp -p tc/tc /sbin/tc-esfq
+       # chown root:root /sbin/tc-esfq
+       Just modify your scripts to use /sbin/tc-esfq instead of /sbin/tc.
+
+    b. Otherwise, go ahead and install iproute2.
+       $ make install
+
+10. Reboot to your new kernel if you haven't already, and have fun!
+
+
+
+=============USAGE==============
+
+... esfq [ perturb SECS ] [ quantum BYTES ] [ limit PKTS ]
+         [ depth SLOTS ] [ divisor HASHBITS ] [ hash HASHTYPE] 
+Where:
+HASHTYPE := { classic | src | dst }
+
+Options:
+
+perturb SECS
+   Default: 0 (no perturbation)
+   Recommended: 10
+   
+   SFQ and ESFQ don't actually allocate traffic to queues in a one-to-one
+   manner; instead, they divide traffic among a large (but limited) number of
+   hash slots. Sometimes the hashing algorithm results in a collision between
+   two flows of traffic, resulting in them sharing a slot. Both flows have to
+   fight over the bandwidth that slot is allocated. Setting perturb to some
+   nonzero value causes the flows to be redistributed, and flows that have to
+   share a slot don't need to for very long or as often.
+
+   The _direct hash types don't use perturbation, and this parameter is ignored.
+
+
+quantum BYTES
+   Default: 1 MTU-sized packet
+   Recommended: default
+
+   Amount of bytes a slot is allowed to dequeue before the next slot gets a
+   turn. Do not set this to a value lower than the MTU!
+
+
+limit PKTS
+   Default: equal to depth
+   Recommended: default
+   
+   The total number of packets that will be queued before packets start getting
+   dropped. When ESFQ is saturated, a larger limit will result in slightly fewer
+   packets being dropped, but packets will be queued for a longer time. In other
+   words, you will get slightly better bandwidth at the expense of worse
+   latency. Unless you have a reason to maximize bandwidth and don't care about
+   latency, you should leave limit alone.
+   
+   Limit must be greater than or equal to depth; if the specified limit is lower
+   than the specified depth, ESFQ will automatically set limit equal to depth.
+
+
+depth SLOTS
+   Default: 128
+
+   Depth sets the number of slots. If the number of active flows is greater
+   than the number of slots, flows will end up sharing slots and ESFQ will no
+   longer be fair. If you anticipate more than 128 active flows, you should use
+   a larger depth.
+
+
+divisor HASHBITS
+   Default: 10
+   Maximum: 13
+
+   Divisor sets the number of bits to use for the hash table. A larger hash
+   table decreases the likelihood of collisions. When a collision occurs, two or
+   more flows will end up sharing a slot, which isn't fair for either of those
+   flows. In practice, collisions are fairly rare, so using a large hash table
+   is not particularly important. You should, however, set a perturbation period
+   so that any collisions that do occur will not affect any flows for long.
+   
+   For the direct hash types (see below), the hash table should be large enough
+   to encompass the range of possible values to be hashed.
+   
+
+hash HASHTYPE
+   Default: classic
+
+   The hash option determines the basis upon which ESFQ separates traffic into
+   flows. HASHTYPE can be either classic, src, or dst. The classic type is how
+   the original SFQ works: traffic is separated by flow (TCP connection, UDP
+   stream, etc.) Src and dst divide traffic based upon the source or
+   destination, respectively, of each packet.
+
+
+=============HASH TYPES==============
+
+classic
+   This is original SFQ hash. Traffic is separated by connection according to
+   source and destination IP and port (or protocol, for protocols that do not
+   use ports).
+
+
+dst, src, fwmark
+   Hash by the packet's destination IP, source IP, or iptables mark,
+   respectively. Historically, these hash types were prone to collisions when
+   hashing similar values. As of 2.6.19.2, the jhash algorithm is used, so
+   collisions should be rare. See the "perturb" parameter.
+
+
+ctorigdst, ctorigsrc, ctrepldst, ctreplsrc
+   These hash types use the original and reply address from IP conntrack, so
+   they are useful when the router running ESFQ is also handling NAT/masquerade.
+   Non-IPV4 packets, which don't have connection tracking information, are
+   hashed based on "regular" source or destination.
+   Note: netfilter connection tracking must be enabled in the kernel.
+
+   Consider several workstations behind a router that uses SNAT or masquerade to
+   change the source address of outgoing packets; on the router, the inside
+   (LAN) interface is eth0 and the outside (WAN) interface is eth1. All packets
+   leaving eth1 will have eth1's IP address, so hashing by source IP is useless.
+   Instead, use ctorigsrc, which will correspond to the workstations' IPs.
+
+
+dst_direct, src_direct, fwmark_direct
+   **Note: the current usage of jhash (see above) makes these hash types
+   obsolete; they are deprecated and will be removed in the next release.
+   For now, the original description remains below.
+
+   These hash types are like the three listed above, but use a more simple and
+   direct hashing algorithm. This works very well when you can control and/or
+   anticipate the range of input values values -- if this range is smaller than
+   the hash table, there will be no collisions and the queueing will be
+   entirely fair.
+
+   Do not blithely use these hash types and assume collisions will not occur.
+   Since the direct hashes learn and adapt to the observed range of input
+   values, a single rogue value could make ESFQ expect a range larger than the
+   hash table. If this happens, collisions may occur. ESFQ prints a warning
+   message to the kernel log:
+   
+   ESFQ: (direct hash) Input range <range> is larger than hash table.
+   
+   The direct hashes don't use any perturbation, so you must ensure they only
+   receive data you expect them to.
+ 
+
+==============EXAMPLES=============
+
+# Example 1: Set up ESFQ just like SFQ, as root for eth0. Note that "hash
+# classic" is the default.
+tc qdisc add dev eth0 root esfq perturb 10
+
+
+# Example 2: Attach ESFQ to a parent class (such as HTB) and hash by destination
+# IP. Very useful if eth0 is on a LAN with bandwidth-consuming clients.
+# This example assumes you already have a classful qdisc set up.
+tc qdisc add dev eth0 parent 1:12 handle 12: esfq perturb 10 hash dst
+
+
+# Example 3: Like the example above, but for the WAN interface (eth1 instead of
+# eth0). This example is intended for usage on a NAT router, so it uses
+# ctorigsrc instead of src).
+tc qdisc add dev eth1 parent 1:12 handle 12: esfq perturb 10 hash ctorigsrc
+
+
+# Example 4: Hash by netfilter mark. Note that this won't do anything unless you
+# actually use iptables to add different marks to packets.
+tc qdisc add dev eth0 root esfq perturb 10 hash fwmark
+
+
+========PROBLEMS/SOLUTIONS=========
+
+Problem:
+  ESFQ doesn't seem to have an effect.
+
+  Possible reason:
+  SFQ and ESFQ work properly only when they can control which packets
+  are dropped. If the bottleneck of a link is elsewhere, such as in a DSL modem,
+  ESFQ will not drop any packets because the DSL modem is dropping enough
+  packets that the link does not appear saturated.
+
+  Diagnostic:
+  Check the statistics for the orresponding qdisc with, for example,
+  'tc -s qdisc show dev eth1'. If the stats say "dropped 0", then that means
+  ESFQ is not actually shaping any traffic.
+
+  Solution:
+  In order for ESFQ to control fairness, it must be attached either to a direct
+  link (such as Ethernet) or to a classful, shaping qdisc (such as HTB). When a
+  shaping qdisc is used, ESFQ's parent class must have a maximum rate less than
+  or equal to the actual available bandwidth. See the HTB documentation for
+  examples; ESFQ can be substituted for SFQ in HTB's examples.
+
+
+Problem:
+  ESFQ isn't being very fair.
+
+  Possible reason:
+  ESFQ divides traffic into a number of smaller queues ("slots"), one for
+  each flow. Flows are distinguished based on whatever aspect of the
+  packets is hashed, such as source or destination. The maximum number of slots
+  is set by the 'depth' parameter, which defaults to 128. If there are more active
+  flows than slots, some flows will actually start sharing slots. Obviously, this
+  is not good, and fairness will suffer.
+
+  Diagnostic:
+  Do you have more flows than slots? For example, if you have ESFQ set to hash by
+  destination IP, is your number of concurrent downloaders higher than 128 (the
+  default number of slots)?
+
+  Solution:
+  Set ESFQ to use a larger number of slots with the 'depth' parameter.
+
+
+Problem:
+  I have ESFQ set to 'hash src', but it isn't doing anything.
+
+  Possible reason:
+  If ESFQ is on the WAN (Internet-side) interface of a router that uses NAT or
+  masquerade, the source IP of outgoing packets will always be the IP of the
+  router.
+
+  Diagnostic:
+  Are you using NAT or masquerade?
+
+  Solution:
+  Use 'hash ctorigsrc' instead of 'hash src'.
+
+
+================BUGS===============
+None known.
+
+If you have any to report, send them to bugfood-c [at] fatooh [dot] org.

@@ -1,0 +1,115 @@
+From: jbeulich@novell.com
+Subject: use kzalloc() in favor of kmalloc()+memset()
+Patch-mainline: n/a
+
+Also use clear_page() in favor of memset(, 0, PAGE_SIZE).
+
+--- sle11sp1-2010-09-07.orig/drivers/net/sfc/sfc_resource/driverlink_new.c	2009-11-06 10:26:58.000000000 +0100
++++ sle11sp1-2010-09-07/drivers/net/sfc/sfc_resource/driverlink_new.c	2010-09-15 11:32:32.000000000 +0200
+@@ -165,13 +165,12 @@ efrm_dl_probe(struct efx_dl_device *efrm
+ 	 * the callbacks that we want depends on the NIC type.
+ 	 */
+ 	lnic->dl_callbacks =
+-	    kmalloc(sizeof(struct efx_dl_callbacks), GFP_KERNEL);
++	    kzalloc(sizeof(struct efx_dl_callbacks), GFP_KERNEL);
+ 	if (!lnic->dl_callbacks) {
+ 		EFRM_ERR("Out of memory (%s)", __func__);
+ 		efrm_nic_del(lnic);
+ 		return -ENOMEM;
+ 	}
+-	memset(lnic->dl_callbacks, 0, sizeof(*lnic->dl_callbacks));
+ 	lnic->dl_callbacks->mtu_changed = efrm_dl_mtu_changed;
+ 
+ 	if ((res->flags & EFX_DL_FALCON_DUAL_FUNC) == 0) {
+--- sle11sp1-2010-09-07.orig/drivers/net/sfc/sfc_resource/filter_resource.c	2009-11-06 10:26:58.000000000 +0100
++++ sle11sp1-2010-09-07/drivers/net/sfc/sfc_resource/filter_resource.c	2010-09-15 11:33:41.000000000 +0200
+@@ -111,10 +111,9 @@ int efrm_create_filter_resource_manager(
+ 	EFRM_ASSERT(rm_out);
+ 
+ 	efrm_filter_manager =
+-	    kmalloc(sizeof(struct filter_resource_manager), GFP_KERNEL);
++	    kzalloc(sizeof(struct filter_resource_manager), GFP_KERNEL);
+ 	if (efrm_filter_manager == 0)
+ 		return -ENOMEM;
+-	memset(efrm_filter_manager, 0, sizeof(*efrm_filter_manager));
+ 
+ 	rc = efrm_resource_manager_ctor(&efrm_filter_manager->rm,
+ 					filter_rm_dtor, "FILTER",
+--- sle11sp1-2010-09-07.orig/drivers/net/sfc/sfc_resource/iobufset_resource.c	2009-11-06 10:26:58.000000000 +0100
++++ sle11sp1-2010-09-07/drivers/net/sfc/sfc_resource/iobufset_resource.c	2010-09-15 11:34:10.000000000 +0200
+@@ -349,10 +349,9 @@ efrm_create_iobufset_resource_manager(st
+ 	EFRM_ASSERT(rm_out);
+ 
+ 	efrm_iobufset_manager =
+-	    kmalloc(sizeof(*efrm_iobufset_manager), GFP_KERNEL);
++	    kzalloc(sizeof(*efrm_iobufset_manager), GFP_KERNEL);
+ 	if (efrm_iobufset_manager == 0)
+ 		return -ENOMEM;
+-	memset(efrm_iobufset_manager, 0, sizeof(*efrm_iobufset_manager));
+ 
+ 	/*
+ 	 * Bug 1145, 1370: We need to set initial size of both the resource
+--- sle11sp1-2010-09-07.orig/drivers/net/sfc/sfc_resource/iopage.c	2009-11-06 10:26:58.000000000 +0100
++++ sle11sp1-2010-09-07/drivers/net/sfc/sfc_resource/iopage.c	2010-09-15 11:39:10.000000000 +0200
+@@ -47,7 +47,7 @@ int efhw_iopage_alloc(struct efhw_nic *n
+ 
+ 	EFHW_ASSERT((handle & ~PAGE_MASK) == 0);
+ 
+-	memset((void *)kva, 0, PAGE_SIZE);
++	clear_page(kva);
+ 	efhw_page_init_from_va(&p->p, kva);
+ 
+ 	p->dma_addr = handle;
+--- sle11sp1-2010-09-07.orig/drivers/net/sfc/sfc_resource/resource_driver.c	2009-11-06 10:26:58.000000000 +0100
++++ sle11sp1-2010-09-07/drivers/net/sfc/sfc_resource/resource_driver.c	2010-09-15 11:34:55.000000000 +0200
+@@ -409,13 +409,12 @@ efrm_nic_add(struct pci_dev *dev, unsign
+ 	}
+ 
+ 	/* Allocate memory for the new adapter-structure. */
+-	lnic = kmalloc(sizeof(*lnic), GFP_KERNEL);
++	lnic = kzalloc(sizeof(*lnic), GFP_KERNEL);
+ 	if (lnic == NULL) {
+ 		EFRM_ERR("%s: ERROR: failed to allocate memory", __func__);
+ 		rc = -ENOMEM;
+ 		goto failed;
+ 	}
+-	memset(lnic, 0, sizeof(*lnic));
+ 	nic = &lnic->efrm_nic.efhw_nic;
+ 
+ 	lnic->ev_handlers = &ev_handler;
+--- sle11sp1-2010-09-07.orig/drivers/net/sfc/sfc_resource/vi_resource_alloc.c	2009-11-06 10:26:58.000000000 +0100
++++ sle11sp1-2010-09-07/drivers/net/sfc/sfc_resource/vi_resource_alloc.c	2010-09-15 11:35:18.000000000 +0200
+@@ -631,14 +631,13 @@ efrm_vi_resource_alloc_or_free(struct ef
+ 	rx_q_tag &= (1 << TX_DESCQ_LABEL_WIDTH) - 1;
+ 	tx_q_tag &= (1 << RX_DESCQ_LABEL_WIDTH) - 1;
+ 
+-	virs = kmalloc(sizeof(*virs), GFP_KERNEL);
++	virs = kzalloc(sizeof(*virs), GFP_KERNEL);
+ 	if (virs == NULL) {
+ 		EFRM_ERR("%s: Error allocating VI resource object",
+ 			 __func__);
+ 		rc = -ENOMEM;
+ 		goto fail_alloc;
+ 	}
+-	memset(virs, 0, sizeof(*virs));
+ 
+ 	/* Some macros make the assumption that the struct efrm_resource is
+ 	 * the first member of a struct vi_resource. */
+--- sle11sp1-2010-09-07.orig/drivers/net/sfc/sfc_resource/vi_resource_manager.c	2009-11-06 10:26:58.000000000 +0100
++++ sle11sp1-2010-09-07/drivers/net/sfc/sfc_resource/vi_resource_manager.c	2010-09-15 11:35:37.000000000 +0200
+@@ -86,14 +86,12 @@ efrm_create_or_destroy_vi_resource_manag
+ 		    dims->rxq_min, dims->rxq_lim,
+ 		    dims->txq_min, dims->txq_lim);
+ 
+-	efrm_vi_manager = kmalloc(sizeof(*efrm_vi_manager), GFP_KERNEL);
++	efrm_vi_manager = kzalloc(sizeof(*efrm_vi_manager), GFP_KERNEL);
+ 	if (efrm_vi_manager == NULL) {
+ 		rc = -ENOMEM;
+ 		goto fail_alloc;
+ 	}
+ 
+-	memset(efrm_vi_manager, 0, sizeof(*efrm_vi_manager));
+-
+ 	efrm_vi_manager->iscsi_dmaq_instance_is_free = true;
+ 
+ 	dmaq_min = max(dims->rxq_min, dims->txq_min);

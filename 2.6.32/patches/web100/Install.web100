@@ -1,0 +1,292 @@
+                     Building a Web100 Kernel 
+                    =========================
+
+This document covers general instructions and advice on how to:
+
+    - apply the web100 patches to a linux kernel
+    - build the kernel, and
+    - install the newly built kernel on the system
+
+IMPORTANT: Currently Web100 patches have only been tested for specific
+    kernels from kernel.org.  The detailed version specific release
+    information appears in README.web100.
+
+Be sure that you have a good repeatable procedure for building, installing and
+testing kernels (see below) before applying the web100 patch.  If you are
+moving to a new base kernel, it is especially important that you verify that
+your new kernel is fully functional before you apply the web100 patch.  We
+typically have far less difficulty installing web100 than getting new base
+kernels properly configured to support all devices and features.
+
+BEFORE YOU PROCEED
+------------------
+
+You will need to become root:
+% su
+(Enter root password)
+
+Before you proceed, it may be a good idea to take the following steps
+so that you can backtrack if you run into problems:
+
+   - Make a copy of the current kernel
+   - Make a copy of the .config file (usually in /usr/src/linux)
+   - Tar up the files in the /lib/modules directory corresponding
+     to the current working kernel
+
+
+GETTING THE KERNEL SOURCES
+------------------------------
+
+If you do not have it, download the sources for kernel version 2.6.32
+ftp.kernel.org or one of its many mirrors (http://www.kernel.org/mirrors/).
+Extract the sources:
+
+# tar -C /usr/src -xvf linux-2.6.32.tar.gz.
+
+Make a symbolic link:
+
+# rm -rf /usr/src/linux
+# ln -s /usr/src/linux-2.6.32 /usr/src/linux
+
+
+APPLYING WEB100 PATCH
+---------------------
+
+# cd /usr/src/linux
+# patch -p1 < [path-to-web100-dir]/web100-[version-name].patch
+
+---------------------------------------------------------------------
+      Note: SAVE A COPY OF THE PATCH FILE 
+
+      It is a good idea to save a copy of the patch file you will be
+      using for web100, so that you can backout of the patch (to get a
+      clean kernel tree) if necessary.
+
+      This will also be needed before applying the next version of
+      web100 patch file because the patches are distributed as full
+      patches as opposed to incremental patches.
+
+      To unpatch (when required):
+
+            patch -Rp1 < [path-to-web100-dir]/web100-[version-name].patch
+---------------------------------------------------------------------
+
+The patch command should complete successfully without any errors.
+There is, however, one file for which the patch may fail, and that is
+the patch to the Makefile in the top level.  This situation is
+explained in the "EXTRAVERSION" section below. If all the patches are
+successful, you may want to skim thorough the following section to
+understand the implication of modifying the EXTRAVERSION string.
+
+
+EXTRAVERSION
+------------
+
+The top level kernel Makefile defines "EXTRAVERSION" (typically on line 4).
+EXTRAVERSION determines the suffix of the kernel version name.  It is used for
+a number of things, including determining the directory name used by loadable
+kernel modules.
+
+The Makefile patch will fail on all 3rd party kernels, because all 3rd
+party vendors alter EXTRAVERSION.
+
+    - If EXTRAVERSION is not updated by web100 (ie. patch fails) and
+      you ignore this error, your web100 kernel will attempt to use
+      the same loadable modules as the original kernel.  This is
+      generally expeditious, but sometimes leads to unexpected
+      operational dependences.  (e.g. A configuration change to one
+      kernel may make other kernels incompatible with their modules.)
+
+      However, please keep in mind that some third party software
+      packages check the kernel version string and abort if they do
+      not recognize it.  People who are installing picky third party
+      software may need to avoid updating the EXTRAVERSION string.
+
+      CAUTION: If at all possible, we recommend that you avoid this
+      approach.
+      
+    - If EXTRAVERSION is not updated by web100 (ie. patch fails), then
+      you should edit the Makefile by hand and append "-web100" to the
+      EXTRAVERSION string (no spaces between the exisiting string the
+      added string).
+
+Please note that web100 will function with or without updated
+EXTRAVERSION string.  However your choice for the EXTRAVERSION string
+may greatly affect other operational issues, such as module
+compatibility.
+
+You may want to edit the makefile by hand to reflect your own
+operational preference.
+
+
+CONFIGURING AND BUILDING THE KERNEL 
+----------------------
+
+We have found it to be safer to force a full rebuild:
+
+# cd /usr/src/linux
+# cp .config config.save
+# make mrproper
+# cp config.save .config
+
+# make menuconfig
+To enable web100 features select the following options: 
+
+    Code maturity level options  --->
+        [*] Prompt for development and/or incomplete code/drivers
+    Device Drivers  --->
+      Networking support  --->
+        Networking options  --->
+            [*]   Web100 networking enhancements --->
+            --- IP: Web100 networking enhancements
+                [*]   Web100: Extended TCP statistics
+                (384)   Web100:   Default file permissions (NEW)
+                (0)     Web100:   Default gid (NEW)
+                [*]     Web100:   Net100 extensions
+                [*]   Web100: Netlink event notification service
+
+Notes:
+- The last option is set to 7 automatically.  Change it if appropriate
+  for your system.
+- The default gid and file permissions control who has access to
+  connection information.  Under many curcumstances, you may want to create
+  a "web100" group which will have access to all connections, and set
+  default file permissions to 0660, so that only trusted users may access
+  and modify connection information.  Note that this may have security
+  implications.  These values are also settable at run-time with sysctl
+  variables net.ipv4.web100_fperms and net.ipv4.web100_gid.
+
+Save menuconfig options.
+
+Now build the kernel and modules:
+
+# make
+
+
+INSTALLING THE KERNEL
+-----------------------------------
+
+NOTE: The next steps are platform dependent, and are for Intel
+x86-compatible systems only.  For other architechtures, please refer to
+documentation specific to your system.
+
+*** Save the old kernel. ***
+
+If you prefer creating a boot floppy for booting the system with
+the new kernel, please go to "Booting system using boot floppy"
+section. If you're using LILO or GRUB, and would prefer saving the 
+new kernel to disk, the following section explains the steps:
+
+# cd /usr/src/linux
+# make bzImage
+# make install
+# make modules_install
+
+Build and install modules for this kernel (this step may be skipped
+if the EXTRAVERSION string was not modified; see notes above).
+
+Laptop users should note that it can be time consuming if you have to
+build a full set of pcmcia drivers.
+
+LILO Users
+-----------
+
+Edit /etc/lilo.conf and add the appropriate lines.
+
+Example (if /dev/hda2 is where /boot resides):
+
+image = /boot/vmlinuz-2.6.32-web100
+        label=linux-web100
+        root=/dev/hda2
+
+Run "/sbin/lilo -v"
+
+Reboot the system. Select "linux-web100" to boot the web100 kernel.
+Go to the "Confirming Web100 Kernel" section.
+
+
+GRUB Users
+-----------
+
+Edit /boot/grub and add the following lines to 'menu.lst'.
+
+Example (if booting from /dev/hda5):
+
+        title linux-web100
+        kernel (hd0, 4)/boot/vmlinuz-2.6.32-web100 root=/dev/hda5
+
+Reboot system with new kernel.
+Go to the "Confirming Web100 Kernel" section.
+
+
+Booting system using boot floppy
+---------------------------------
+
+To create a boot disk with the new kernel, and booting the system 
+without editing lilo.conf:
+
+      cd /usr/src/linux
+      Insert a floppy into the A: drive
+      make bzdisk
+      This will copy the new compressed kernel onto the floppy disk.
+
+Boot the system from floppy.
+Go to the "Confirming Web100 Kernel" section.
+
+
+CONFIRMING WEB100 KERNEL
+------------------------
+
+The message "Web100 [VERSION] build [version-name]: Initialization successful" 
+should appear in the /var/log/dmesg file.  The date in [version-name] should
+match the "date" part from the file name in the patch file.
+
+In addition, check the first line of the file "/proc/web100/header".  This
+line should match the [version-name] in the /var/log/dmesg file.
+
+If system fails to boot, see the "Troubleshooting" section.
+
+
+TROUBLESHOOTING
+---------------
+
+If the system doesn't boot correctly using the web100 kernel, boot it up
+with the older kernel that was running on the system. Check the options
+in the "make menuconfig" step to make sure the kernel options were selected
+correctly, recompile the kernel and reboot with the web100 kernel.
+
+If you're unable to get the web100 kernel up, please send a problem
+report to support@web100.org OR submit a trouble ticket at
+internal.web100.org.
+
+If you use pcmcia drivers or other loadable kernel modules, you may find that
+you need to rebuild them after applying the web100 patch.  You should also save
+copies of your non-web100 modules in case you need to go back.  (See
+EXTRAVERSION above)
+
+
+SUBMITTING A PROBLEM REPORT
+---------------------------
+
+If you're unable to get the web100 kernel up, please send a problem
+report to support@web100.org.  Please try to include as much of the
+information as possible to assist us in troubleshooting the problems
+you are experiencing.
+
+Depending on the problem you are experiencing, it may not be possible
+to provide all that is requested below, but please try to provide as
+much of it as possible.
+
+   - Output of the following commands:
+	uname -a
+	head -1 /proc/web100/header
+
+   - List of third party packages installed
+
+   - The name of the web100 patch file 
+
+   - List of patch failures and the ".rej" file(s)
+
+   - Description of the problem;  Please include specific details of
+     the hardware and software configuration if you suspect that that
+     may be the source of the problem.

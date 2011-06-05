@@ -1,0 +1,22 @@
+# Sampling Period
+# Format: sample_period <sec>
+sample_period 5
+
+# Mode of operation
+# Format: mode [ self | all | pid ]
+#mode all
+mode pid
+
+# Output Directory
+# Format: output_dir <directory path>
+# Default: /tmp/ktaud_output/
+
+
+# List of PID
+# Format: pid <List of pids>
+pid 2460
+
+# Information type
+# Format: info [ trace | profile ]
+#info profile
+info trace

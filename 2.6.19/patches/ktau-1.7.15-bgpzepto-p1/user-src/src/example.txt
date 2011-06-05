@@ -1,0 +1,116 @@
+***********
+*  DEMO   *
+***********
+
+	1. Running KTAUD
+	Assuming we are running a the linux-2.4.30-ktau-1.5 kernel, we
+	can use ktaud to export profile/trace data.  The easiest way 
+	would be first, edit the ktaud.conf file. Then, we run
+
+		ktaud -f ktaud.conf
+
+	ktaud will start exporting data to the output directory (default
+	is /tmp/ktau_trace/xxx ) After a period of time, we kill the 
+	 daemon. (We can also put the config file in "/etc/ktaud.conf" 
+	 and use the "ktaud.sh" script to start, and stop daemon.)
+	
+	2. Profile Output 
+	Let's look at the output data in /tmp/ktau_trace/ directory.
+	Following is an example of the profile output.
+
+	PID: 1   No Entries: 48
+	Entry    2: addr c0107680, count   32, incl 1445400, excl 1445400
+	Entry    3: addr c013a4b0, count 1405, incl 108762648, excl 27082632
+	Entry    4: addr c013a5b0, count 1347, incl 92382464, excl 45994540
+	Entry    5: addr c0139e80, count   95, incl 365336772, excl 204498604
+	Entry    6: addr c0139fd0, count  131, incl 510652, excl 497036
+	Entry    7: addr c011aa00, count    5, incl 63694236, excl 66500
+	Entry   11: addr c0107710, count    7, incl 160710864, excl 119970000
+	..........
+
+	- "PID" is the process ID number.
+
+	- "No Entries" show how many functions this process has executed.	
+		
+	- "Entry" indicate the function ID which is assigned dynamically at 
+	runtime to a function.
+	
+	- "addr" is the memory address of a function.
+
+	- "count" is the number of time a function being called.
+	
+	- "incl" is the inclusive number of ticks this process spent in
+	this function. (including the time spent in other functions
+	which are called from inside this function.)
+
+	- "excl" is the exclusive number of ticks this process spent in
+	this function.
+
+	3. Mapping Profile output
+	Then, we can use "funcMap" tool which converts memory address of
+	each function to the function name as following
+
+	funcMap -p System.map-2.4.30-ktau-1.5 /tmp/ktau_trace/1
+
+	PID: 1   No Entries: 48
+	Entry 2: addr     sys_fork count   32, incl 1445400, excl 1445400
+	Entry 3: addr     sys_read count 1405, incl 108762648, excl 27082632
+	Entry 4: addr    sys_write count 1347, incl 92382464, excl 45994540
+	Entry 5: addr     sys_open count   95, incl 365336772, excl 204498604
+	Entry 6: addr    sys_close count  131, incl 510652, excl 497036
+	Entry 7: addr  sys_waitpid count    5, incl 63694236, excl 66500
+	Entry 11: addr  sys_execve count    7, incl 160710864, excl 119970000
+	...........
+
+	4. Trace Output
+	Instead, we can configure ktaud to export trace data into 
+	/tmp/ktau_trace/ directory.  Following is an example of the trace
+	output.
+		
+	PID: 1   No Entries: 1023
+	100324644336260 c0141a30 1
+	100324644338904 c0149b80 0
+	100324644342096 c0114700 0
+	100336604626572 c0114700 1
+	100336604633884 c0149b80 1
+	100336604638348 c011afa0 0
+	100336604639184 c011afa0 1
+	100336604648288 c0141a30 0
+	100336604663228 c0141a30 1
+	100336604666228 c0141b50 0
+	100336604667584 c0141b50 1
+	100336604669464 c0141a30 0
+	...........
+
+	- The first column is the timestamp which is read from the timestamp
+	counter
+
+	- The second column is the memory address of the memory address of 
+	the function
+
+	- The third column is the record type. "0" represents entry point of
+	the function, and "1" represents exit point of the function.
+
+
+	5. Mapping Trace Output
+	Then, we can use "funcMap" tool which converts memory address of
+	each function to corresponding function name as following
+	
+	funcMap -t System.map-2.4.30-ktau-1.5 /tmp/ktau_trace/1
+
+	PID: 1   No Entries: 1023
+	100324644336260  out     sys_stat64
+	100324644338904  in      sys_select
+	100324644342096  in      schedule
+	100336604626572  out     schedule
+	100336604633884  out     sys_select
+	100336604638348  in      sys_time
+	100336604639184  out     sys_time
+	100336604648288  in      sys_stat64
+	100336604663228  out     sys_stat64
+	100336604666228  in      sys_fstat64
+	100336604667584  out     sys_fstat64
+	100336604669464  in      sys_stat64
+	...........
+
+---------------------------------------------------------------------------

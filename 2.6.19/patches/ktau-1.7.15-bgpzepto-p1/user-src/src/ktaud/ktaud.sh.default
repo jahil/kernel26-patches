@@ -1,0 +1,100 @@
+#!/bin/sh
+#
+#***************************************************************************
+# ZEPTOOS:zepto-info
+#      This file is part of ZeptoOS: The Small Linux for Big Computers.
+#      See www.mcs.anl.gov/zeptoos for more information.
+# ZEPTOOS:zepto-info
+#
+# ZEPTOOS:zepto-fillin
+#      $Id: ktaud.sh.default,v 1.4 2006/11/12 00:26:30 anataraj Exp $
+#      ZeptoOS_Version: DEVELOPMENT-PRERELEASE
+#      ZeptoOS_Heredity: FOSS_ORIG
+#      ZeptoOS_License: GPL
+# ZEPTOOS:zepto-fillin
+#
+# ZEPTOOS:zepto-gpl
+#       Copyright: Argonne National Laboratory, Department of Energy,
+#                  and University of Chicago.  2004, 2005
+#       ZeptoOS License: GPL
+#  
+#       This software is free.  See the file ZeptoOS/misc/license.GPL
+#       for complete details on your rights to copy, modify, and use this
+#       software.
+# ZEPTOOS:zepto-gpl
+#***************************************************************************
+#
+### BEGIN INIT INFO
+# Provides: 		ktaud
+# Required-Start:
+# Required-Stop:  
+# Default-Start:	2 3 5
+# Default-Stop:   
+# Description:		ktaud profiling/tracing daemon
+### END INIT INFO
+
+# NOTE: This file is to be used with ZeptoOS to start ktaud on BG/L
+
+DEFAULT_CONFIG="/etc/ktaud.conf"
+DEFAULT_KTAUD="/bin/ktaud"
+#KTAUD_CONFIG_PATH=
+#KTAUD_PATH=
+
+if [ "${KTAUD_CONFIG_PATH}" = "" ]; then
+	echo "Using default KTAUD config"
+	KTAUD_CONFIG_PATH=${DEFAULT_CONFIG}
+fi
+
+if [ "${KTAUD_PATH}" = "" ]; then
+	echo "Using default KTAUD"
+	export KTAUD_PATH=${DEFAULT_KTAUD}
+fi
+ 
+# load in the system rc status configuration
+if [ -s /etc/rc.status ] ; then
+        . /etc/rc.status
+fi
+
+#
+# Verify presence of default ktaud and ktaud.conf
+#
+check_default() {
+	if [ ! -s ${KTAUD_PATH} ]; then
+		echo  "${KTAUD_PATH} is not found."
+		return=$rc_failed
+		rc_exit
+	fi
+	if [ ! -s ${KTAUD_CONFIG_PATH} ]; then
+		echo  "${KTAUD_CONFIG_PATH} is not found."
+		return=$rc_failed
+		rc_exit
+	fi
+}
+
+# Checking script option
+rc_reset
+case "$1" in
+	start)
+		echo "... Starting ktaud"
+		check_default
+		${KTAUD_PATH} -f ${KTAUD_CONFIG_PATH} -D
+		;;
+	stop)
+		echo "... Stopping ktaud"
+		killall ktaud
+		;;
+	restart)
+		echo "... Restarting ktaud"
+		$0 stop
+		# Give ktaud time to die cleanly
+		sleep 1
+		$0 start
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart}"
+		return=$rc_failed
+		rc_exit
+		;;
+esac
+rc_exit
+

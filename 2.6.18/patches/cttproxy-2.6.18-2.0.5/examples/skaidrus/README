@@ -1,0 +1,10 @@
+
+This is an example application for tproxy v2, called skaidrus.  It listens
+on TCP port 9841, and all connections that are redirected to that port (using
+the '-j REDIRECT --to-ports 9841' iptables construct) are transproxied to
+their original destination.
+
+The code is covered under the LGPL so feel free to include this in your
+own application.
+
+

@@ -1,0 +1,314 @@
+diff --git a/include/linux/netfilter/nf_conntrack_common.h b/include/linux/netfilter/nf_conntrack_common.h
+index 6ca30ce..ef7d5b1 100644
+--- a/include/linux/netfilter/nf_conntrack_common.h
++++ b/include/linux/netfilter/nf_conntrack_common.h
+@@ -81,6 +81,9 @@ #if defined(CONFIG_IP_NF_TPROXY) || defi
+ 
+ 	IPS_TPROXY_RELATED_BIT = 12,
+ 	IPS_TPROXY_RELATED = (1 << IPS_TPROXY_RELATED_BIT),
++
++	IPS_MAY_DELETE_BIT = 12,
++	IPS_MAY_DELETE = (1 << IPS_MAY_DELETE_BIT),
+ #endif
+ };
+ 
+diff --git a/include/linux/netfilter_ipv4/ip_conntrack.h b/include/linux/netfilter_ipv4/ip_conntrack.h
+index 9cd20b7..0837d9b 100644
+--- a/include/linux/netfilter_ipv4/ip_conntrack.h
++++ b/include/linux/netfilter_ipv4/ip_conntrack.h
+@@ -245,6 +245,8 @@ static inline void ip_ct_refresh(struct
+ 	__ip_ct_refresh_acct(ct, 0, skb, extra_jiffies, 0);
+ }
+ 
++extern void __death_by_timeout(unsigned long ul_conntrack);
++
+ /* These are for NAT.  Icky. */
+ /* Update TCP window tracking data when NAT mangles the packet */
+ extern void ip_conntrack_tcp_update(struct sk_buff *skb,
+diff --git a/net/ipv4/netfilter/ip_conntrack_core.c b/net/ipv4/netfilter/ip_conntrack_core.c
+index 7953c1b..cffc56b 100644
+--- a/net/ipv4/netfilter/ip_conntrack_core.c
++++ b/net/ipv4/netfilter/ip_conntrack_core.c
+@@ -361,6 +361,50 @@ destroy_conntrack(struct nf_conntrack *n
+ 	ip_conntrack_free(ct);
+ }
+ 
++static void
++__destroy_conntrack(struct nf_conntrack *nfct)
++{
++	struct ip_conntrack *ct = (struct ip_conntrack *)nfct;
++	struct ip_conntrack_protocol *proto;
++
++	DEBUGP("destroy_conntrack(%p)\n", ct);
++	IP_NF_ASSERT(atomic_read(&nfct->use) == 0);
++	IP_NF_ASSERT(!timer_pending(&ct->timeout));
++
++	ip_conntrack_event(IPCT_DESTROY, ct);
++	set_bit(IPS_DYING_BIT, &ct->status);
++
++	/* To make sure we don't get any weird locking issues here:
++	 * destroy_conntrack() MUST NOT be called with a write lock
++	 * to ip_conntrack_lock!!! -HW */
++	proto = __ip_conntrack_proto_find(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.protonum);
++	if (proto && proto->destroy)
++		proto->destroy(ct);
++
++	if (ip_conntrack_destroyed)
++		ip_conntrack_destroyed(ct);
++
++	/* Expectations will have been removed in clean_from_lists,
++	 * except TFTP can create an expectation on the first packet,
++	 * before connection is in the list, so we need to clean here,
++	 * too. */
++	ip_ct_remove_expectations(ct);
++
++	/* We overload first tuple to link into unconfirmed list. */
++	if (!is_confirmed(ct)) {
++		BUG_ON(list_empty(&ct->tuplehash[IP_CT_DIR_ORIGINAL].list));
++		list_del(&ct->tuplehash[IP_CT_DIR_ORIGINAL].list);
++	}
++
++	CONNTRACK_STAT_INC(delete);
++
++	if (ct->master)
++		ip_conntrack_put(ct->master);
++
++	DEBUGP("destroy_conntrack: returning ct=%p to slab\n", ct);
++	ip_conntrack_free(ct);
++}
++
+ static void death_by_timeout(unsigned long ul_conntrack)
+ {
+ 	struct ip_conntrack *ct = (void *)ul_conntrack;
+@@ -374,6 +418,19 @@ static void death_by_timeout(unsigned lo
+ 	ip_conntrack_put(ct);
+ }
+ 
++void __death_by_timeout(unsigned long ul_conntrack)
++{
++	struct ip_conntrack *ct = (void *)ul_conntrack;
++
++	/* Inside lock so preempt is disabled on module removal path.
++	 * Otherwise we can get spurious warnings. */
++	CONNTRACK_STAT_INC(delete_list);
++	clean_from_lists(ct);
++
++	if (atomic_dec_and_test(&ct->ct_general.use))
++		__destroy_conntrack((struct nf_conntrack *)ct);
++}
++
+ struct ip_conntrack_tuple_hash *
+ __ip_conntrack_find(const struct ip_conntrack_tuple *tuple,
+ 		    const struct ip_conntrack *ignored_conntrack)
+diff --git a/net/ipv4/netfilter/ip_conntrack_proto_tcp.c b/net/ipv4/netfilter/ip_conntrack_proto_tcp.c
+index 06e4e8a..43e3f01 100644
+--- a/net/ipv4/netfilter/ip_conntrack_proto_tcp.c
++++ b/net/ipv4/netfilter/ip_conntrack_proto_tcp.c
+@@ -31,6 +31,7 @@ #include <linux/spinlock.h>
+ 
+ #include <net/tcp.h>
+ 
++#include <linux/netfilter/nf_conntrack_common.h>
+ #include <linux/netfilter_ipv4.h>
+ #include <linux/netfilter_ipv4/ip_conntrack.h>
+ #include <linux/netfilter_ipv4/ip_conntrack_protocol.h>
+@@ -984,6 +985,15 @@ static int tcp_packet(struct ip_conntrac
+ 					      NULL, "ip_ct_tcp: invalid SYN");
+ 			return -NF_ACCEPT;
+ 		}
++#if defined(CONFIG_IP_NF_TPROXY) || defined (CONFIG_IP_NF_TPROXY_MODULE)
++	case TCP_CONNTRACK_TIME_WAIT:
++		/* Set MAY_DELETE if NAT subsystem may drop connection when it is clashing */
++		if (test_bit(IPS_TPROXY_BIT, &conntrack->status)) {
++			DEBUGP(KERN_DEBUG "Marking TPROXY-related TIME_WAIT conntrack entry MAY_DELETE\n");
++			set_bit(IPS_MAY_DELETE_BIT, &conntrack->status);
++		}
++		break;
++#endif
+ 	case TCP_CONNTRACK_CLOSE:
+ 		if (index == TCP_RST_SET
+ 		    && ((test_bit(IPS_SEEN_REPLY_BIT, &conntrack->status)
+diff --git a/net/ipv4/netfilter/ip_conntrack_standalone.c b/net/ipv4/netfilter/ip_conntrack_standalone.c
+index 5b53a6b..27bf59c 100644
+--- a/net/ipv4/netfilter/ip_conntrack_standalone.c
++++ b/net/ipv4/netfilter/ip_conntrack_standalone.c
+@@ -967,3 +967,6 @@ #if defined(CONFIG_IP_NF_CONNTRACK_NETLI
+ EXPORT_SYMBOL_GPL(ip_ct_port_tuple_to_nfattr);
+ EXPORT_SYMBOL_GPL(ip_ct_port_nfattr_to_tuple);
+ #endif
++#if defined(CONFIG_IP_NF_TPROXY) || defined(CONFIG_IP_NF_TPROXY_MODULE)
++EXPORT_SYMBOL_GPL(__death_by_timeout);
++#endif
+diff --git a/net/ipv4/netfilter/ip_nat_core.c b/net/ipv4/netfilter/ip_nat_core.c
+index 5efdfb3..adc72fe 100644
+--- a/net/ipv4/netfilter/ip_nat_core.c
++++ b/net/ipv4/netfilter/ip_nat_core.c
+@@ -24,6 +24,7 @@ #include <linux/icmp.h>
+ #include <linux/udp.h>
+ #include <linux/jhash.h>
+ 
++#include <linux/netfilter/nf_conntrack_common.h>
+ #include <linux/netfilter_ipv4/ip_conntrack.h>
+ #include <linux/netfilter_ipv4/ip_conntrack_core.h>
+ #include <linux/netfilter_ipv4/ip_conntrack_protocol.h>
+@@ -119,6 +120,14 @@ static void ip_nat_cleanup_conntrack(str
+ 	write_unlock_bh(&ip_nat_lock);
+ }
+ 
++static void __ip_nat_cleanup_conntrack(struct ip_conntrack *conn)
++{
++	if (!(conn->status & IPS_NAT_DONE_MASK))
++		return;
++
++	list_del(&conn->nat.info.bysource);
++}
++
+ #ifdef CONFIG_IP_NF_NAT_NRES
+ static inline int
+ reserved_manip_cmp(const struct ip_nat_reserved *i,
+@@ -247,7 +256,8 @@ __ip_nat_reserved_new_hash(const struct
+ 			   const struct ip_conntrack_manip *peer)
+ {
+ 	struct ip_nat_reserved *res;
+-	unsigned int h;
++	struct ip_conntrack_tuple_hash *h = NULL;
++	unsigned int hash;
+ 
+ 	DEBUGP("__ip_nat_reserved_new_hash: manip proto %u %u.%u.%u.%u:%u\n",
+ 			proto, NIPQUAD(manip->ip), ntohs(manip->u.all));
+@@ -279,26 +289,60 @@ __ip_nat_reserved_new_hash(const struct
+ 					       .dst = {.protonum = proto,
+ 						       .ip = manip->ip,
+ 						       .u = {.all = manip->u.all}}};
++		struct ip_conntrack *ctrack;
++
++		h = ip_conntrack_find_get(&t, NULL);
++
++#if defined(CONFIG_IP_NF_TPROXY) || defined (CONFIG_IP_NF_TPROXY_MODULE)
++		if ((h != NULL) &&
++		    (ctrack = tuplehash_to_ctrack(h)) &&
++		    test_bit(IPS_MAY_DELETE_BIT, &ctrack->status)) {
++			DEBUGP("Deleting old conntrack entry for NAT\n");
++			__ip_nat_cleanup_conntrack(ctrack);
++			ctrack->status &= ~IPS_NAT_DONE_MASK;
++			if (del_timer(&ctrack->timeout))
++				ctrack->timeout.function((unsigned long)ctrack);
++			ip_conntrack_put(ctrack);
++			h = NULL;
++		}
++#endif
+ 
+-		if (ip_conntrack_tuple_taken(&t, NULL)) {
++		if (h) {
+ 			DEBUGP("__ip_nat_reserved_new_hash: manip clashes with an already existing connection\n");
++			ip_conntrack_put(tuplehash_to_ctrack(h));
+ 			return NULL;
+ 		}
+ 	} else {
+ 		/* Strong check: we have only a manip, unfortunately we scan the whole conntrack
+ 		 * hash for possible clashing connections... */
+-		struct ip_conntrack_tuple_hash *h;
+ 		unsigned int i;
+-		int found = 0;
+-
+-		read_lock_bh(&ip_conntrack_lock);
+-		for (i = 0; !found && i < ip_conntrack_htable_size; i++)
+-			list_for_each_entry(h, &ip_conntrack_hash[i], list)
+-				if (clashing_ct_cmp(h, manip)) {
+-					found = 1;
+-					break;
++		int found = 0, repeat;
++		struct ip_conntrack *ctrack;
++
++		write_lock_bh(&ip_conntrack_lock);
++		for (i = 0; !found && i < ip_conntrack_htable_size; i++) {
++			do {
++				repeat = 0;
++				list_for_each_entry(h, &ip_conntrack_hash[i], list)
++					if (clashing_ct_cmp(h, manip)) {
++						found = 1;
++						break;
++					}
++				if (found &&
++				    (ctrack = tuplehash_to_ctrack(h)) &&
++				    (ctrack->status & IPS_MAY_DELETE)) {
++					DEBUGP("Deleting old conntrack entry for NAT\n");
++					__ip_nat_cleanup_conntrack(ctrack);
++					ctrack->status &= ~IPS_NAT_DONE_MASK;
++					if (del_timer(&ctrack->timeout))
++						__death_by_timeout((unsigned long)ctrack);
++					found = 0;
++					repeat = 1;
+ 				}
+-		read_unlock_bh(&ip_conntrack_lock);
++			} while (repeat);
++		}
++		write_unlock_bh(&ip_conntrack_lock);
++
+ 		if (found) {
+ 			DEBUGP("__ip_nat_reserved_new_hash: manip clashes with an already existing connection\n");
+ 			return NULL;
+@@ -317,7 +361,7 @@ __ip_nat_reserved_new_hash(const struct
+ 		res->peer = *peer;
+ 
+ 	/* put it into the hash */
+-	h = hash_nat_reserved(manip, peer, proto);
++	hash = hash_nat_reserved(manip, peer, proto);
+ 	atomic_inc(&ip_nat_reserved_count);
+ 	list_add(&res->hash, &natreserved[hash]);
+ 	DEBUGP("__ip_nat_reserved_new_hash: hashed manip proto %u %u.%u.%u.%u:%u\n",
+@@ -494,6 +538,8 @@ ip_nat_used_tuple(const struct ip_conntr
+ 
+ 	   We could keep a separate hash if this proves too slow. */
+ 	struct ip_conntrack_tuple reply;
++	struct ip_conntrack_tuple_hash *h;
++	struct ip_conntrack *ctrack;
+ #ifdef CONFIG_IP_NF_NAT_NRES
+ 	struct ip_nat_reserved *res;
+ 
+@@ -509,8 +555,29 @@ #ifdef CONFIG_IP_NF_NAT_NRES
+ 	}
+ #endif
+ 
++	/* check if it's taken by an existing connection */
+ 	invert_tuplepr(&reply, tuple);
+-	return ip_conntrack_tuple_taken(&reply, ignored_conntrack);
++	h = ip_conntrack_find_get(&reply, ignored_conntrack);
++
++#if defined(CONFIG_IP_NF_TPROXY) || defined (CONFIG_IP_NF_TPROXY_MODULE)
++	/* check if that conntrack is marked MAY_DELETE, if so, get rid of it... */
++	if ((h != NULL) &&
++	    (ctrack = tuplehash_to_ctrack(h)) &&
++	    test_bit(IPS_MAY_DELETE_BIT, &ctrack->status)) {
++		DEBUGP("Deleting old conntrack entry for NAT\n");
++		__ip_nat_cleanup_conntrack(ctrack);
++		ctrack->status &= ~IPS_NAT_DONE_MASK;
++		if (del_timer(&ctrack->timeout))
++			ctrack->timeout.function((unsigned long)ctrack);
++		ip_conntrack_put(tuplehash_to_ctrack(h));
++		h = NULL;
++	}
++#endif
++
++	if (h)
++		ip_conntrack_put(tuplehash_to_ctrack(h));
++
++	return h != NULL;
+ }
+ EXPORT_SYMBOL(ip_nat_used_tuple);
+ 
+diff --git a/net/ipv4/netfilter/iptable_tproxy.c b/net/ipv4/netfilter/iptable_tproxy.c
+index 4bc2c43..21262a5 100644
+--- a/net/ipv4/netfilter/iptable_tproxy.c
++++ b/net/ipv4/netfilter/iptable_tproxy.c
+@@ -1223,8 +1223,8 @@ ip_tproxy_setsockopt_unassign(struct soc
+ 
+ 	if (!sr) {
+ 		DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_UNASSIGN not unhashing socket, "
+-		       "%08x:%04x, proto=%d, sk->state=%d\n",
+-		       saddr, sport, proto, sk->sk_socket ? sk->sk_socket->state : -1);
++		       "%08x:%04x, proto=%d\n",
++		       saddr, sport, proto);
+ 		res = -ENOENT;
+ 		goto write_unlk;
+ 	}

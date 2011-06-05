@@ -1,0 +1,62 @@
+NAME
+cko - colored kernel output patch for Linux kernel of 2.4 and 2.6 series
+
+DESCRIPTION
+cko is a patch for Linux kernel of 2.4 and 2.6 series which will make
+colored kernel messages in BSD style.
+
+OPTIONS
+If you don't like default yellow color in cko patch you can change it to
+color you like in menuconfig with option "Colored Kernel Output" under
+menu "Character devices" or "Device Drivers/Character devices" in case
+of 2.6 kernels.
+
+Here is a an example of colors and it's codes.
+The numbers are the attribute codes used by the video card in hexadecimal:
+the most significant bit is the background and the least significant bit is
+the foreground.
+ 0 = black
+ 1 = blue
+ 2 = green
+ 3 = cyan
+ 4 = red
+ 5 = purple
+ 6 = yellow/brown
+ 7 = white
+ 8 = grey
+ 9 = bright blue
+ a = bright green
+ b = bright cyan
+ c = bright red
+ d = bright purple
+ e = bright yellow
+ f = bright white
+
+REQUIREMENTS
+In case of 2.4.x kernels, one should say Y to CONFIG_FB_VGA16 option in order
+to select additional 8 colors (bright colors).
+CONFIG_FB_VGA16 option depends on CONFIG_EXPERIMENTAL (Prompt for development
+and/or incomplete code/drivers) and CONFIG_FB (Support for frame buffer
+devices) options.
+
+In case of 2.6.x kernels, one should say Y to CONFIG_FB_VGA16 and
+CONFIG_FRAMEBUFFER_CONSOLE in order to select additional 8 colors (bright
+colors).
+CONFIG_FB_VGA16 and CONFIG_FRAMEBUFFER_CONSOLE depends on CONFIG_FB (Support
+for frame buffer devices).
+
+The reason for such requirements comes from fact that current Linux console
+implementation cannot handle 512-byte fonts and bright colors (base 8 colors
+with added 0x80) unless framebuffer is used.
+
+BUGS
+Current version of cko does not contain known bugs.
+
+SEE ALSO
+console_codes(4),
+http://rampex.ihep.su/Linux/linux_howto/html/tutorials/mini/Colour-ls-6.html#ss6.2
+
+AUTHOR
+Josip Deanovic <djosip@linuxpages.org>
+This patch is based on similar patch whose author currently wants to remain
+anonymous.

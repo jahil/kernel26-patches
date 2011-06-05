@@ -1,0 +1,4770 @@
+diff -urN linux-2.6.18/drivers/bluetooth/bcm203x.c linux-2.6.18-mh8/drivers/bluetooth/bcm203x.c
+--- linux-2.6.18/drivers/bluetooth/bcm203x.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18-mh8/drivers/bluetooth/bcm203x.c	2006-11-18 22:26:02.000000000 +0100
+@@ -29,7 +29,6 @@
+ #include <linux/slab.h>
+ #include <linux/types.h>
+ #include <linux/errno.h>
+-#include <linux/timer.h>
+ 
+ #include <linux/device.h>
+ #include <linux/firmware.h>
+@@ -43,7 +42,7 @@
+ #define BT_DBG(D...)
+ #endif
+ 
+-#define VERSION "1.0"
++#define VERSION "1.1"
+ 
+ static int ignore = 0;
+ 
+@@ -72,7 +71,7 @@
+ 
+ 	unsigned long		state;
+ 
+-	struct timer_list	timer;
++	struct work_struct	work;
+ 
+ 	struct urb		*urb;
+ 	unsigned char		*buffer;
+@@ -105,7 +104,7 @@
+ 
+ 		data->state = BCM203X_SELECT_MEMORY;
+ 
+-		mod_timer(&data->timer, jiffies + (HZ / 10));
++		schedule_work(&data->work);
+ 		break;
+ 
+ 	case BCM203X_SELECT_MEMORY:
+@@ -158,9 +157,9 @@
+ 	}
+ }
+ 
+-static void bcm203x_timer(unsigned long user_data)
++static void bcm203x_work(void *user_data)
+ {
+-	struct bcm203x_data *data = (struct bcm203x_data *) user_data;
++	struct bcm203x_data *data = user_data;
+ 
+ 	if (usb_submit_urb(data->urb, GFP_ATOMIC) < 0)
+ 		BT_ERR("Can't submit URB");
+@@ -247,13 +246,11 @@
+ 
+ 	release_firmware(firmware);
+ 
+-	init_timer(&data->timer);
+-	data->timer.function = bcm203x_timer;
+-	data->timer.data = (unsigned long) data;
++	INIT_WORK(&data->work, bcm203x_work, (void *) data);
+ 
+ 	usb_set_intfdata(intf, data);
+ 
+-	mod_timer(&data->timer, jiffies + HZ);
++	schedule_work(&data->work);
+ 
+ 	return 0;
+ }
+diff -urN linux-2.6.18/drivers/bluetooth/bfusb.c linux-2.6.18-mh8/drivers/bluetooth/bfusb.c
+--- linux-2.6.18/drivers/bluetooth/bfusb.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18-mh8/drivers/bluetooth/bfusb.c	2006-11-18 22:25:59.000000000 +0100
+@@ -2,7 +2,7 @@
+  *
+  *  AVM BlueFRITZ! USB driver
+  *
+- *  Copyright (C) 2003  Marcel Holtmann <marcel@holtmann.org>
++ *  Copyright (C) 2003-2006  Marcel Holtmann <marcel@holtmann.org>
+  *
+  *
+  *  This program is free software; you can redistribute it and/or modify
+@@ -59,7 +59,6 @@
+ 
+ MODULE_DEVICE_TABLE(usb, bfusb_table);
+ 
+-
+ #define BFUSB_MAX_BLOCK_SIZE	256
+ 
+ #define BFUSB_BLOCK_TIMEOUT	3000
+@@ -70,7 +69,7 @@
+ #define BFUSB_MAX_BULK_TX	2
+ #define BFUSB_MAX_BULK_RX	2
+ 
+-struct bfusb {
++struct bfusb_data {
+ 	struct hci_dev		*hdev;
+ 
+ 	unsigned long		state;
+@@ -92,137 +91,136 @@
+ 	struct sk_buff_head	completed_q;
+ };
+ 
+-struct bfusb_scb {
++struct bfusb_data_scb {
+ 	struct urb *urb;
+ };
+ 
+ static void bfusb_tx_complete(struct urb *urb, struct pt_regs *regs);
+ static void bfusb_rx_complete(struct urb *urb, struct pt_regs *regs);
+ 
+-static struct urb *bfusb_get_completed(struct bfusb *bfusb)
++static struct urb *bfusb_get_completed(struct bfusb_data *data)
+ {
+ 	struct sk_buff *skb;
+ 	struct urb *urb = NULL;
+ 
+-	BT_DBG("bfusb %p", bfusb);
++	BT_DBG("bfusb %p", data);
+ 
+-	skb = skb_dequeue(&bfusb->completed_q);
++	skb = skb_dequeue(&data->completed_q);
+ 	if (skb) {
+-		urb = ((struct bfusb_scb *) skb->cb)->urb;
++		urb = ((struct bfusb_data_scb *) skb->cb)->urb;
+ 		kfree_skb(skb);
+ 	}
+ 
+ 	return urb;
+ }
+ 
+-static void bfusb_unlink_urbs(struct bfusb *bfusb)
++static void bfusb_unlink_urbs(struct bfusb_data *data)
+ {
+ 	struct sk_buff *skb;
+ 	struct urb *urb;
+ 
+-	BT_DBG("bfusb %p", bfusb);
++	BT_DBG("bfusb %p", data);
+ 
+-	while ((skb = skb_dequeue(&bfusb->pending_q))) {
+-		urb = ((struct bfusb_scb *) skb->cb)->urb;
++	while ((skb = skb_dequeue(&data->pending_q))) {
++		urb = ((struct bfusb_data_scb *) skb->cb)->urb;
+ 		usb_kill_urb(urb);
+-		skb_queue_tail(&bfusb->completed_q, skb);
++		skb_queue_tail(&data->completed_q, skb);
+ 	}
+ 
+-	while ((urb = bfusb_get_completed(bfusb)))
++	while ((urb = bfusb_get_completed(data)))
+ 		usb_free_urb(urb);
+ }
+ 
+-
+-static int bfusb_send_bulk(struct bfusb *bfusb, struct sk_buff *skb)
++static int bfusb_send_bulk(struct bfusb_data *data, struct sk_buff *skb)
+ {
+-	struct bfusb_scb *scb = (void *) skb->cb;
+-	struct urb *urb = bfusb_get_completed(bfusb);
++	struct bfusb_data_scb *scb = (void *) skb->cb;
++	struct urb *urb = bfusb_get_completed(data);
+ 	int err, pipe;
+ 
+-	BT_DBG("bfusb %p skb %p len %d", bfusb, skb, skb->len);
++	BT_DBG("bfusb %p skb %p len %d", data, skb, skb->len);
+ 
+ 	if (!urb && !(urb = usb_alloc_urb(0, GFP_ATOMIC)))
+ 		return -ENOMEM;
+ 
+-	pipe = usb_sndbulkpipe(bfusb->udev, bfusb->bulk_out_ep);
++	pipe = usb_sndbulkpipe(data->udev, data->bulk_out_ep);
+ 
+-	usb_fill_bulk_urb(urb, bfusb->udev, pipe, skb->data, skb->len,
++	usb_fill_bulk_urb(urb, data->udev, pipe, skb->data, skb->len,
+ 			bfusb_tx_complete, skb);
+ 
+ 	scb->urb = urb;
+ 
+-	skb_queue_tail(&bfusb->pending_q, skb);
++	skb_queue_tail(&data->pending_q, skb);
+ 
+ 	err = usb_submit_urb(urb, GFP_ATOMIC);
+ 	if (err) {
+ 		BT_ERR("%s bulk tx submit failed urb %p err %d", 
+-					bfusb->hdev->name, urb, err);
+-		skb_unlink(skb, &bfusb->pending_q);
++					data->hdev->name, urb, err);
++		skb_unlink(skb, &data->pending_q);
+ 		usb_free_urb(urb);
+ 	} else
+-		atomic_inc(&bfusb->pending_tx);
++		atomic_inc(&data->pending_tx);
+ 
+ 	return err;
+ }
+ 
+-static void bfusb_tx_wakeup(struct bfusb *bfusb)
++static void bfusb_tx_wakeup(struct bfusb_data *data)
+ {
+ 	struct sk_buff *skb;
+ 
+-	BT_DBG("bfusb %p", bfusb);
++	BT_DBG("bfusb %p", data);
+ 
+-	if (test_and_set_bit(BFUSB_TX_PROCESS, &bfusb->state)) {
+-		set_bit(BFUSB_TX_WAKEUP, &bfusb->state);
++	if (test_and_set_bit(BFUSB_TX_PROCESS, &data->state)) {
++		set_bit(BFUSB_TX_WAKEUP, &data->state);
+ 		return;
+ 	}
+ 
+ 	do {
+-		clear_bit(BFUSB_TX_WAKEUP, &bfusb->state);
++		clear_bit(BFUSB_TX_WAKEUP, &data->state);
+ 
+-		while ((atomic_read(&bfusb->pending_tx) < BFUSB_MAX_BULK_TX) &&
+-				(skb = skb_dequeue(&bfusb->transmit_q))) {
+-			if (bfusb_send_bulk(bfusb, skb) < 0) {
+-				skb_queue_head(&bfusb->transmit_q, skb);
++		while ((atomic_read(&data->pending_tx) < BFUSB_MAX_BULK_TX) &&
++				(skb = skb_dequeue(&data->transmit_q))) {
++			if (bfusb_send_bulk(data, skb) < 0) {
++				skb_queue_head(&data->transmit_q, skb);
+ 				break;
+ 			}
+ 		}
+ 
+-	} while (test_bit(BFUSB_TX_WAKEUP, &bfusb->state));
++	} while (test_bit(BFUSB_TX_WAKEUP, &data->state));
+ 
+-	clear_bit(BFUSB_TX_PROCESS, &bfusb->state);
++	clear_bit(BFUSB_TX_PROCESS, &data->state);
+ }
+ 
+ static void bfusb_tx_complete(struct urb *urb, struct pt_regs *regs)
+ {
+ 	struct sk_buff *skb = (struct sk_buff *) urb->context;
+-	struct bfusb *bfusb = (struct bfusb *) skb->dev;
++	struct bfusb_data *data = (struct bfusb_data *) skb->dev;
+ 
+-	BT_DBG("bfusb %p urb %p skb %p len %d", bfusb, urb, skb, skb->len);
++	BT_DBG("bfusb %p urb %p skb %p len %d", data, urb, skb, skb->len);
+ 
+-	atomic_dec(&bfusb->pending_tx);
++	atomic_dec(&data->pending_tx);
+ 
+-	if (!test_bit(HCI_RUNNING, &bfusb->hdev->flags))
++	if (!test_bit(HCI_RUNNING, &data->hdev->flags))
+ 		return;
+ 
+ 	if (!urb->status)
+-		bfusb->hdev->stat.byte_tx += skb->len;
++		data->hdev->stat.byte_tx += skb->len;
+ 	else
+-		bfusb->hdev->stat.err_tx++;
++		data->hdev->stat.err_tx++;
+ 
+-	read_lock(&bfusb->lock);
++	read_lock(&data->lock);
+ 
+-	skb_unlink(skb, &bfusb->pending_q);
+-	skb_queue_tail(&bfusb->completed_q, skb);
++	skb_unlink(skb, &data->pending_q);
++	skb_queue_tail(&data->completed_q, skb);
+ 
+-	bfusb_tx_wakeup(bfusb);
++	bfusb_tx_wakeup(data);
+ 
+-	read_unlock(&bfusb->lock);
++	read_unlock(&data->lock);
+ }
+ 
+ 
+-static int bfusb_rx_submit(struct bfusb *bfusb, struct urb *urb)
++static int bfusb_rx_submit(struct bfusb_data *data, struct urb *urb)
+ {
+-	struct bfusb_scb *scb;
++	struct bfusb_data_scb *scb;
+ 	struct sk_buff *skb;
+ 	int err, pipe, size = HCI_MAX_FRAME_SIZE + 32;
+ 
+@@ -231,28 +229,29 @@
+ 	if (!urb && !(urb = usb_alloc_urb(0, GFP_ATOMIC)))
+ 		return -ENOMEM;
+ 
+-	if (!(skb = bt_skb_alloc(size, GFP_ATOMIC))) {
++	skb = bt_skb_alloc(size, GFP_ATOMIC);
++	if (!skb) {
+ 		usb_free_urb(urb);
+ 		return -ENOMEM;
+ 	}
+ 
+-	skb->dev = (void *) bfusb;
++	skb->dev = (void *) data;
+ 
+-	scb = (struct bfusb_scb *) skb->cb;
++	scb = (struct bfusb_data_scb *) skb->cb;
+ 	scb->urb = urb;
+ 
+-	pipe = usb_rcvbulkpipe(bfusb->udev, bfusb->bulk_in_ep);
++	pipe = usb_rcvbulkpipe(data->udev, data->bulk_in_ep);
+ 
+-	usb_fill_bulk_urb(urb, bfusb->udev, pipe, skb->data, size,
++	usb_fill_bulk_urb(urb, data->udev, pipe, skb->data, size,
+ 			bfusb_rx_complete, skb);
+ 
+-	skb_queue_tail(&bfusb->pending_q, skb);
++	skb_queue_tail(&data->pending_q, skb);
+ 
+ 	err = usb_submit_urb(urb, GFP_ATOMIC);
+ 	if (err) {
+ 		BT_ERR("%s bulk rx submit failed urb %p err %d",
+-					bfusb->hdev->name, urb, err);
+-		skb_unlink(skb, &bfusb->pending_q);
++					data->hdev->name, urb, err);
++		skb_unlink(skb, &data->pending_q);
+ 		kfree_skb(skb);
+ 		usb_free_urb(urb);
+ 	}
+@@ -260,15 +259,15 @@
+ 	return err;
+ }
+ 
+-static inline int bfusb_recv_block(struct bfusb *bfusb, int hdr, unsigned char *data, int len)
++static inline int bfusb_recv_block(struct bfusb_data *data, int hdr, unsigned char *buf, int len)
+ {
+-	BT_DBG("bfusb %p hdr 0x%02x data %p len %d", bfusb, hdr, data, len);
++	BT_DBG("bfusb %p hdr 0x%02x data %p len %d", data, hdr, buf, len);
+ 
+ 	if (hdr & 0x10) {
+-		BT_ERR("%s error in block", bfusb->hdev->name);
+-		if (bfusb->reassembly)
+-			kfree_skb(bfusb->reassembly);
+-		bfusb->reassembly = NULL;
++		BT_ERR("%s error in block", data->hdev->name);
++		if (data->reassembly)
++			kfree_skb(data->reassembly);
++		data->reassembly = NULL;
+ 		return -EIO;
+ 	}
+ 
+@@ -277,46 +276,46 @@
+ 		unsigned char pkt_type;
+ 		int pkt_len = 0;
+ 
+-		if (bfusb->reassembly) {
+-			BT_ERR("%s unexpected start block", bfusb->hdev->name);
+-			kfree_skb(bfusb->reassembly);
+-			bfusb->reassembly = NULL;
++		if (data->reassembly) {
++			BT_ERR("%s unexpected start block", data->hdev->name);
++			kfree_skb(data->reassembly);
++			data->reassembly = NULL;
+ 		}
+ 
+ 		if (len < 1) {
+-			BT_ERR("%s no packet type found", bfusb->hdev->name);
++			BT_ERR("%s no packet type found", data->hdev->name);
+ 			return -EPROTO;
+ 		}
+ 
+-		pkt_type = *data++; len--;
++		pkt_type = *buf++; len--;
+ 
+ 		switch (pkt_type) {
+ 		case HCI_EVENT_PKT:
+ 			if (len >= HCI_EVENT_HDR_SIZE) {
+-				struct hci_event_hdr *hdr = (struct hci_event_hdr *) data;
++				struct hci_event_hdr *hdr = (struct hci_event_hdr *) buf;
+ 				pkt_len = HCI_EVENT_HDR_SIZE + hdr->plen;
+ 			} else {
+-				BT_ERR("%s event block is too short", bfusb->hdev->name);
++				BT_ERR("%s event block is too short", data->hdev->name);
+ 				return -EILSEQ;
+ 			}
+ 			break;
+ 
+ 		case HCI_ACLDATA_PKT:
+ 			if (len >= HCI_ACL_HDR_SIZE) {
+-				struct hci_acl_hdr *hdr = (struct hci_acl_hdr *) data;
++				struct hci_acl_hdr *hdr = (struct hci_acl_hdr *) buf;
+ 				pkt_len = HCI_ACL_HDR_SIZE + __le16_to_cpu(hdr->dlen);
+ 			} else {
+-				BT_ERR("%s data block is too short", bfusb->hdev->name);
++				BT_ERR("%s data block is too short", data->hdev->name);
+ 				return -EILSEQ;
+ 			}
+ 			break;
+ 
+ 		case HCI_SCODATA_PKT:
+ 			if (len >= HCI_SCO_HDR_SIZE) {
+-				struct hci_sco_hdr *hdr = (struct hci_sco_hdr *) data;
++				struct hci_sco_hdr *hdr = (struct hci_sco_hdr *) buf;
+ 				pkt_len = HCI_SCO_HDR_SIZE + hdr->dlen;
+ 			} else {
+-				BT_ERR("%s audio block is too short", bfusb->hdev->name);
++				BT_ERR("%s audio block is too short", data->hdev->name);
+ 				return -EILSEQ;
+ 			}
+ 			break;
+@@ -324,27 +323,27 @@
+ 
+ 		skb = bt_skb_alloc(pkt_len, GFP_ATOMIC);
+ 		if (!skb) {
+-			BT_ERR("%s no memory for the packet", bfusb->hdev->name);
++			BT_ERR("%s no memory for the packet", data->hdev->name);
+ 			return -ENOMEM;
+ 		}
+ 
+-		skb->dev = (void *) bfusb->hdev;
++		skb->dev = (void *) data->hdev;
+ 		bt_cb(skb)->pkt_type = pkt_type;
+ 
+-		bfusb->reassembly = skb;
++		data->reassembly = skb;
+ 	} else {
+-		if (!bfusb->reassembly) {
+-			BT_ERR("%s unexpected continuation block", bfusb->hdev->name);
++		if (!data->reassembly) {
++			BT_ERR("%s unexpected continuation block", data->hdev->name);
+ 			return -EIO;
+ 		}
+ 	}
+ 
+ 	if (len > 0)
+-		memcpy(skb_put(bfusb->reassembly, len), data, len);
++		memcpy(skb_put(data->reassembly, len), buf, len);
+ 
+ 	if (hdr & 0x08) {
+-		hci_recv_frame(bfusb->reassembly);
+-		bfusb->reassembly = NULL;
++		hci_recv_frame(data->reassembly);
++		data->reassembly = NULL;
+ 	}
+ 
+ 	return 0;
+@@ -353,22 +352,22 @@
+ static void bfusb_rx_complete(struct urb *urb, struct pt_regs *regs)
+ {
+ 	struct sk_buff *skb = (struct sk_buff *) urb->context;
+-	struct bfusb *bfusb = (struct bfusb *) skb->dev;
++	struct bfusb_data *data = (struct bfusb_data *) skb->dev;
+ 	unsigned char *buf = urb->transfer_buffer;
+ 	int count = urb->actual_length;
+ 	int err, hdr, len;
+ 
+ 	BT_DBG("bfusb %p urb %p skb %p len %d", bfusb, urb, skb, skb->len);
+ 
+-	read_lock(&bfusb->lock);
++	read_lock(&data->lock);
+ 
+-	if (!test_bit(HCI_RUNNING, &bfusb->hdev->flags))
++	if (!test_bit(HCI_RUNNING, &data->hdev->flags))
+ 		goto unlock;
+ 
+ 	if (urb->status || !count)
+ 		goto resubmit;
+ 
+-	bfusb->hdev->stat.byte_rx += count;
++	data->hdev->stat.byte_rx += count;
+ 
+ 	skb_put(skb, count);
+ 
+@@ -387,90 +386,89 @@
+ 
+ 		if (count < len) {
+ 			BT_ERR("%s block extends over URB buffer ranges",
+-					bfusb->hdev->name);
++					data->hdev->name);
+ 		}
+ 
+ 		if ((hdr & 0xe1) == 0xc1)
+-			bfusb_recv_block(bfusb, hdr, buf, len);
++			bfusb_recv_block(data, hdr, buf, len);
+ 
+ 		count -= len;
+ 		buf   += len;
+ 	}
+ 
+-	skb_unlink(skb, &bfusb->pending_q);
++	skb_unlink(skb, &data->pending_q);
+ 	kfree_skb(skb);
+ 
+-	bfusb_rx_submit(bfusb, urb);
++	bfusb_rx_submit(data, urb);
+ 
+-	read_unlock(&bfusb->lock);
++	read_unlock(&data->lock);
+ 
+ 	return;
+ 
+ resubmit:
+-	urb->dev = bfusb->udev;
++	urb->dev = data->udev;
+ 
+ 	err = usb_submit_urb(urb, GFP_ATOMIC);
+ 	if (err) {
+ 		BT_ERR("%s bulk resubmit failed urb %p err %d",
+-					bfusb->hdev->name, urb, err);
++					data->hdev->name, urb, err);
+ 	}
+ 
+ unlock:
+-	read_unlock(&bfusb->lock);
++	read_unlock(&data->lock);
+ }
+ 
+-
+ static int bfusb_open(struct hci_dev *hdev)
+ {
+-	struct bfusb *bfusb = (struct bfusb *) hdev->driver_data;
++	struct bfusb_data *data = hdev->driver_data;
+ 	unsigned long flags;
+ 	int i, err;
+ 
+-	BT_DBG("hdev %p bfusb %p", hdev, bfusb);
++	BT_DBG("hdev %p bfusb %p", hdev, data);
+ 
+ 	if (test_and_set_bit(HCI_RUNNING, &hdev->flags))
+ 		return 0;
+ 
+-	write_lock_irqsave(&bfusb->lock, flags);
++	write_lock_irqsave(&data->lock, flags);
+ 
+-	err = bfusb_rx_submit(bfusb, NULL);
++	err = bfusb_rx_submit(data, NULL);
+ 	if (!err) {
+ 		for (i = 1; i < BFUSB_MAX_BULK_RX; i++)
+-			bfusb_rx_submit(bfusb, NULL);
++			bfusb_rx_submit(data, NULL);
+ 	} else {
+ 		clear_bit(HCI_RUNNING, &hdev->flags);
+ 	}
+ 
+-	write_unlock_irqrestore(&bfusb->lock, flags);
++	write_unlock_irqrestore(&data->lock, flags);
+ 
+ 	return err;
+ }
+ 
+ static int bfusb_flush(struct hci_dev *hdev)
+ {
+-	struct bfusb *bfusb = (struct bfusb *) hdev->driver_data;
++	struct bfusb_data *data = hdev->driver_data;
+ 
+-	BT_DBG("hdev %p bfusb %p", hdev, bfusb);
++	BT_DBG("hdev %p bfusb %p", hdev, data);
+ 
+-	skb_queue_purge(&bfusb->transmit_q);
++	skb_queue_purge(&data->transmit_q);
+ 
+ 	return 0;
+ }
+ 
+ static int bfusb_close(struct hci_dev *hdev)
+ {
+-	struct bfusb *bfusb = (struct bfusb *) hdev->driver_data;
++	struct bfusb_data *data = hdev->driver_data;
+ 	unsigned long flags;
+ 
+-	BT_DBG("hdev %p bfusb %p", hdev, bfusb);
++	BT_DBG("hdev %p bfusb %p", hdev, data);
+ 
+ 	if (!test_and_clear_bit(HCI_RUNNING, &hdev->flags))
+ 		return 0;
+ 
+-	write_lock_irqsave(&bfusb->lock, flags);
+-	write_unlock_irqrestore(&bfusb->lock, flags);
++	write_lock_irqsave(&data->lock, flags);
++	write_unlock_irqrestore(&data->lock, flags);
+ 
+-	bfusb_unlink_urbs(bfusb);
++	bfusb_unlink_urbs(data);
+ 	bfusb_flush(hdev);
+ 
+ 	return 0;
+@@ -479,7 +477,7 @@
+ static int bfusb_send_frame(struct sk_buff *skb)
+ {
+ 	struct hci_dev *hdev = (struct hci_dev *) skb->dev;
+-	struct bfusb *bfusb;
++	struct bfusb_data *data;
+ 	struct sk_buff *nskb;
+ 	unsigned char buf[3];
+ 	int sent = 0, size, count;
+@@ -494,7 +492,7 @@
+ 	if (!test_bit(HCI_RUNNING, &hdev->flags))
+ 		return -EBUSY;
+ 
+-	bfusb = (struct bfusb *) hdev->driver_data;
++	data = hdev->driver_data;
+ 
+ 	switch (bt_cb(skb)->pkt_type) {
+ 	case HCI_COMMAND_PKT:
+@@ -514,12 +512,13 @@
+ 	count = skb->len;
+ 
+ 	/* Max HCI frame size seems to be 1511 + 1 */
+-	if (!(nskb = bt_skb_alloc(count + 32, GFP_ATOMIC))) {
++	nskb = bt_skb_alloc(count + 32, GFP_ATOMIC);
++	if (!nskb) {
+ 		BT_ERR("Can't allocate memory for new packet");
+ 		return -ENOMEM;
+ 	}
+ 
+-	nskb->dev = (void *) bfusb;
++	nskb->dev = (void *) data;
+ 
+ 	while (count) {
+ 		size = min_t(uint, count, BFUSB_MAX_BLOCK_SIZE);
+@@ -536,18 +535,18 @@
+ 	}
+ 
+ 	/* Don't send frame with multiple size of bulk max packet */
+-	if ((nskb->len % bfusb->bulk_pkt_size) == 0) {
++	if ((nskb->len % data->bulk_pkt_size) == 0) {
+ 		buf[0] = 0xdd;
+ 		buf[1] = 0x00;
+ 		memcpy(skb_put(nskb, 2), buf, 2);
+ 	}
+ 
+-	read_lock(&bfusb->lock);
++	read_lock(&data->lock);
+ 
+-	skb_queue_tail(&bfusb->transmit_q, nskb);
+-	bfusb_tx_wakeup(bfusb);
++	skb_queue_tail(&data->transmit_q, nskb);
++	bfusb_tx_wakeup(data);
+ 
+-	read_unlock(&bfusb->lock);
++	read_unlock(&data->lock);
+ 
+ 	kfree_skb(skb);
+ 
+@@ -556,11 +555,11 @@
+ 
+ static void bfusb_destruct(struct hci_dev *hdev)
+ {
+-	struct bfusb *bfusb = (struct bfusb *) hdev->driver_data;
++	struct bfusb_data *data = hdev->driver_data;
+ 
+-	BT_DBG("hdev %p bfusb %p", hdev, bfusb);
++	BT_DBG("hdev %p bfusb %p", hdev, data);
+ 
+-	kfree(bfusb);
++	kfree(data);
+ }
+ 
+ static int bfusb_ioctl(struct hci_dev *hdev, unsigned int cmd, unsigned long arg)
+@@ -568,25 +567,24 @@
+ 	return -ENOIOCTLCMD;
+ }
+ 
+-
+-static int bfusb_load_firmware(struct bfusb *bfusb, unsigned char *firmware, int count)
++static int bfusb_load_firmware(struct bfusb_data *data, unsigned char *firmware, int count)
+ {
+ 	unsigned char *buf;
+ 	int err, pipe, len, size, sent = 0;
+ 
+-	BT_DBG("bfusb %p udev %p", bfusb, bfusb->udev);
++	BT_DBG("bfusb %p udev %p", data, data->udev);
+ 
+ 	BT_INFO("BlueFRITZ! USB loading firmware");
+ 
+-	pipe = usb_sndctrlpipe(bfusb->udev, 0);
++	pipe = usb_sndctrlpipe(data->udev, 0);
+ 
+-	if (usb_control_msg(bfusb->udev, pipe, USB_REQ_SET_CONFIGURATION,
++	if (usb_control_msg(data->udev, pipe, USB_REQ_SET_CONFIGURATION,
+ 				0, 1, 0, NULL, 0, USB_CTRL_SET_TIMEOUT) < 0) {
+ 		BT_ERR("Can't change to loading configuration");
+ 		return -EBUSY;
+ 	}
+ 
+-	bfusb->udev->toggle[0] = bfusb->udev->toggle[1] = 0;
++	data->udev->toggle[0] = data->udev->toggle[1] = 0;
+ 
+ 	buf = kmalloc(BFUSB_MAX_BLOCK_SIZE + 3, GFP_ATOMIC);
+ 	if (!buf) {
+@@ -594,14 +592,14 @@
+ 		return -ENOMEM;
+ 	}
+ 
+-	pipe = usb_sndbulkpipe(bfusb->udev, bfusb->bulk_out_ep);
++	pipe = usb_sndbulkpipe(data->udev, data->bulk_out_ep);
+ 
+ 	while (count) {
+ 		size = min_t(uint, count, BFUSB_MAX_BLOCK_SIZE + 3);
+ 
+ 		memcpy(buf, firmware + sent, size);
+ 
+-		err = usb_bulk_msg(bfusb->udev, pipe, buf, size,
++		err = usb_bulk_msg(data->udev, pipe, buf, size,
+ 					&len, BFUSB_BLOCK_TIMEOUT);
+ 
+ 		if (err || (len != size)) {
+@@ -613,21 +611,23 @@
+ 		count -= size;
+ 	}
+ 
+-	if ((err = usb_bulk_msg(bfusb->udev, pipe, NULL, 0,
+-				&len, BFUSB_BLOCK_TIMEOUT)) < 0) {
++	err = usb_bulk_msg(data->udev, pipe, NULL, 0,
++					&len, BFUSB_BLOCK_TIMEOUT);
++	if (err < 0) {
+ 		BT_ERR("Error in null packet request");
+ 		goto error;
+ 	}
+ 
+-	pipe = usb_sndctrlpipe(bfusb->udev, 0);
++	pipe = usb_sndctrlpipe(data->udev, 0);
+ 
+-        if ((err = usb_control_msg(bfusb->udev, pipe, USB_REQ_SET_CONFIGURATION,
+-				0, 2, 0, NULL, 0, USB_CTRL_SET_TIMEOUT)) < 0) {
++	err = usb_control_msg(data->udev, pipe, USB_REQ_SET_CONFIGURATION,
++				0, 2, 0, NULL, 0, USB_CTRL_SET_TIMEOUT);
++	if (err < 0) {
+ 		BT_ERR("Can't change to running configuration");
+ 		goto error;
+ 	}
+ 
+-	bfusb->udev->toggle[0] = bfusb->udev->toggle[1] = 0;
++	data->udev->toggle[0] = data->udev->toggle[1] = 0;
+ 
+ 	BT_INFO("BlueFRITZ! USB device ready");
+ 
+@@ -637,9 +637,9 @@
+ error:
+ 	kfree(buf);
+ 
+-	pipe = usb_sndctrlpipe(bfusb->udev, 0);
++	pipe = usb_sndctrlpipe(data->udev, 0);
+ 
+-	usb_control_msg(bfusb->udev, pipe, USB_REQ_SET_CONFIGURATION,
++	usb_control_msg(data->udev, pipe, USB_REQ_SET_CONFIGURATION,
+ 				0, 0, 0, NULL, 0, USB_CTRL_SET_TIMEOUT);
+ 
+ 	return err;
+@@ -652,7 +652,7 @@
+ 	struct usb_host_endpoint *bulk_out_ep;
+ 	struct usb_host_endpoint *bulk_in_ep;
+ 	struct hci_dev *hdev;
+-	struct bfusb *bfusb;
++	struct bfusb_data *data;
+ 
+ 	BT_DBG("intf %p id %p", intf, id);
+ 
+@@ -672,23 +672,24 @@
+ 	}
+ 
+ 	/* Initialize control structure and load firmware */
+-	if (!(bfusb = kzalloc(sizeof(struct bfusb), GFP_KERNEL))) {
++	data = kzalloc(sizeof(struct bfusb_data), GFP_KERNEL);
++	if (!data) {
+ 		BT_ERR("Can't allocate memory for control structure");
+ 		goto done;
+ 	}
+ 
+-	bfusb->udev = udev;
+-	bfusb->bulk_in_ep    = bulk_in_ep->desc.bEndpointAddress;
+-	bfusb->bulk_out_ep   = bulk_out_ep->desc.bEndpointAddress;
+-	bfusb->bulk_pkt_size = le16_to_cpu(bulk_out_ep->desc.wMaxPacketSize);
+-
+-	rwlock_init(&bfusb->lock);
+-
+-	bfusb->reassembly = NULL;
+-
+-	skb_queue_head_init(&bfusb->transmit_q);
+-	skb_queue_head_init(&bfusb->pending_q);
+-	skb_queue_head_init(&bfusb->completed_q);
++	data->udev = udev;
++	data->bulk_in_ep    = bulk_in_ep->desc.bEndpointAddress;
++	data->bulk_out_ep   = bulk_out_ep->desc.bEndpointAddress;
++	data->bulk_pkt_size = le16_to_cpu(bulk_out_ep->desc.wMaxPacketSize);
++
++	rwlock_init(&data->lock);
++
++	data->reassembly = NULL;
++
++	skb_queue_head_init(&data->transmit_q);
++	skb_queue_head_init(&data->pending_q);
++	skb_queue_head_init(&data->completed_q);
+ 
+ 	if (request_firmware(&firmware, "bfubase.frm", &udev->dev) < 0) {
+ 		BT_ERR("Firmware request failed");
+@@ -697,7 +698,7 @@
+ 
+ 	BT_DBG("firmware data %p size %d", firmware->data, firmware->size);
+ 
+-	if (bfusb_load_firmware(bfusb, firmware->data, firmware->size) < 0) {
++	if (bfusb_load_firmware(data, firmware->data, firmware->size) < 0) {
+ 		BT_ERR("Firmware loading failed");
+ 		goto release;
+ 	}
+@@ -711,10 +712,10 @@
+ 		goto error;
+ 	}
+ 
+-	bfusb->hdev = hdev;
++	data->hdev = hdev;
+ 
+ 	hdev->type = HCI_USB;
+-	hdev->driver_data = bfusb;
++	hdev->driver_data = data;
+ 	SET_HCIDEV_DEV(hdev, &intf->dev);
+ 
+ 	hdev->open     = bfusb_open;
+@@ -732,7 +733,7 @@
+ 		goto error;
+ 	}
+ 
+-	usb_set_intfdata(intf, bfusb);
++	usb_set_intfdata(intf, data);
+ 
+ 	return 0;
+ 
+@@ -740,7 +741,7 @@
+ 	release_firmware(firmware);
+ 
+ error:
+-	kfree(bfusb);
++	kfree(data);
+ 
+ done:
+ 	return -EIO;
+@@ -748,8 +749,8 @@
+ 
+ static void bfusb_disconnect(struct usb_interface *intf)
+ {
+-	struct bfusb *bfusb = usb_get_intfdata(intf);
+-	struct hci_dev *hdev = bfusb->hdev;
++	struct bfusb_data *data = usb_get_intfdata(intf);
++	struct hci_dev *hdev = data->hdev;
+ 
+ 	BT_DBG("intf %p", intf);
+ 
+@@ -779,7 +780,8 @@
+ 
+ 	BT_INFO("BlueFRITZ! USB driver ver %s", VERSION);
+ 
+-	if ((err = usb_register(&bfusb_driver)) < 0)
++	err = usb_register(&bfusb_driver);
++	if (err < 0)
+ 		BT_ERR("Failed to register BlueFRITZ! USB driver");
+ 
+ 	return err;
+diff -urN linux-2.6.18/drivers/bluetooth/dtl1_cs.c linux-2.6.18-mh8/drivers/bluetooth/dtl1_cs.c
+--- linux-2.6.18/drivers/bluetooth/dtl1_cs.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18-mh8/drivers/bluetooth/dtl1_cs.c	2006-11-18 22:26:02.000000000 +0100
+@@ -711,6 +711,7 @@
+ 
+ static struct pcmcia_device_id dtl1_ids[] = {
+ 	PCMCIA_DEVICE_PROD_ID12("Nokia Mobile Phones", "DTL-1", 0xe1bfdd64, 0xe168480d),
++	PCMCIA_DEVICE_PROD_ID12("Nokia Mobile Phones", "DTL-4", 0xe1bfdd64, 0x9102bc82),
+ 	PCMCIA_DEVICE_PROD_ID12("Socket", "CF", 0xb38bcc2e, 0x44ebf863),
+ 	PCMCIA_DEVICE_PROD_ID12("Socket", "CF+ Personal Network Card", 0xb38bcc2e, 0xe732bae3),
+ 	PCMCIA_DEVICE_NULL
+diff -urN linux-2.6.18/drivers/bluetooth/hci_ldisc.c linux-2.6.18-mh8/drivers/bluetooth/hci_ldisc.c
+--- linux-2.6.18/drivers/bluetooth/hci_ldisc.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18-mh8/drivers/bluetooth/hci_ldisc.c	2006-11-18 22:26:00.000000000 +0100
+@@ -241,15 +241,11 @@
+ 
+ static void hci_uart_destruct(struct hci_dev *hdev)
+ {
+-	struct hci_uart *hu;
+-
+ 	if (!hdev)
+ 		return;
+ 
+ 	BT_DBG("%s", hdev->name);
+-
+-	hu = (struct hci_uart *) hdev->driver_data;
+-	kfree(hu);
++	kfree(hdev->driver_data);
+ }
+ 
+ /* ------ LDISC part ------ */
+@@ -272,7 +268,7 @@
+ 		return -EEXIST;
+ 
+ 	if (!(hu = kzalloc(sizeof(struct hci_uart), GFP_KERNEL))) {
+-		BT_ERR("Can't allocate controll structure");
++		BT_ERR("Can't allocate control structure");
+ 		return -ENFILE;
+ 	}
+ 
+@@ -360,7 +356,7 @@
+  *     
+  * Return Value:    None
+  */
+-static void hci_uart_tty_receive(struct tty_struct *tty, const __u8 *data, char *flags, int count)
++static void hci_uart_tty_receive(struct tty_struct *tty, const u8 *data, char *flags, int count)
+ {
+ 	struct hci_uart *hu = (void *)tty->disc_data;
+ 
+@@ -375,7 +371,8 @@
+ 	hu->hdev->stat.byte_rx += count;
+ 	spin_unlock(&hu->rx_lock);
+ 
+-	if (test_and_clear_bit(TTY_THROTTLED,&tty->flags) && tty->driver->unthrottle)
++	if (test_and_clear_bit(TTY_THROTTLED, &tty->flags) &&
++					tty->driver->unthrottle)
+ 		tty->driver->unthrottle(tty);
+ }
+ 
+diff -urN linux-2.6.18/drivers/bluetooth/hci_usb.c linux-2.6.18-mh8/drivers/bluetooth/hci_usb.c
+--- linux-2.6.18/drivers/bluetooth/hci_usb.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18-mh8/drivers/bluetooth/hci_usb.c	2006-11-18 22:26:02.000000000 +0100
+@@ -96,6 +96,9 @@
+ 	/* Ericsson with non-standard id */
+ 	{ USB_DEVICE(0x0bdb, 0x1002) },
+ 
++	/* Canyon CN-BTU1 with HID interfaces */
++	{ USB_DEVICE(0x0c10, 0x0000), .driver_info = HCI_RESET },
++
+ 	{ }	/* Terminating entry */
+ };
+ 
+@@ -115,6 +118,9 @@
+ 	/* IBM/Lenovo ThinkPad with Broadcom chip */
+ 	{ USB_DEVICE(0x0a5c, 0x201e), .driver_info = HCI_WRONG_SCO_MTU },
+ 
++	/* ANYCOM Bluetooth USB-200 and USB-250 */
++	{ USB_DEVICE(0x0a5c, 0x2111), .driver_info = HCI_RESET },
++
+ 	/* Microsoft Wireless Transceiver for Bluetooth 2.0 */
+ 	{ USB_DEVICE(0x045e, 0x009c), .driver_info = HCI_RESET },
+ 
+diff -urN linux-2.6.18/drivers/bluetooth/hci_vhci.c linux-2.6.18-mh8/drivers/bluetooth/hci_vhci.c
+--- linux-2.6.18/drivers/bluetooth/hci_vhci.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18-mh8/drivers/bluetooth/hci_vhci.c	2006-11-18 22:25:59.000000000 +0100
+@@ -2,9 +2,9 @@
+  *
+  *  Bluetooth virtual HCI driver
+  *
+- *  Copyright (C) 2000-2001 Qualcomm Incorporated
+- *  Copyright (C) 2002-2003 Maxim Krasnyansky <maxk@qualcomm.com>
+- *  Copyright (C) 2004-2005 Marcel Holtmann <marcel@holtmann.org>
++ *  Copyright (C) 2000-2001  Qualcomm Incorporated
++ *  Copyright (C) 2002-2003  Maxim Krasnyansky <maxk@qualcomm.com>
++ *  Copyright (C) 2004-2006  Marcel Holtmann <marcel@holtmann.org>
+  *
+  *
+  *  This program is free software; you can redistribute it and/or modify
+@@ -72,21 +72,21 @@
+ 
+ static int vhci_close_dev(struct hci_dev *hdev)
+ {
+-	struct vhci_data *vhci = hdev->driver_data;
++	struct vhci_data *data = hdev->driver_data;
+ 
+ 	if (!test_and_clear_bit(HCI_RUNNING, &hdev->flags))
+ 		return 0;
+ 
+-	skb_queue_purge(&vhci->readq);
++	skb_queue_purge(&data->readq);
+ 
+ 	return 0;
+ }
+ 
+ static int vhci_flush(struct hci_dev *hdev)
+ {
+-	struct vhci_data *vhci = hdev->driver_data;
++	struct vhci_data *data = hdev->driver_data;
+ 
+-	skb_queue_purge(&vhci->readq);
++	skb_queue_purge(&data->readq);
+ 
+ 	return 0;
+ }
+@@ -94,7 +94,7 @@
+ static int vhci_send_frame(struct sk_buff *skb)
+ {
+ 	struct hci_dev* hdev = (struct hci_dev *) skb->dev;
+-	struct vhci_data *vhci;
++	struct vhci_data *data;
+ 
+ 	if (!hdev) {
+ 		BT_ERR("Frame for unknown HCI device (hdev=NULL)");
+@@ -104,15 +104,15 @@
+ 	if (!test_bit(HCI_RUNNING, &hdev->flags))
+ 		return -EBUSY;
+ 
+-	vhci = hdev->driver_data;
++	data = hdev->driver_data;
+ 
+ 	memcpy(skb_push(skb, 1), &bt_cb(skb)->pkt_type, 1);
+-	skb_queue_tail(&vhci->readq, skb);
++	skb_queue_tail(&data->readq, skb);
+ 
+-	if (vhci->flags & VHCI_FASYNC)
+-		kill_fasync(&vhci->fasync, SIGIO, POLL_IN);
++	if (data->flags & VHCI_FASYNC)
++		kill_fasync(&data->fasync, SIGIO, POLL_IN);
+ 
+-	wake_up_interruptible(&vhci->read_wait);
++	wake_up_interruptible(&data->read_wait);
+ 
+ 	return 0;
+ }
+@@ -122,7 +122,7 @@
+ 	kfree(hdev->driver_data);
+ }
+ 
+-static inline ssize_t vhci_get_user(struct vhci_data *vhci,
++static inline ssize_t vhci_get_user(struct vhci_data *data,
+ 					const char __user *buf, size_t count)
+ {
+ 	struct sk_buff *skb;
+@@ -139,7 +139,7 @@
+ 		return -EFAULT;
+ 	}
+ 
+-	skb->dev = (void *) vhci->hdev;
++	skb->dev = (void *) data->hdev;
+ 	bt_cb(skb)->pkt_type = *((__u8 *) skb->data);
+ 	skb_pull(skb, 1);
+ 
+@@ -148,7 +148,7 @@
+ 	return count;
+ }
+ 
+-static inline ssize_t vhci_put_user(struct vhci_data *vhci,
++static inline ssize_t vhci_put_user(struct vhci_data *data,
+ 			struct sk_buff *skb, char __user *buf, int count)
+ {
+ 	char __user *ptr = buf;
+@@ -161,42 +161,43 @@
+ 
+ 	total += len;
+ 
+-	vhci->hdev->stat.byte_tx += len;
++	data->hdev->stat.byte_tx += len;
+ 
+ 	switch (bt_cb(skb)->pkt_type) {
+ 	case HCI_COMMAND_PKT:
+-		vhci->hdev->stat.cmd_tx++;
++		data->hdev->stat.cmd_tx++;
+ 		break;
+ 
+ 	case HCI_ACLDATA_PKT:
+-		vhci->hdev->stat.acl_tx++;
++		data->hdev->stat.acl_tx++;
+ 		break;
+ 
+ 	case HCI_SCODATA_PKT:
+-		vhci->hdev->stat.cmd_tx++;
++		data->hdev->stat.cmd_tx++;
+ 		break;
+ 	};
+ 
+ 	return total;
+ }
+ 
+-static loff_t vhci_llseek(struct file * file, loff_t offset, int origin)
++static loff_t vhci_llseek(struct file *file, loff_t offset, int origin)
+ {
+ 	return -ESPIPE;
+ }
+ 
+-static ssize_t vhci_read(struct file * file, char __user * buf, size_t count, loff_t *pos)
++static ssize_t vhci_read(struct file *file,
++				char __user *buf, size_t count, loff_t *pos)
+ {
+ 	DECLARE_WAITQUEUE(wait, current);
+-	struct vhci_data *vhci = file->private_data;
++	struct vhci_data *data = file->private_data;
+ 	struct sk_buff *skb;
+ 	ssize_t ret = 0;
+ 
+-	add_wait_queue(&vhci->read_wait, &wait);
++	add_wait_queue(&data->read_wait, &wait);
+ 	while (count) {
+ 		set_current_state(TASK_INTERRUPTIBLE);
+ 
+-		skb = skb_dequeue(&vhci->readq);
++		skb = skb_dequeue(&data->readq);
+ 		if (!skb) {
+ 			if (file->f_flags & O_NONBLOCK) {
+ 				ret = -EAGAIN;
+@@ -213,7 +214,7 @@
+ 		}
+ 
+ 		if (access_ok(VERIFY_WRITE, buf, count))
+-			ret = vhci_put_user(vhci, skb, buf, count);
++			ret = vhci_put_user(data, skb, buf, count);
+ 		else
+ 			ret = -EFAULT;
+ 
+@@ -221,7 +222,7 @@
+ 		break;
+ 	}
+ 	set_current_state(TASK_RUNNING);
+-	remove_wait_queue(&vhci->read_wait, &wait);
++	remove_wait_queue(&data->read_wait, &wait);
+ 
+ 	return ret;
+ }
+@@ -229,21 +230,21 @@
+ static ssize_t vhci_write(struct file *file,
+ 			const char __user *buf, size_t count, loff_t *pos)
+ {
+-	struct vhci_data *vhci = file->private_data;
++	struct vhci_data *data = file->private_data;
+ 
+ 	if (!access_ok(VERIFY_READ, buf, count))
+ 		return -EFAULT;
+ 
+-	return vhci_get_user(vhci, buf, count);
++	return vhci_get_user(data, buf, count);
+ }
+ 
+ static unsigned int vhci_poll(struct file *file, poll_table *wait)
+ {
+-	struct vhci_data *vhci = file->private_data;
++	struct vhci_data *data = file->private_data;
+ 
+-	poll_wait(file, &vhci->read_wait, wait);
++	poll_wait(file, &data->read_wait, wait);
+ 
+-	if (!skb_queue_empty(&vhci->readq))
++	if (!skb_queue_empty(&data->readq))
+ 		return POLLIN | POLLRDNORM;
+ 
+ 	return POLLOUT | POLLWRNORM;
+@@ -257,26 +258,26 @@
+ 
+ static int vhci_open(struct inode *inode, struct file *file)
+ {
+-	struct vhci_data *vhci;
++	struct vhci_data *data;
+ 	struct hci_dev *hdev;
+ 
+-	vhci = kzalloc(sizeof(struct vhci_data), GFP_KERNEL);
+-	if (!vhci)
++	data = kzalloc(sizeof(struct vhci_data), GFP_KERNEL);
++	if (!data)
+ 		return -ENOMEM;
+ 
+-	skb_queue_head_init(&vhci->readq);
+-	init_waitqueue_head(&vhci->read_wait);
++	skb_queue_head_init(&data->readq);
++	init_waitqueue_head(&data->read_wait);
+ 
+ 	hdev = hci_alloc_dev();
+ 	if (!hdev) {
+-		kfree(vhci);
++		kfree(data);
+ 		return -ENOMEM;
+ 	}
+ 
+-	vhci->hdev = hdev;
++	data->hdev = hdev;
+ 
+-	hdev->type = HCI_VHCI;
+-	hdev->driver_data = vhci;
++	hdev->type = HCI_VIRTUAL;
++	hdev->driver_data = data;
+ 
+ 	hdev->open     = vhci_open_dev;
+ 	hdev->close    = vhci_close_dev;
+@@ -288,20 +289,20 @@
+ 
+ 	if (hci_register_dev(hdev) < 0) {
+ 		BT_ERR("Can't register HCI device");
+-		kfree(vhci);
++		kfree(data);
+ 		hci_free_dev(hdev);
+ 		return -EBUSY;
+ 	}
+ 
+-	file->private_data = vhci;
++	file->private_data = data;
+ 
+ 	return nonseekable_open(inode, file);
+ }
+ 
+ static int vhci_release(struct inode *inode, struct file *file)
+ {
+-	struct vhci_data *vhci = file->private_data;
+-	struct hci_dev *hdev = vhci->hdev;
++	struct vhci_data *data = file->private_data;
++	struct hci_dev *hdev = data->hdev;
+ 
+ 	if (hci_unregister_dev(hdev) < 0) {
+ 		BT_ERR("Can't unregister HCI device %s", hdev->name);
+@@ -316,17 +317,17 @@
+ 
+ static int vhci_fasync(int fd, struct file *file, int on)
+ {
+-	struct vhci_data *vhci = file->private_data;
++	struct vhci_data *data = file->private_data;
+ 	int err;
+ 
+-	err = fasync_helper(fd, file, on, &vhci->fasync);
++	err = fasync_helper(fd, file, on, &data->fasync);
+ 	if (err < 0)
+ 		return err;
+ 
+ 	if (on)
+-		vhci->flags |= VHCI_FASYNC;
++		data->flags |= VHCI_FASYNC;
+ 	else
+-		vhci->flags &= ~VHCI_FASYNC;
++		data->flags &= ~VHCI_FASYNC;
+ 
+ 	return 0;
+ }
+diff -urN linux-2.6.18/include/net/bluetooth/hci_core.h linux-2.6.18-mh8/include/net/bluetooth/hci_core.h
+--- linux-2.6.18/include/net/bluetooth/hci_core.h	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18-mh8/include/net/bluetooth/hci_core.h	2006-11-18 22:26:01.000000000 +0100
+@@ -72,6 +72,9 @@
+ 	__u8		type;
+ 	bdaddr_t	bdaddr;
+ 	__u8		features[8];
++	__u8		hci_ver;
++	__u16		hci_rev;
++	__u16		manufacturer;
+ 	__u16		voice_setting;
+ 
+ 	__u16		pkt_type;
+@@ -150,6 +153,7 @@
+ 	__u8             mode;
+ 	__u8		 type;
+ 	__u8		 out;
++	__u8		 attempt;
+ 	__u8		 dev_class[3];
+ 	__u8             features[8];
+ 	__u16            interval;
+@@ -165,6 +169,10 @@
+ 	struct timer_list disc_timer;
+ 	struct timer_list idle_timer;
+ 
++	struct work_struct work;
++
++	struct device	dev;
++
+ 	struct hci_dev	*hdev;
+ 	void		*l2cap_data;
+ 	void		*sco_data;
+@@ -282,6 +290,22 @@
+ 	return NULL;
+ }
+ 
++static inline struct hci_conn *hci_conn_hash_lookup_state(struct hci_dev *hdev,
++					__u8 type, __u16 state)
++{
++	struct hci_conn_hash *h = &hdev->conn_hash;
++	struct list_head *p;
++	struct hci_conn  *c;
++
++	list_for_each(p, &h->list) {
++		c = list_entry(p, struct hci_conn, list);
++		if (c->type == type && c->state == state)
++			return c;
++	}
++	return NULL;
++}
++
++void hci_acl_connect(struct hci_conn *conn);
+ void hci_acl_disconn(struct hci_conn *conn, __u8 reason);
+ void hci_add_sco(struct hci_conn *conn, __u16 handle);
+ 
+@@ -309,10 +333,13 @@
+ 	if (atomic_dec_and_test(&conn->refcnt)) {
+ 		unsigned long timeo;
+ 		if (conn->type == ACL_LINK) {
+-			timeo = msecs_to_jiffies(HCI_DISCONN_TIMEOUT);
+-			if (!conn->out)
+-				timeo *= 2;
+ 			del_timer(&conn->idle_timer);
++			if (conn->state == BT_CONNECTED) {
++				timeo = msecs_to_jiffies(HCI_DISCONN_TIMEOUT);
++				if (!conn->out)
++					timeo *= 2;
++			} else
++				timeo = msecs_to_jiffies(10);
+ 		} else
+ 			timeo = msecs_to_jiffies(10);
+ 		mod_timer(&conn->disc_timer, jiffies + timeo);
+@@ -412,6 +439,8 @@
+ 
+ int hci_register_sysfs(struct hci_dev *hdev);
+ void hci_unregister_sysfs(struct hci_dev *hdev);
++void hci_conn_add_sysfs(struct hci_conn *conn);
++void hci_conn_del_sysfs(struct hci_conn *conn);
+ 
+ #define SET_HCIDEV_DEV(hdev, pdev) ((hdev)->parent = (pdev))
+ 
+diff -urN linux-2.6.18/include/net/bluetooth/hci.h linux-2.6.18-mh8/include/net/bluetooth/hci.h
+--- linux-2.6.18/include/net/bluetooth/hci.h	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18-mh8/include/net/bluetooth/hci.h	2006-11-18 22:26:00.000000000 +0100
+@@ -44,12 +44,13 @@
+ #define HCI_NOTIFY_VOICE_SETTING	3
+ 
+ /* HCI device types */
+-#define HCI_VHCI	0
++#define HCI_VIRTUAL	0
+ #define HCI_USB		1
+ #define HCI_PCCARD	2
+ #define HCI_UART	3
+ #define HCI_RS232	4
+ #define HCI_PCI		5
++#define HCI_SDIO	6
+ 
+ /* HCI device quirks */
+ enum {
+@@ -296,6 +297,7 @@
+ 
+ /* Link Control */
+ #define OGF_LINK_CTL	0x01 
++
+ #define OCF_CREATE_CONN		0x0005
+ struct hci_cp_create_conn {
+ 	bdaddr_t bdaddr;
+@@ -306,6 +308,11 @@
+ 	__u8     role_switch;
+ } __attribute__ ((packed));
+ 
++#define OCF_CREATE_CONN_CANCEL	0x0008
++struct hci_cp_create_conn_cancel {
++	bdaddr_t bdaddr;
++} __attribute__ ((packed));
++
+ #define OCF_ACCEPT_CONN_REQ	0x0009
+ struct hci_cp_accept_conn_req {
+ 	bdaddr_t bdaddr;
+@@ -339,6 +346,8 @@
+ 
+ #define OCF_INQUIRY_CANCEL	0x0002
+ 
++#define OCF_EXIT_PERIODIC_INQ	0x0004
++
+ #define OCF_LINK_KEY_REPLY	0x000B
+ struct hci_cp_link_key_reply {
+ 	bdaddr_t bdaddr;
+diff -urN linux-2.6.18/Makefile linux-2.6.18-mh8/Makefile
+--- linux-2.6.18/Makefile	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18-mh8/Makefile	2006-11-18 22:26:04.000000000 +0100
+@@ -1,7 +1,7 @@
+ VERSION = 2
+ PATCHLEVEL = 6
+ SUBLEVEL = 18
+-EXTRAVERSION =
++EXTRAVERSION = -mh8
+ NAME=Avast! A bilge rat!
+ 
+ # *DOCUMENTATION*
+diff -urN linux-2.6.18/net/bluetooth/af_bluetooth.c linux-2.6.18-mh8/net/bluetooth/af_bluetooth.c
+--- linux-2.6.18/net/bluetooth/af_bluetooth.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18-mh8/net/bluetooth/af_bluetooth.c	2006-11-18 22:26:02.000000000 +0100
+@@ -48,41 +48,56 @@
+ #define BT_DBG(D...)
+ #endif
+ 
+-#define VERSION "2.10"
++#define VERSION "2.11"
+ 
+ /* Bluetooth sockets */
+ #define BT_MAX_PROTO	8
+ static struct net_proto_family *bt_proto[BT_MAX_PROTO];
++static DEFINE_RWLOCK(bt_proto_lock);
+ 
+ int bt_sock_register(int proto, struct net_proto_family *ops)
+ {
++	int err = 0;
++
+ 	if (proto < 0 || proto >= BT_MAX_PROTO)
+ 		return -EINVAL;
+ 
++	write_lock(&bt_proto_lock);
++
+ 	if (bt_proto[proto])
+-		return -EEXIST;
++		err = -EEXIST;
++	else
++		bt_proto[proto] = ops;
+ 
+-	bt_proto[proto] = ops;
+-	return 0;
++	write_unlock(&bt_proto_lock);
++
++	return err;
+ }
+ EXPORT_SYMBOL(bt_sock_register);
+ 
+ int bt_sock_unregister(int proto)
+ {
++	int err = 0;
++
+ 	if (proto < 0 || proto >= BT_MAX_PROTO)
+ 		return -EINVAL;
+ 
++	write_lock(&bt_proto_lock);
++
+ 	if (!bt_proto[proto])
+-		return -ENOENT;
++		err = -ENOENT;
++	else
++		bt_proto[proto] = NULL;
+ 
+-	bt_proto[proto] = NULL;
+-	return 0;
++	write_unlock(&bt_proto_lock);
++
++	return err;
+ }
+ EXPORT_SYMBOL(bt_sock_unregister);
+ 
+ static int bt_sock_create(struct socket *sock, int proto)
+ {
+-	int err = 0;
++	int err;
+ 
+ 	if (proto < 0 || proto >= BT_MAX_PROTO)
+ 		return -EINVAL;
+@@ -92,11 +107,18 @@
+ 		request_module("bt-proto-%d", proto);
+ 	}
+ #endif
++
+ 	err = -EPROTONOSUPPORT;
++
++	read_lock(&bt_proto_lock);
++
+ 	if (bt_proto[proto] && try_module_get(bt_proto[proto]->owner)) {
+ 		err = bt_proto[proto]->create(sock, proto);
+ 		module_put(bt_proto[proto]->owner);
+ 	}
++
++	read_unlock(&bt_proto_lock);
++
+ 	return err; 
+ }
+ 
+@@ -276,7 +298,7 @@
+ 		set_current_state(TASK_INTERRUPTIBLE);
+ 
+ 		if (!timeo) {
+-			err = -EAGAIN;
++			err = -EINPROGRESS;
+ 			break;
+ 		}
+ 
+diff -urN linux-2.6.18/net/bluetooth/bnep/core.c linux-2.6.18-mh8/net/bluetooth/bnep/core.c
+--- linux-2.6.18/net/bluetooth/bnep/core.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18-mh8/net/bluetooth/bnep/core.c	2006-11-18 22:26:01.000000000 +0100
+@@ -51,6 +51,7 @@
+ #include <asm/unaligned.h>
+ 
+ #include <net/bluetooth/bluetooth.h>
++#include <net/bluetooth/hci_core.h>
+ #include <net/bluetooth/l2cap.h>
+ 
+ #include "bnep.h"
+@@ -515,6 +516,24 @@
+ 	return 0;
+ }
+ 
++static struct device *bnep_get_device(struct bnep_session *session)
++{
++	bdaddr_t *src = &bt_sk(session->sock->sk)->src;
++	bdaddr_t *dst = &bt_sk(session->sock->sk)->dst;
++	struct hci_dev *hdev;
++	struct hci_conn *conn;
++
++	hdev = hci_get_route(dst, src);
++	if (!hdev)
++		return NULL;
++
++	conn = hci_conn_hash_lookup_ba(hdev, ACL_LINK, dst);
++
++	hci_dev_put(hdev);
++
++	return conn ? &conn->dev : NULL;
++}
++
+ int bnep_add_connection(struct bnep_connadd_req *req, struct socket *sock)
+ {
+ 	struct net_device *dev;
+@@ -534,7 +553,6 @@
+ 	if (!dev)
+ 		return -ENOMEM;
+ 
+-
+ 	down_write(&bnep_session_sem);
+ 
+ 	ss = __bnep_get_session(dst);
+@@ -551,7 +569,7 @@
+ 	memcpy(s->eh.h_source, &dst, ETH_ALEN);
+ 	memcpy(dev->dev_addr, s->eh.h_dest, ETH_ALEN);
+ 
+-	s->dev = dev;
++	s->dev   = dev;
+ 	s->sock  = sock;
+ 	s->role  = req->role;
+ 	s->state = BT_CONNECTED;
+@@ -568,6 +586,8 @@
+ 	bnep_set_default_proto_filter(s);
+ #endif
+ 
++	SET_NETDEV_DEV(dev, bnep_get_device(s));
++
+ 	err = register_netdev(dev);
+ 	if (err) {
+ 		goto failed;
+diff -urN linux-2.6.18/net/bluetooth/bnep/sock.c linux-2.6.18-mh8/net/bluetooth/bnep/sock.c
+--- linux-2.6.18/net/bluetooth/bnep/sock.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18-mh8/net/bluetooth/bnep/sock.c	2006-11-18 22:26:02.000000000 +0100
+@@ -43,6 +43,7 @@
+ #include <linux/ioctl.h>
+ #include <linux/file.h>
+ #include <linux/init.h>
++#include <linux/compat.h>
+ #include <net/sock.h>
+ 
+ #include <asm/system.h>
+@@ -146,24 +147,56 @@
+ 	return 0;
+ }
+ 
++#ifdef CONFIG_COMPAT
++static int bnep_sock_compat_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
++{
++	if (cmd == BNEPGETCONNLIST) {
++		struct bnep_connlist_req cl;
++		uint32_t uci;
++		int err;
++
++		if (get_user(cl.cnum, (uint32_t __user *) arg) ||
++				get_user(uci, (u32 __user *) (arg + 4)))
++			return -EFAULT;
++
++		cl.ci = compat_ptr(uci);
++
++		if (cl.cnum <= 0)
++			return -EINVAL;
++	
++		err = bnep_get_connlist(&cl);
++
++		if (!err && put_user(cl.cnum, (uint32_t __user *) arg))
++			err = -EFAULT;
++
++		return err;
++	}
++
++	return bnep_sock_ioctl(sock, cmd, arg);
++}
++#endif
++
+ static const struct proto_ops bnep_sock_ops = {
+-	.family     = PF_BLUETOOTH,
+-	.owner      = THIS_MODULE,
+-	.release    = bnep_sock_release,
+-	.ioctl      = bnep_sock_ioctl,
+-	.bind       = sock_no_bind,
+-	.getname    = sock_no_getname,
+-	.sendmsg    = sock_no_sendmsg,
+-	.recvmsg    = sock_no_recvmsg,
+-	.poll       = sock_no_poll,
+-	.listen     = sock_no_listen,
+-	.shutdown   = sock_no_shutdown,
+-	.setsockopt = sock_no_setsockopt,
+-	.getsockopt = sock_no_getsockopt,
+-	.connect    = sock_no_connect,
+-	.socketpair = sock_no_socketpair,
+-	.accept     = sock_no_accept,
+-	.mmap       = sock_no_mmap
++	.family		= PF_BLUETOOTH,
++	.owner		= THIS_MODULE,
++	.release	= bnep_sock_release,
++	.ioctl		= bnep_sock_ioctl,
++#ifdef CONFIG_COMPAT
++	.compat_ioctl	= bnep_sock_compat_ioctl,
++#endif
++	.bind		= sock_no_bind,
++	.getname	= sock_no_getname,
++	.sendmsg	= sock_no_sendmsg,
++	.recvmsg	= sock_no_recvmsg,
++	.poll		= sock_no_poll,
++	.listen		= sock_no_listen,
++	.shutdown	= sock_no_shutdown,
++	.setsockopt	= sock_no_setsockopt,
++	.getsockopt	= sock_no_getsockopt,
++	.connect	= sock_no_connect,
++	.socketpair	= sock_no_socketpair,
++	.accept		= sock_no_accept,
++	.mmap		= sock_no_mmap
+ };
+ 
+ static struct proto bnep_proto = {
+@@ -181,7 +214,7 @@
+ 	if (sock->type != SOCK_RAW)
+ 		return -ESOCKTNOSUPPORT;
+ 
+-	sk = sk_alloc(PF_BLUETOOTH, GFP_KERNEL, &bnep_proto, 1);
++	sk = sk_alloc(PF_BLUETOOTH, GFP_ATOMIC, &bnep_proto, 1);
+ 	if (!sk)
+ 		return -ENOMEM;
+ 
+diff -urN linux-2.6.18/net/bluetooth/cmtp/sock.c linux-2.6.18-mh8/net/bluetooth/cmtp/sock.c
+--- linux-2.6.18/net/bluetooth/cmtp/sock.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18-mh8/net/bluetooth/cmtp/sock.c	2006-11-18 22:26:02.000000000 +0100
+@@ -34,6 +34,7 @@
+ #include <linux/socket.h>
+ #include <linux/ioctl.h>
+ #include <linux/file.h>
++#include <linux/compat.h>
+ #include <net/sock.h>
+ 
+ #include <linux/isdn/capilli.h>
+@@ -137,11 +138,43 @@
+ 	return -EINVAL;
+ }
+ 
++#ifdef CONFIG_COMPAT
++static int cmtp_sock_compat_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
++{
++	if (cmd == CMTPGETCONNLIST) {
++		struct cmtp_connlist_req cl;
++		uint32_t uci;
++		int err;
++
++		if (get_user(cl.cnum, (uint32_t __user *) arg) ||
++				get_user(uci, (u32 __user *) (arg + 4)))
++			return -EFAULT;
++
++		cl.ci = compat_ptr(uci);
++
++		if (cl.cnum <= 0)
++			return -EINVAL;
++	
++		err = cmtp_get_connlist(&cl);
++
++		if (!err && put_user(cl.cnum, (uint32_t __user *) arg))
++			err = -EFAULT;
++
++		return err;
++	}
++
++	return cmtp_sock_ioctl(sock, cmd, arg);
++}
++#endif
++
+ static const struct proto_ops cmtp_sock_ops = {
+ 	.family		= PF_BLUETOOTH,
+ 	.owner		= THIS_MODULE,
+ 	.release	= cmtp_sock_release,
+ 	.ioctl		= cmtp_sock_ioctl,
++#ifdef CONFIG_COMPAT
++	.compat_ioctl	= cmtp_sock_compat_ioctl,
++#endif
+ 	.bind		= sock_no_bind,
+ 	.getname	= sock_no_getname,
+ 	.sendmsg	= sock_no_sendmsg,
+@@ -172,7 +205,7 @@
+ 	if (sock->type != SOCK_RAW)
+ 		return -ESOCKTNOSUPPORT;
+ 
+-	sk = sk_alloc(PF_BLUETOOTH, GFP_KERNEL, &cmtp_proto, 1);
++	sk = sk_alloc(PF_BLUETOOTH, GFP_ATOMIC, &cmtp_proto, 1);
+ 	if (!sk)
+ 		return -ENOMEM;
+ 
+diff -urN linux-2.6.18/net/bluetooth/hci_conn.c linux-2.6.18-mh8/net/bluetooth/hci_conn.c
+--- linux-2.6.18/net/bluetooth/hci_conn.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18-mh8/net/bluetooth/hci_conn.c	2006-11-18 22:26:01.000000000 +0100
+@@ -51,7 +51,7 @@
+ #define BT_DBG(D...)
+ #endif
+ 
+-static void hci_acl_connect(struct hci_conn *conn)
++void hci_acl_connect(struct hci_conn *conn)
+ {
+ 	struct hci_dev *hdev = conn->hdev;
+ 	struct inquiry_entry *ie;
+@@ -63,6 +63,8 @@
+ 	conn->out   = 1;
+ 	conn->link_mode = HCI_LM_MASTER;
+ 
++	conn->attempt++;
++
+ 	memset(&cp, 0, sizeof(cp));
+ 	bacpy(&cp.bdaddr, &conn->dst);
+ 	cp.pscan_rep_mode = 0x02;
+@@ -80,10 +82,24 @@
+ 		cp.role_switch	= 0x01;
+ 	else
+ 		cp.role_switch	= 0x00;
+-		
++
+ 	hci_send_cmd(hdev, OGF_LINK_CTL, OCF_CREATE_CONN, sizeof(cp), &cp);
+ }
+ 
++static void hci_acl_connect_cancel(struct hci_conn *conn)
++{
++	struct hci_cp_create_conn_cancel cp;
++
++	BT_DBG("%p", conn);
++
++	if (conn->hdev->hci_ver < 2)
++		return;
++
++	bacpy(&cp.bdaddr, &conn->dst);
++	hci_send_cmd(conn->hdev, OGF_LINK_CTL,
++				OCF_CREATE_CONN_CANCEL, sizeof(cp), &cp);
++}
++
+ void hci_acl_disconn(struct hci_conn *conn, __u8 reason)
+ {
+ 	struct hci_cp_disconnect cp;
+@@ -94,7 +110,8 @@
+ 
+ 	cp.handle = __cpu_to_le16(conn->handle);
+ 	cp.reason = reason;
+-	hci_send_cmd(conn->hdev, OGF_LINK_CTL, OCF_DISCONNECT, sizeof(cp), &cp);
++	hci_send_cmd(conn->hdev, OGF_LINK_CTL,
++				OCF_DISCONNECT, sizeof(cp), &cp);
+ }
+ 
+ void hci_add_sco(struct hci_conn *conn, __u16 handle)
+@@ -124,12 +141,20 @@
+ 		return;
+ 
+ 	hci_dev_lock(hdev);
+- 	if (conn->state == BT_CONNECTED)
++
++	switch (conn->state) {
++	case BT_CONNECT:
++		hci_acl_connect_cancel(conn);
++		break;
++ 	case BT_CONNECTED:
+ 		hci_acl_disconn(conn, 0x13);
+-	else
++		break;
++	default:
+ 		conn->state = BT_CLOSED;
++		break;
++	}
++
+ 	hci_dev_unlock(hdev);
+-	return;
+ }
+ 
+ static void hci_conn_idle(unsigned long arg)
+@@ -179,6 +204,8 @@
+ 	if (hdev->notify)
+ 		hdev->notify(hdev, HCI_NOTIFY_CONN_ADD);
+ 
++	hci_conn_add_sysfs(conn);
++
+ 	tasklet_enable(&hdev->tx_task);
+ 
+ 	return conn;
+@@ -211,6 +238,8 @@
+ 
+ 	tasklet_disable(&hdev->tx_task);
+ 
++	hci_conn_del_sysfs(conn);
++
+ 	hci_conn_hash_del(hdev, conn);
+ 	if (hdev->notify)
+ 		hdev->notify(hdev, HCI_NOTIFY_CONN_DEL);
+@@ -221,7 +250,9 @@
+ 
+ 	hci_dev_put(hdev);
+ 
+-	kfree(conn);
++	/* will free via device release */
++	put_device(&conn->dev);
++
+ 	return 0;
+ }
+ 
+diff -urN linux-2.6.18/net/bluetooth/hci_core.c linux-2.6.18-mh8/net/bluetooth/hci_core.c
+--- linux-2.6.18/net/bluetooth/hci_core.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18-mh8/net/bluetooth/hci_core.c	2006-11-18 22:26:03.000000000 +0100
+@@ -206,6 +206,9 @@
+ 	/* Read Local Supported Features */
+ 	hci_send_cmd(hdev, OGF_INFO_PARAM, OCF_READ_LOCAL_FEATURES, 0, NULL);
+ 
++	/* Read Local Version */
++	hci_send_cmd(hdev, OGF_INFO_PARAM, OCF_READ_LOCAL_VERSION, 0, NULL);
++
+ 	/* Read Buffer Size (ACL mtu, max pkt, etc.) */
+ 	hci_send_cmd(hdev, OGF_INFO_PARAM, OCF_READ_BUFFER_SIZE, 0, NULL);
+ 
+@@ -850,7 +853,7 @@
+ 	hdev->pkt_type  = (HCI_DM1 | HCI_DH1 | HCI_HV1);
+ 	hdev->link_mode = (HCI_LM_ACCEPT);
+ 
+-	hdev->idle_timeout = 0;
++	hdev->idle_timeout = HCI_IDLE_TIMEOUT;
+ 	hdev->sniff_max_interval = 800;
+ 	hdev->sniff_min_interval = 80;
+ 
+diff -urN linux-2.6.18/net/bluetooth/hci_event.c linux-2.6.18-mh8/net/bluetooth/hci_event.c
+--- linux-2.6.18/net/bluetooth/hci_event.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18-mh8/net/bluetooth/hci_event.c	2006-11-18 22:26:02.000000000 +0100
+@@ -57,11 +57,13 @@
+ static void hci_cc_link_ctl(struct hci_dev *hdev, __u16 ocf, struct sk_buff *skb)
+ {
+ 	__u8 status;
++	struct hci_conn *pend;
+ 
+ 	BT_DBG("%s ocf 0x%x", hdev->name, ocf);
+ 
+ 	switch (ocf) {
+ 	case OCF_INQUIRY_CANCEL:
++	case OCF_EXIT_PERIODIC_INQ:
+ 		status = *((__u8 *) skb->data);
+ 
+ 		if (status) {
+@@ -70,6 +72,15 @@
+ 			clear_bit(HCI_INQUIRY, &hdev->flags);
+ 			hci_req_complete(hdev, status);
+ 		}
++
++		hci_dev_lock(hdev);
++
++		pend = hci_conn_hash_lookup_state(hdev, ACL_LINK, BT_CONNECT2);
++		if (pend)
++			hci_acl_connect(pend);
++
++		hci_dev_unlock(hdev);
++
+ 		break;
+ 
+ 	default:
+@@ -297,6 +308,7 @@
+ /* Command Complete OGF INFO_PARAM  */
+ static void hci_cc_info_param(struct hci_dev *hdev, __u16 ocf, struct sk_buff *skb)
+ {
++	struct hci_rp_read_loc_version *lv;
+ 	struct hci_rp_read_local_features *lf;
+ 	struct hci_rp_read_buffer_size *bs;
+ 	struct hci_rp_read_bd_addr *ba;
+@@ -304,6 +316,23 @@
+ 	BT_DBG("%s ocf 0x%x", hdev->name, ocf);
+ 
+ 	switch (ocf) {
++	case OCF_READ_LOCAL_VERSION:
++		lv = (struct hci_rp_read_loc_version *) skb->data;
++
++		if (lv->status) {
++			BT_DBG("%s READ_LOCAL_VERSION failed %d", hdev->name, lf->status);
++			break;
++		}
++
++		hdev->hci_ver = lv->hci_ver;
++		hdev->hci_rev = btohs(lv->hci_rev);
++		hdev->manufacturer = btohs(lv->manufacturer);
++
++		BT_DBG("%s: manufacturer %d hci_ver %d hci_rev %d", hdev->name,
++				hdev->manufacturer, hdev->hci_ver, hdev->hci_rev);
++
++		break;
++
+ 	case OCF_READ_LOCAL_FEATURES:
+ 		lf = (struct hci_rp_read_local_features *) skb->data;
+ 
+@@ -328,7 +357,8 @@
+ 		if (hdev->features[1] & LMP_HV3)
+ 			hdev->pkt_type |= (HCI_HV3);
+ 
+-		BT_DBG("%s: features 0x%x 0x%x 0x%x", hdev->name, lf->features[0], lf->features[1], lf->features[2]);
++		BT_DBG("%s: features 0x%x 0x%x 0x%x", hdev->name,
++				lf->features[0], lf->features[1], lf->features[2]);
+ 
+ 		break;
+ 
+@@ -394,9 +424,12 @@
+ 
+ 	if (status) {
+ 		if (conn && conn->state == BT_CONNECT) {
+-			conn->state = BT_CLOSED;
+-			hci_proto_connect_cfm(conn, status);
+-			hci_conn_del(conn);
++			if (status != 0x0c || conn->attempt > 2) {
++				conn->state = BT_CLOSED;
++				hci_proto_connect_cfm(conn, status);
++				hci_conn_del(conn);
++			} else
++				conn->state = BT_CONNECT2;
+ 		}
+ 	} else {
+ 		if (!conn) {
+@@ -542,11 +575,20 @@
+ static inline void hci_inquiry_complete_evt(struct hci_dev *hdev, struct sk_buff *skb)
+ {
+ 	__u8 status = *((__u8 *) skb->data);
++	struct hci_conn *pend;
+ 
+ 	BT_DBG("%s status %d", hdev->name, status);
+ 
+ 	clear_bit(HCI_INQUIRY, &hdev->flags);
+ 	hci_req_complete(hdev, status);
++
++	hci_dev_lock(hdev);
++
++	pend = hci_conn_hash_lookup_state(hdev, ACL_LINK, BT_CONNECT2);
++	if (pend)
++		hci_acl_connect(pend);
++
++	hci_dev_unlock(hdev);
+ }
+ 
+ /* Inquiry Result */
+@@ -708,7 +750,7 @@
+ static inline void hci_conn_complete_evt(struct hci_dev *hdev, struct sk_buff *skb)
+ {
+ 	struct hci_ev_conn_complete *ev = (struct hci_ev_conn_complete *) skb->data;
+-	struct hci_conn *conn;
++	struct hci_conn *conn, *pend;
+ 
+ 	BT_DBG("%s", hdev->name);
+ 
+@@ -757,6 +799,10 @@
+ 
+ 			hci_send_cmd(hdev, OGF_LINK_CTL,
+ 				OCF_CHANGE_CONN_PTYPE, sizeof(cp), &cp);
++		} else {
++			/* Update disconnect timer */
++			hci_conn_hold(conn);
++			hci_conn_put(conn);
+ 		}
+ 	} else
+ 		conn->state = BT_CLOSED;
+@@ -777,6 +823,10 @@
+ 	if (ev->status)
+ 		hci_conn_del(conn);
+ 
++	pend = hci_conn_hash_lookup_state(hdev, ACL_LINK, BT_CONNECT2);
++	if (pend)
++		hci_acl_connect(pend);
++
+ 	hci_dev_unlock(hdev);
+ }
+ 
+diff -urN linux-2.6.18/net/bluetooth/hci_sock.c linux-2.6.18-mh8/net/bluetooth/hci_sock.c
+--- linux-2.6.18/net/bluetooth/hci_sock.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18-mh8/net/bluetooth/hci_sock.c	2006-11-18 22:26:02.000000000 +0100
+@@ -618,7 +618,7 @@
+ 
+ 	sock->ops = &hci_sock_ops;
+ 
+-	sk = sk_alloc(PF_BLUETOOTH, GFP_KERNEL, &hci_sk_proto, 1);
++	sk = sk_alloc(PF_BLUETOOTH, GFP_ATOMIC, &hci_sk_proto, 1);
+ 	if (!sk)
+ 		return -ENOMEM;
+ 
+diff -urN linux-2.6.18/net/bluetooth/hci_sysfs.c linux-2.6.18-mh8/net/bluetooth/hci_sysfs.c
+--- linux-2.6.18/net/bluetooth/hci_sysfs.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18-mh8/net/bluetooth/hci_sysfs.c	2006-11-18 22:26:02.000000000 +0100
+@@ -13,16 +13,32 @@
+ #define BT_DBG(D...)
+ #endif
+ 
+-static ssize_t show_name(struct device *dev, struct device_attribute *attr, char *buf)
++static inline char *typetostr(int type)
+ {
+-	struct hci_dev *hdev = dev_get_drvdata(dev);
+-	return sprintf(buf, "%s\n", hdev->name);
++	switch (type) {
++	case HCI_VIRTUAL:
++		return "VIRTUAL";
++	case HCI_USB:
++		return "USB";
++	case HCI_PCCARD:
++		return "PCCARD";
++	case HCI_UART:
++		return "UART";
++	case HCI_RS232:
++		return "RS232";
++	case HCI_PCI:
++		return "PCI";
++	case HCI_SDIO:
++		return "SDIO";
++	default:
++		return "UNKNOWN";
++	}
+ }
+ 
+ static ssize_t show_type(struct device *dev, struct device_attribute *attr, char *buf)
+ {
+ 	struct hci_dev *hdev = dev_get_drvdata(dev);
+-	return sprintf(buf, "%d\n", hdev->type);
++	return sprintf(buf, "%s\n", typetostr(hdev->type));
+ }
+ 
+ static ssize_t show_address(struct device *dev, struct device_attribute *attr, char *buf)
+@@ -33,10 +49,22 @@
+ 	return sprintf(buf, "%s\n", batostr(&bdaddr));
+ }
+ 
+-static ssize_t show_flags(struct device *dev, struct device_attribute *attr, char *buf)
++static ssize_t show_manufacturer(struct device *dev, struct device_attribute *attr, char *buf)
+ {
+ 	struct hci_dev *hdev = dev_get_drvdata(dev);
+-	return sprintf(buf, "0x%lx\n", hdev->flags);
++	return sprintf(buf, "%d\n", hdev->manufacturer);
++}
++
++static ssize_t show_hci_version(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	struct hci_dev *hdev = dev_get_drvdata(dev);
++	return sprintf(buf, "%d\n", hdev->hci_ver);
++}
++
++static ssize_t show_hci_revision(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	struct hci_dev *hdev = dev_get_drvdata(dev);
++	return sprintf(buf, "%d\n", hdev->hci_rev);
+ }
+ 
+ static ssize_t show_inquiry_cache(struct device *dev, struct device_attribute *attr, char *buf)
+@@ -141,10 +169,11 @@
+ 	return count;
+ }
+ 
+-static DEVICE_ATTR(name, S_IRUGO, show_name, NULL);
+ static DEVICE_ATTR(type, S_IRUGO, show_type, NULL);
+ static DEVICE_ATTR(address, S_IRUGO, show_address, NULL);
+-static DEVICE_ATTR(flags, S_IRUGO, show_flags, NULL);
++static DEVICE_ATTR(manufacturer, S_IRUGO, show_manufacturer, NULL);
++static DEVICE_ATTR(hci_version, S_IRUGO, show_hci_version, NULL);
++static DEVICE_ATTR(hci_revision, S_IRUGO, show_hci_revision, NULL);
+ static DEVICE_ATTR(inquiry_cache, S_IRUGO, show_inquiry_cache, NULL);
+ 
+ static DEVICE_ATTR(idle_timeout, S_IRUGO | S_IWUSR,
+@@ -155,10 +184,11 @@
+ 				show_sniff_min_interval, store_sniff_min_interval);
+ 
+ static struct device_attribute *bt_attrs[] = {
+-	&dev_attr_name,
+ 	&dev_attr_type,
+ 	&dev_attr_address,
+-	&dev_attr_flags,
++	&dev_attr_manufacturer,
++	&dev_attr_hci_version,
++	&dev_attr_hci_revision,
+ 	&dev_attr_inquiry_cache,
+ 	&dev_attr_idle_timeout,
+ 	&dev_attr_sniff_max_interval,
+@@ -166,6 +196,32 @@
+ 	NULL
+ };
+ 
++static ssize_t show_conn_type(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	struct hci_conn *conn = dev_get_drvdata(dev);
++	return sprintf(buf, "%s\n", conn->type == ACL_LINK ? "ACL" : "SCO");
++}
++
++static ssize_t show_conn_address(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	struct hci_conn *conn = dev_get_drvdata(dev);
++	bdaddr_t bdaddr;
++	baswap(&bdaddr, &conn->dst);
++	return sprintf(buf, "%s\n", batostr(&bdaddr));
++}
++
++#define CONN_ATTR(_name,_mode,_show,_store) \
++struct device_attribute conn_attr_##_name = __ATTR(_name,_mode,_show,_store)
++
++static CONN_ATTR(type, S_IRUGO, show_conn_type, NULL);
++static CONN_ATTR(address, S_IRUGO, show_conn_address, NULL);
++
++static struct device_attribute *conn_attrs[] = {
++	&conn_attr_type,
++	&conn_attr_address,
++	NULL
++};
++
+ struct class *bt_class = NULL;
+ EXPORT_SYMBOL_GPL(bt_class);
+ 
+@@ -177,8 +233,63 @@
+ 
+ static void bt_release(struct device *dev)
+ {
+-	struct hci_dev *hdev = dev_get_drvdata(dev);
+-	kfree(hdev);
++	void *data = dev_get_drvdata(dev);
++	kfree(data);
++}
++
++static void add_conn(void *data)
++{
++	struct hci_conn *conn = data;
++	int i;
++
++	if (device_register(&conn->dev) < 0) {
++		BT_ERR("Failed to register connection device");
++		return;
++	}
++
++	for (i = 0; conn_attrs[i]; i++)
++		if (device_create_file(&conn->dev, conn_attrs[i]) < 0)
++			BT_ERR("Failed to create connection attribute");
++}
++
++void hci_conn_add_sysfs(struct hci_conn *conn)
++{
++	struct hci_dev *hdev = conn->hdev;
++	bdaddr_t *ba = &conn->dst;
++
++	BT_DBG("conn %p", conn);
++
++	conn->dev.bus = &bt_bus;
++	conn->dev.parent = &hdev->dev;
++
++	conn->dev.release = bt_release;
++
++	snprintf(conn->dev.bus_id, BUS_ID_SIZE,
++			"%s%2.2X%2.2X%2.2X%2.2X%2.2X%2.2X",
++			conn->type == ACL_LINK ? "acl" : "sco",
++			ba->b[5], ba->b[4], ba->b[3],
++			ba->b[2], ba->b[1], ba->b[0]);
++
++	dev_set_drvdata(&conn->dev, conn);
++
++	INIT_WORK(&conn->work, add_conn, (void *) conn);
++
++	schedule_work(&conn->work);
++}
++
++static void del_conn(void *data)
++{
++	struct hci_conn *conn = data;
++	device_del(&conn->dev);
++}
++
++void hci_conn_del_sysfs(struct hci_conn *conn)
++{
++	BT_DBG("conn %p", conn);
++
++	INIT_WORK(&conn->work, del_conn, (void *) conn);
++
++	schedule_work(&conn->work);
+ }
+ 
+ int hci_register_sysfs(struct hci_dev *hdev)
+@@ -207,18 +318,17 @@
+ 		return err;
+ 
+ 	for (i = 0; bt_attrs[i]; i++)
+-		device_create_file(dev, bt_attrs[i]);
++		if (device_create_file(dev, bt_attrs[i]) < 0)
++			BT_ERR("Failed to create device attribute");
+ 
+ 	return 0;
+ }
+ 
+ void hci_unregister_sysfs(struct hci_dev *hdev)
+ {
+-	struct device *dev = &hdev->dev;
+-
+ 	BT_DBG("%p name %s type %d", hdev, hdev->name, hdev->type);
+ 
+-	device_del(dev);
++	device_del(&hdev->dev);
+ }
+ 
+ int __init bt_sysfs_init(void)
+@@ -245,7 +355,7 @@
+ 	return 0;
+ }
+ 
+-void __exit bt_sysfs_cleanup(void)
++void bt_sysfs_cleanup(void)
+ {
+ 	class_destroy(bt_class);
+ 
+diff -urN linux-2.6.18/net/bluetooth/hidp/core.c linux-2.6.18-mh8/net/bluetooth/hidp/core.c
+--- linux-2.6.18/net/bluetooth/hidp/core.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18-mh8/net/bluetooth/hidp/core.c	2006-11-18 22:26:03.000000000 +0100
+@@ -38,8 +38,10 @@
+ #include <net/sock.h>
+ 
+ #include <linux/input.h>
++#include "hid.h"
+ 
+ #include <net/bluetooth/bluetooth.h>
++#include <net/bluetooth/hci_core.h>
+ #include <net/bluetooth/l2cap.h>
+ 
+ #include "hidp.h"
+@@ -49,7 +51,7 @@
+ #define BT_DBG(D...)
+ #endif
+ 
+-#define VERSION "1.1"
++#define VERSION "1.1-mh1"
+ 
+ static DECLARE_RWSEM(hidp_session_sem);
+ static LIST_HEAD(hidp_session_list);
+@@ -123,6 +125,13 @@
+ 		else
+ 			strncpy(ci->name, "HID Boot Device", 128);
+ 	}
++
++	if (session->hid) {
++		ci->vendor  = session->hid->vendor;
++		ci->product = session->hid->product;
++		ci->version = session->hid->version;
++		strncpy(ci->name, session->hid->name, 128);
++	}
+ }
+ 
+ static int hidp_input_event(struct input_dev *dev, unsigned int type, unsigned int code, int value)
+@@ -218,6 +227,29 @@
+ 	input_sync(dev);
+ }
+ 
++static int hid_send_report(struct hid_device *device, unsigned char *data, int size)
++{
++	struct hidp_session *session = device->driver_data;
++	struct sk_buff *skb;
++
++	BT_DBG("session %p hid %p data %p size %d", session, device, data, size);
++
++	if (!(skb = alloc_skb(size + 1, GFP_ATOMIC))) {
++		BT_ERR("Can't allocate memory for new frame");
++		return -ENOMEM;
++	}
++
++	*skb_put(skb, 1) = 0xa2;
++	if (size > 0)
++		memcpy(skb_put(skb, size), data, size);
++
++	skb_queue_tail(&session->intr_transmit, skb);
++
++	hidp_schedule(session);
++
++	return 0;
++}
++
+ static void hidp_idle_timeout(unsigned long arg)
+ {
+ 	struct hidp_session *session = (struct hidp_session *) arg;
+@@ -405,6 +437,9 @@
+ 		hidp_set_timer(session);
+ 		if (session->input)
+ 			hidp_input_report(session, skb);
++
++		if (session->hid)
++			hid_recv_report(session->hid, HID_INPUT_REPORT, skb->data, skb->len);
+ 	} else {
+ 		BT_DBG("Unsupported protocol header 0x%02x", hdr);
+ 	}
+@@ -470,6 +505,11 @@
+ 		product = session->input->id.product;
+ 	}
+ 
++	if (session->hid) {
++		vendor  = session->hid->vendor;
++		product = session->hid->product;
++	}
++
+ 	daemonize("khidpd_%04x%04x", vendor, product);
+ 	set_user_nice(current, -15);
+ 	current->flags |= PF_NOFREEZE;
+@@ -506,14 +546,12 @@
+ 
+ 	hidp_del_timer(session);
+ 
+-	if (intr_sk->sk_state != BT_CONNECTED)
+-		wait_event_timeout(*(ctrl_sk->sk_sleep), (ctrl_sk->sk_state == BT_CLOSED), HZ);
+-
+-	fput(session->ctrl_sock->file);
++	fput(session->intr_sock->file);
+ 
+-	wait_event_timeout(*(intr_sk->sk_sleep), (intr_sk->sk_state == BT_CLOSED), HZ);
++	wait_event_timeout(*(ctrl_sk->sk_sleep),
++		(ctrl_sk->sk_state == BT_CLOSED), msecs_to_jiffies(500));
+ 
+-	fput(session->intr_sock->file);
++	fput(session->ctrl_sock->file);
+ 
+ 	__hidp_unlink_session(session);
+ 
+@@ -522,12 +560,35 @@
+ 		session->input = NULL;
+ 	}
+ 
++	if (session->hid) {
++		hid_unregister_device(session->hid);
++		hid_free_device(session->hid);
++	}
++
+ 	up_write(&hidp_session_sem);
+ 
+ 	kfree(session);
+ 	return 0;
+ }
+ 
++static struct device *hidp_get_device(struct hidp_session *session)
++{
++	bdaddr_t *src = &bt_sk(session->ctrl_sock->sk)->src;
++	bdaddr_t *dst = &bt_sk(session->ctrl_sock->sk)->dst;
++	struct hci_dev *hdev;
++	struct hci_conn *conn;
++
++	hdev = hci_get_route(dst, src);
++	if (!hdev)
++		return NULL;
++
++	conn = hci_conn_hash_lookup_ba(hdev, ACL_LINK, dst);
++
++	hci_dev_put(hdev);
++
++	return conn ? &conn->dev : NULL;
++}
++
+ static inline void hidp_setup_input(struct hidp_session *session, struct hidp_connadd_req *req)
+ {
+ 	struct input_dev *input = session->input;
+@@ -566,11 +627,42 @@
+ 		input->relbit[0] |= BIT(REL_WHEEL);
+ 	}
+ 
++	input->cdev.dev = hidp_get_device(session);
++
+ 	input->event = hidp_input_event;
+ 
+ 	input_register_device(input);
+ }
+ 
++static inline void hidp_setup_hid(struct hidp_session *session, struct hidp_connadd_req *req)
++{
++	struct hid_device *hid = session->hid;
++	bdaddr_t src, dst;
++
++	baswap(&src, &bt_sk(session->ctrl_sock->sk)->src);
++	baswap(&dst, &bt_sk(session->ctrl_sock->sk)->dst);
++
++	hid->driver_data = session;
++
++	hid->parser_version = req->parser;
++	hid->country_code   = req->country;
++
++	hid->bus     = BUS_BLUETOOTH;
++	hid->vendor  = req->vendor;
++	hid->product = req->product;
++	hid->version = req->version;
++
++	strncpy(hid->name, req->name, 128);
++	strncpy(hid->phys, batostr(&src), 64);
++	strncpy(hid->uniq, batostr(&dst), 64);
++
++	hid->dev = hidp_get_device(session);
++
++	hid->send = hid_send_report;
++
++	hid_register_device(hid);
++}
++
+ int hidp_add_connection(struct hidp_connadd_req *req, struct socket *ctrl_sock, struct socket *intr_sock)
+ {
+ 	struct hidp_session *session, *s;
+@@ -586,10 +678,30 @@
+ 	if (!session)
+ 		return -ENOMEM;
+ 
+-	session->input = input_allocate_device();
+-	if (!session->input) {
+-		kfree(session);
+-		return -ENOMEM;
++	if (req->rd_size > 0) {
++		unsigned char *buf = kmalloc(req->rd_size, GFP_KERNEL);
++
++		if (!buf) {
++			kfree(session);
++			return -ENOMEM;
++		}
++
++		if (copy_from_user(buf, req->rd_data, req->rd_size)) {
++			kfree(buf);
++			kfree(session);
++			return -EFAULT;
++		}
++
++		session->hid = hid_alloc_device(buf, req->rd_size);
++		kfree(buf);
++	}
++
++	if (!session->hid) {
++		session->input = input_allocate_device();
++		if (!session->input) {
++			kfree(session);
++			return -EBADR;
++		}
+ 	}
+ 
+ 	down_write(&hidp_session_sem);
+@@ -625,6 +737,9 @@
+ 	if (session->input)
+ 		hidp_setup_input(session, req);
+ 
++	if (session->hid)
++		hidp_setup_hid(session, req);
++
+ 	__hidp_link_session(session);
+ 
+ 	hidp_set_timer(session);
+@@ -658,6 +773,9 @@
+ failed:
+ 	up_write(&hidp_session_sem);
+ 
++	if (session->hid)
++		hid_free_device(session->hid);
++
+ 	kfree(session->input);
+ 	kfree(session);
+ 	return err;
+diff -urN linux-2.6.18/net/bluetooth/hidp/hid.c linux-2.6.18-mh8/net/bluetooth/hidp/hid.c
+--- linux-2.6.18/net/bluetooth/hidp/hid.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-2.6.18-mh8/net/bluetooth/hidp/hid.c	2006-11-18 22:26:03.000000000 +0100
+@@ -0,0 +1,1686 @@
++/*
++ *
++ *  Human Interface Device driver (HID)
++ *
++ *  Copyright (C) 1999  Andreas Gal
++ *  Copyright (C) 2000-2001  Vojtech Pavlik <vojtech@suse.cz>
++ *  Copyright (C) 2003-2004  Marcel Holtmann <marcel@holtmann.org>
++ *
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++ *
++ */
++
++#include <linux/module.h>
++#include <linux/slab.h>
++#include <linux/init.h>
++#include <linux/kernel.h>
++#include <linux/sched.h>
++#include <linux/list.h>
++#include <asm/unaligned.h>
++#include <asm/byteorder.h>
++#include <linux/input.h>
++
++#include "hid.h"
++
++/* Applications from HID Usage Tables 4/8/99 Version 1.1 */
++/* We ignore a few input applications that are not widely used */
++#define IS_INPUT_APPLICATION(a) (((a >= 0x00010000) && (a <= 0x00010008)) || ( a == 0x00010080) || ( a == 0x000c0001))
++static void hidinput_hid_event(struct hid_device *, struct hid_field *, struct hid_usage *, __s32);
++static void hidinput_report_event(struct hid_device *hid, struct hid_report *report);
++
++/*
++ * Register a new report for a device.
++ */
++
++static struct hid_report *hid_register_report(struct hid_device *device, unsigned type, unsigned id)
++{
++	struct hid_report_enum *report_enum = device->report_enum + type;
++	struct hid_report *report;
++
++	if (report_enum->report_id_hash[id])
++		return report_enum->report_id_hash[id];
++
++	if (!(report = kmalloc(sizeof(struct hid_report), GFP_KERNEL)))
++		return NULL;
++	memset(report, 0, sizeof(struct hid_report));
++
++	if (id != 0)
++		report_enum->numbered = 1;
++
++	report->id = id;
++	report->type = type;
++	report->size = 0;
++	report->device = device;
++	report_enum->report_id_hash[id] = report;
++
++	list_add_tail(&report->list, &report_enum->report_list);
++
++	return report;
++}
++
++/*
++ * Register a new field for this report.
++ */
++
++static struct hid_field *hid_register_field(struct hid_report *report, unsigned usages, unsigned values)
++{
++	struct hid_field *field;
++
++	if (report->maxfield == HID_MAX_FIELDS) {
++		dbg("too many fields in report");
++		return NULL;
++	}
++
++	if (!(field = kmalloc(sizeof(struct hid_field) + usages * sizeof(struct hid_usage)
++		+ values * sizeof(unsigned), GFP_KERNEL))) return NULL;
++
++	memset(field, 0, sizeof(struct hid_field) + usages * sizeof(struct hid_usage)
++		+ values * sizeof(unsigned));
++
++	report->field[report->maxfield++] = field;
++	field->usage = (struct hid_usage *)(field + 1);
++	field->value = (unsigned *)(field->usage + usages);
++	field->report = report;
++
++	return field;
++}
++
++/*
++ * Open a collection. The type/usage is pushed on the stack.
++ */
++
++static int open_collection(struct hid_parser *parser, unsigned type)
++{
++	struct hid_collection *collection;
++	unsigned usage;
++
++	usage = parser->local.usage[0];
++
++	if (parser->collection_stack_ptr == HID_COLLECTION_STACK_SIZE) {
++		dbg("collection stack overflow");
++		return -1;
++	}
++
++	if (parser->device->maxcollection == parser->device->collection_size) {
++		collection = kmalloc(sizeof(struct hid_collection) *
++				     parser->device->collection_size * 2,
++				     GFP_KERNEL);
++		if (collection == NULL) {
++			dbg("failed to reallocate collection array");
++			return -1;
++		}
++		memcpy(collection, parser->device->collection,
++		       sizeof(struct hid_collection) *
++		       parser->device->collection_size);
++		memset(collection + parser->device->collection_size, 0,
++		       sizeof(struct hid_collection) *
++		       parser->device->collection_size);
++		kfree(parser->device->collection);
++		parser->device->collection = collection;
++		parser->device->collection_size *= 2;
++	}
++
++	parser->collection_stack[parser->collection_stack_ptr++] =
++		parser->device->maxcollection;
++
++	collection = parser->device->collection + 
++		parser->device->maxcollection++;
++	collection->type = type;
++	collection->usage = usage;
++	collection->level = parser->collection_stack_ptr - 1;
++	
++	if (type == HID_COLLECTION_APPLICATION)
++		parser->device->maxapplication++;
++
++	return 0;
++}
++
++/*
++ * Close a collection.
++ */
++
++static int close_collection(struct hid_parser *parser)
++{
++	if (!parser->collection_stack_ptr) {
++		dbg("collection stack underflow");
++		return -1;
++	}
++	parser->collection_stack_ptr--;
++	return 0;
++}
++
++/*
++ * Climb up the stack, search for the specified collection type
++ * and return the usage.
++ */
++
++static unsigned hid_lookup_collection(struct hid_parser *parser, unsigned type)
++{
++	int n;
++	for (n = parser->collection_stack_ptr - 1; n >= 0; n--)
++		if (parser->device->collection[parser->collection_stack[n]].type == type)
++			return parser->device->collection[parser->collection_stack[n]].usage;
++	return 0; /* we know nothing about this usage type */
++}
++
++/*
++ * Add a usage to the temporary parser table.
++ */
++
++static int hid_add_usage(struct hid_parser *parser, unsigned usage)
++{
++	if (parser->local.usage_index >= HID_MAX_USAGES) {
++		dbg("usage index exceeded");
++		return -1;
++	}
++	parser->local.usage[parser->local.usage_index] = usage;
++	parser->local.collection_index[parser->local.usage_index] =
++		parser->collection_stack_ptr ? 
++		parser->collection_stack[parser->collection_stack_ptr - 1] : 0;
++	parser->local.usage_index++;
++	return 0;
++}
++
++/*
++ * Register a new field for this report.
++ */
++
++static int hid_add_field(struct hid_parser *parser, unsigned report_type, unsigned flags)
++{
++	struct hid_report *report;
++	struct hid_field *field;
++	int usages;
++	unsigned offset;
++	int i;
++
++	if (!(report = hid_register_report(parser->device, report_type, parser->global.report_id))) {
++		dbg("hid_register_report failed");
++		return -1;
++	}
++
++	if (parser->global.logical_maximum < parser->global.logical_minimum) {
++		dbg("logical range invalid %d %d", parser->global.logical_minimum, parser->global.logical_maximum);
++		return -1;
++	}
++	usages = parser->local.usage_index;
++
++	offset = report->size;
++	report->size += parser->global.report_size * parser->global.report_count;
++
++	if (usages == 0)
++		return 0; /* ignore padding fields */
++
++	if ((field = hid_register_field(report, usages, parser->global.report_count)) == NULL)
++		return 0;
++
++	field->physical = hid_lookup_collection(parser, HID_COLLECTION_PHYSICAL);
++	field->logical = hid_lookup_collection(parser, HID_COLLECTION_LOGICAL);
++	field->application = hid_lookup_collection(parser, HID_COLLECTION_APPLICATION);
++
++	for (i = 0; i < usages; i++) {
++		field->usage[i].hid = parser->local.usage[i];
++		field->usage[i].collection_index =
++			parser->local.collection_index[i];
++	}
++
++	field->maxusage = usages;
++	field->flags = flags;
++	field->report_offset = offset;
++	field->report_type = report_type;
++	field->report_size = parser->global.report_size;
++	field->report_count = parser->global.report_count;
++	field->logical_minimum = parser->global.logical_minimum;
++	field->logical_maximum = parser->global.logical_maximum;
++	field->physical_minimum = parser->global.physical_minimum;
++	field->physical_maximum = parser->global.physical_maximum;
++	field->unit_exponent = parser->global.unit_exponent;
++	field->unit = parser->global.unit;
++
++	return 0;
++}
++
++/*
++ * Read data value from item.
++ */
++
++static __inline__ __u32 item_udata(struct hid_item *item)
++{
++	switch (item->size) {
++		case 1: return item->data.u8;
++		case 2: return item->data.u16;
++		case 4: return item->data.u32;
++	}
++	return 0;
++}
++
++static __inline__ __s32 item_sdata(struct hid_item *item)
++{
++	switch (item->size) {
++		case 1: return item->data.s8;
++		case 2: return item->data.s16;
++		case 4: return item->data.s32;
++	}
++	return 0;
++}
++
++/*
++ * Process a global item.
++ */
++
++static int hid_parser_global(struct hid_parser *parser, struct hid_item *item)
++{
++	switch (item->tag) {
++
++		case HID_GLOBAL_ITEM_TAG_PUSH:
++
++			if (parser->global_stack_ptr == HID_GLOBAL_STACK_SIZE) {
++				dbg("global enviroment stack overflow");
++				return -1;
++			}
++
++			memcpy(parser->global_stack + parser->global_stack_ptr++,
++				&parser->global, sizeof(struct hid_global));
++			return 0;
++
++		case HID_GLOBAL_ITEM_TAG_POP:
++
++			if (!parser->global_stack_ptr) {
++				dbg("global enviroment stack underflow");
++				return -1;
++			}
++
++			memcpy(&parser->global, parser->global_stack + --parser->global_stack_ptr,
++				sizeof(struct hid_global));
++			return 0;
++
++		case HID_GLOBAL_ITEM_TAG_USAGE_PAGE:
++			parser->global.usage_page = item_udata(item);
++			return 0;
++
++		case HID_GLOBAL_ITEM_TAG_LOGICAL_MINIMUM:
++			parser->global.logical_minimum = item_sdata(item);
++			return 0;
++
++		case HID_GLOBAL_ITEM_TAG_LOGICAL_MAXIMUM:
++			if (parser->global.logical_minimum < 0)
++				parser->global.logical_maximum = item_sdata(item);
++			else
++				parser->global.logical_maximum = item_udata(item);
++			return 0;
++
++		case HID_GLOBAL_ITEM_TAG_PHYSICAL_MINIMUM:
++			parser->global.physical_minimum = item_sdata(item);
++			return 0;
++
++		case HID_GLOBAL_ITEM_TAG_PHYSICAL_MAXIMUM:
++			if (parser->global.physical_minimum < 0)
++				parser->global.physical_maximum = item_sdata(item);
++			else
++				parser->global.physical_maximum = item_udata(item);
++			return 0;
++
++		case HID_GLOBAL_ITEM_TAG_UNIT_EXPONENT:
++			parser->global.unit_exponent = item_sdata(item);
++			return 0;
++
++		case HID_GLOBAL_ITEM_TAG_UNIT:
++			parser->global.unit = item_udata(item);
++			return 0;
++
++		case HID_GLOBAL_ITEM_TAG_REPORT_SIZE:
++			if ((parser->global.report_size = item_udata(item)) > 32) {
++				dbg("invalid report_size %d", parser->global.report_size);
++				return -1;
++			}
++			return 0;
++
++		case HID_GLOBAL_ITEM_TAG_REPORT_COUNT:
++			if ((parser->global.report_count = item_udata(item)) > HID_MAX_USAGES) {
++				dbg("invalid report_count %d", parser->global.report_count);
++				return -1;
++			}
++			return 0;
++
++		case HID_GLOBAL_ITEM_TAG_REPORT_ID:
++			if ((parser->global.report_id = item_udata(item)) == 0) {
++				dbg("report_id 0 is invalid");
++				return -1;
++			}
++			return 0;
++
++		default:
++			dbg("unknown global tag 0x%x", item->tag);
++			return -1;
++	}
++}
++
++/*
++ * Process a local item.
++ */
++
++static int hid_parser_local(struct hid_parser *parser, struct hid_item *item)
++{
++	__u32 data;
++	unsigned n;
++
++	if (item->size == 0) {
++		dbg("item data expected for local item");
++		return -1;
++	}
++
++	data = item_udata(item);
++
++	switch (item->tag) {
++
++		case HID_LOCAL_ITEM_TAG_DELIMITER:
++
++			if (data) {
++				/*
++				 * We treat items before the first delimiter
++				 * as global to all usage sets (branch 0).
++				 * In the moment we process only these global
++				 * items and the first delimiter set.
++				 */
++				if (parser->local.delimiter_depth != 0) {
++					dbg("nested delimiters");
++					return -1;
++				}
++				parser->local.delimiter_depth++;
++				parser->local.delimiter_branch++;
++			} else {
++				if (parser->local.delimiter_depth < 1) {
++					dbg("bogus close delimiter");
++					return -1;
++				}
++				parser->local.delimiter_depth--;
++			}
++			return 1;
++
++		case HID_LOCAL_ITEM_TAG_USAGE:
++
++			if (parser->local.delimiter_branch > 1) {
++				dbg("alternative usage ignored");
++				return 0;
++			}
++
++			if (item->size <= 2)
++				data = (parser->global.usage_page << 16) + data;
++
++			dbg("usage item %d (item size %d)", data, item->size);
++
++			return hid_add_usage(parser, data);
++
++		case HID_LOCAL_ITEM_TAG_USAGE_MINIMUM:
++
++			if (parser->local.delimiter_branch > 1) {
++				dbg("alternative usage ignored");
++				return 0;
++			}
++
++			if (item->size <= 2)
++				data = (parser->global.usage_page << 16) + data;
++
++			parser->local.usage_minimum = data;
++			return 0;
++
++		case HID_LOCAL_ITEM_TAG_USAGE_MAXIMUM:
++
++			if (parser->local.delimiter_branch > 1) {
++				dbg("alternative usage ignored");
++				return 0;
++			}
++
++			if (item->size <= 2)
++				data = (parser->global.usage_page << 16) + data;
++
++			dbg("usage range %d-%d (item size %d)", parser->local.usage_minimum, data, item->size);
++
++			for (n = parser->local.usage_minimum; n <= data; n++) {
++				if (hid_add_usage(parser, n)) {
++					dbg("hid_add_usage failed");
++					return -1;
++				}
++			}
++			return 0;
++
++		default:
++
++			dbg("unknown local item tag 0x%x", item->tag);
++			return 0;
++	}
++	return 0;
++}
++
++/*
++ * Process a main item.
++ */
++
++static int hid_parser_main(struct hid_parser *parser, struct hid_item *item)
++{
++	__u32 data;
++	int ret;
++
++	data = item_udata(item);
++
++	switch (item->tag) {
++		case HID_MAIN_ITEM_TAG_BEGIN_COLLECTION:
++			ret = open_collection(parser, data & 0xff);
++			break;
++		case HID_MAIN_ITEM_TAG_END_COLLECTION:
++			ret = close_collection(parser);
++			break;
++		case HID_MAIN_ITEM_TAG_INPUT:
++			ret = hid_add_field(parser, HID_INPUT_REPORT, data);
++			break;
++		case HID_MAIN_ITEM_TAG_OUTPUT:
++			ret = hid_add_field(parser, HID_OUTPUT_REPORT, data);
++			break;
++		case HID_MAIN_ITEM_TAG_FEATURE:
++			ret = hid_add_field(parser, HID_FEATURE_REPORT, data);
++			break;
++		default:
++			dbg("unknown main item tag 0x%x", item->tag);
++			ret = 0;
++	}
++
++	memset(&parser->local, 0, sizeof(parser->local));	/* Reset the local parser environment */
++
++	return ret;
++}
++
++/*
++ * Process a reserved item.
++ */
++
++static int hid_parser_reserved(struct hid_parser *parser, struct hid_item *item)
++{
++	dbg("reserved item type, tag 0x%x", item->tag);
++	return 0;
++}
++
++/*
++ * Free a report and all registered fields. The field->usage and
++ * field->value table's are allocated behind the field, so we need
++ * only to free(field) itself.
++ */
++
++static void hid_free_report(struct hid_report *report)
++{
++	unsigned n;
++
++	for (n = 0; n < report->maxfield; n++)
++		kfree(report->field[n]);
++	kfree(report);
++}
++
++/*
++ * Free a device structure, all reports, and all fields.
++ */
++
++void hid_free_device(struct hid_device *device)
++{
++	unsigned i,j;
++
++	if (!device)
++		return;
++
++	for (i = 0; i < HID_REPORT_TYPES; i++) {
++		struct hid_report_enum *report_enum = device->report_enum + i;
++
++		for (j = 0; j < 256; j++) {
++			struct hid_report *report = report_enum->report_id_hash[j];
++			if (report)
++				hid_free_report(report);
++		}
++	}
++
++	if (device->rdesc)
++		kfree(device->rdesc);
++	kfree(device);
++}
++
++/*
++ * Fetch a report description item from the data stream. We support long
++ * items, though they are not used yet.
++ */
++
++static u8 *fetch_item(__u8 *start, __u8 *end, struct hid_item *item)
++{
++	u8 b;
++
++	if ((end - start) <= 0)
++		return NULL;
++
++	b = *start++;
++
++	//memset(item, 0, sizeof(*item));
++
++	item->type = (b >> 2) & 3;
++	item->tag  = (b >> 4) & 15;
++
++	if (item->tag == HID_ITEM_TAG_LONG) {
++
++		item->format = HID_ITEM_FORMAT_LONG;
++
++		if ((end - start) < 2)
++			return NULL;
++
++		item->size = *start++;
++		item->tag  = *start++;
++
++		if ((end - start) < item->size) 
++			return NULL;
++
++		item->data.longdata = start;
++		start += item->size;
++		return start;
++	} 
++
++	item->format = HID_ITEM_FORMAT_SHORT;
++	item->size = b & 3;
++
++	switch (item->size) {
++
++		case 0:
++			return start;
++
++		case 1:
++			if ((end - start) < 1)
++				return NULL;
++			item->data.u8 = *start++;
++			dbg("size 1 data %d", item->data.u8);
++			return start;
++
++		case 2:
++			if ((end - start) < 2) 
++				return NULL;
++			item->data.u16 = le16_to_cpu(get_unaligned((__u16*)start));
++			dbg("size 2 data %d (%d)", item->data.u16,
++				be16_to_cpu(get_unaligned((__u16*)start)));
++			//item->data.u16 = be16_to_cpu(get_unaligned((__u16*)start));
++			start = (__u8 *)((__u16 *)start + 1);
++			return start;
++
++		case 3:
++			item->size++;
++			if ((end - start) < 4)
++				return NULL;
++			item->data.u32 = le32_to_cpu(get_unaligned((__u32*)start));
++			start = (__u8 *)((__u32 *)start + 1);
++			return start;
++	}
++
++	return NULL;
++}
++
++/*
++ * Parse a report description into a hid_device structure. Reports are
++ * enumerated, fields are attached to these reports.
++ */
++
++struct hid_device *hid_alloc_device(u8 *data, int size)
++{
++	struct hid_device *device;
++	struct hid_parser *parser;
++	struct hid_item item;
++	u8 *end, *start = data;
++	unsigned i;
++	static int (*dispatch_type[])(struct hid_parser *parser,
++				      struct hid_item *item) = {
++		hid_parser_main,
++		hid_parser_global,
++		hid_parser_local,
++		hid_parser_reserved
++	};
++
++	if (!(device = kmalloc(sizeof(struct hid_device), GFP_KERNEL)))
++		return NULL;
++	memset(device, 0, sizeof(struct hid_device));
++
++	if (!(device->collection = kmalloc(sizeof(struct hid_collection) *
++				   HID_DEFAULT_NUM_COLLECTIONS, GFP_KERNEL))) {
++		kfree(device);
++		return NULL;
++	}
++	memset(device->collection, 0, sizeof(struct hid_collection) *
++	       HID_DEFAULT_NUM_COLLECTIONS);
++	device->collection_size = HID_DEFAULT_NUM_COLLECTIONS;
++
++	for (i = 0; i < HID_REPORT_TYPES; i++)
++		INIT_LIST_HEAD(&device->report_enum[i].report_list);
++
++	if (!(device->rdesc = (__u8 *)kmalloc(size, GFP_KERNEL))) {
++		kfree(device->collection);
++		kfree(device);
++		return NULL;
++	}
++	memcpy(device->rdesc, start, size);
++	device->rsize = size;
++
++	if (!(parser = kmalloc(sizeof(struct hid_parser), GFP_KERNEL))) {
++		kfree(device->rdesc);
++		kfree(device->collection);
++		kfree(device);
++		return NULL;
++	}
++	memset(parser, 0, sizeof(struct hid_parser));
++	parser->device = device;
++
++	end = start + size;
++	while ((start = fetch_item(start, end, &item)) != 0) {
++
++		if (item.format != HID_ITEM_FORMAT_SHORT) {
++			dbg("unexpected long global item");
++			kfree(device->collection);
++			hid_free_device(device);
++			kfree(parser);
++			return NULL;
++		}
++
++		if (dispatch_type[item.type](parser, &item)) {
++			dbg("item %u %u %u %u parsing failed",
++				item.format, (unsigned)item.size, (unsigned)item.type, (unsigned)item.tag);
++			kfree(device->collection);
++			hid_free_device(device);
++			kfree(parser);
++			return NULL;
++		}
++
++		if (start == end) {
++			if (parser->collection_stack_ptr) {
++				dbg("unbalanced collection at end of report description");
++				kfree(device->collection);
++				hid_free_device(device);
++				kfree(parser);
++				return NULL;
++			}
++			if (parser->local.delimiter_depth) {
++				dbg("unbalanced delimiter at end of report description");
++				kfree(device->collection);
++				hid_free_device(device);
++				kfree(parser);
++				return NULL;
++			}
++			kfree(parser);
++			return device;
++		}
++	}
++
++	dbg("item fetching failed at offset %d", (int)(end - start));
++	kfree(device->collection);
++	hid_free_device(device);
++	kfree(parser);
++	return NULL;
++}
++
++/*
++ * Convert a signed n-bit integer to signed 32-bit integer. Common
++ * cases are done through the compiler, the screwed things has to be
++ * done by hand.
++ */
++
++static __inline__ __s32 snto32(__u32 value, unsigned n)
++{
++	switch (n) {
++		case 8:  return ((__s8)value);
++		case 16: return ((__s16)value);
++		case 32: return ((__s32)value);
++	}
++	return value & (1 << (n - 1)) ? value | (-1 << n) : value;
++}
++
++/*
++ * Convert a signed 32-bit integer to a signed n-bit integer.
++ */
++
++static __inline__ __u32 s32ton(__s32 value, unsigned n)
++{
++	__s32 a = value >> (n - 1);
++	if (a && a != -1)
++		return value < 0 ? 1 << (n - 1) : (1 << (n - 1)) - 1;
++	return value & ((1 << n) - 1);
++}
++
++/*
++ * Extract/implement a data field from/to a report.
++ */
++
++static __inline__ __u32 extract(__u8 *report, unsigned offset, unsigned n)
++{
++	report += (offset >> 5) << 2; offset &= 31;
++	return (le64_to_cpu(get_unaligned((__u64*)report)) >> offset) & ((1 << n) - 1);
++}
++
++static __inline__ void implement(__u8 *report, unsigned offset, unsigned n, __u32 value)
++{
++	report += (offset >> 5) << 2; offset &= 31;
++	put_unaligned((get_unaligned((__u64*)report)
++		& cpu_to_le64(~((((__u64) 1 << n) - 1) << offset)))
++		| cpu_to_le64((__u64)value << offset), (__u64*)report);
++}
++
++/*
++ * Search an array for a value.
++ */
++
++static __inline__ int search(__s32 *array, __s32 value, unsigned n)
++{
++	while (n--) {
++		if (*array++ == value)
++			return 0;
++	}
++	return -1;
++}
++
++static void hid_process_event(struct hid_device *hid, struct hid_field *field, struct hid_usage *usage, __s32 value)
++{
++	hid_dump_input(usage, value);
++	hidinput_hid_event(hid, field, usage, value);
++}
++
++/*
++ * Analyse a received field, and fetch the data from it. The field
++ * content is stored for next report processing (we do differential
++ * reporting to the layer).
++ */
++
++static void hid_input_field(struct hid_device *hid, struct hid_field *field, __u8 *data)
++{
++	unsigned n;
++	unsigned count = field->report_count;
++	unsigned offset = field->report_offset;
++	unsigned size = field->report_size;
++	__s32 min = field->logical_minimum;
++	__s32 max = field->logical_maximum;
++	__s32 value[count]; /* WARNING: gcc specific */
++
++	for (n = 0; n < count; n++) {
++
++			value[n] = min < 0 ? snto32(extract(data, offset + n * size, size), size) :
++						    extract(data, offset + n * size, size);
++
++			if (!(field->flags & HID_MAIN_ITEM_VARIABLE) /* Ignore report if ErrorRollOver */
++			    && value[n] >= min && value[n] <= max
++			    && field->usage[value[n] - min].hid == HID_UP_KEYBOARD + 1)
++				return;
++	}
++
++	for (n = 0; n < count; n++) {
++
++		if (HID_MAIN_ITEM_VARIABLE & field->flags) {
++
++			if (field->flags & HID_MAIN_ITEM_RELATIVE) {
++				if (!value[n])
++					continue;
++			} else {
++				if (value[n] == field->value[n])
++					continue;
++			}	
++			hid_process_event(hid, field, &field->usage[n], value[n]);
++			continue;
++		}
++
++		if (field->value[n] >= min && field->value[n] <= max
++			&& field->usage[field->value[n] - min].hid
++			&& search(value, field->value[n], count))
++				hid_process_event(hid, field, &field->usage[field->value[n] - min], 0);
++
++		if (value[n] >= min && value[n] <= max
++			&& field->usage[value[n] - min].hid
++			&& search(field->value, value[n], count))
++				hid_process_event(hid, field, &field->usage[value[n] - min], 1);
++	}
++
++	memcpy(field->value, value, count * sizeof(__s32));
++}
++
++int hid_recv_report(struct hid_device *hid, int type, u8 *data, int size)
++{
++	struct hid_report_enum *report_enum = hid->report_enum + type;
++	struct hid_report *report;
++	int n, rsize;
++
++	if (!hid)
++		return -ENODEV;
++
++	if (!size) {
++		dbg("empty report");
++		return -1;
++	}
++
++#ifdef DEBUG_DATA
++	printk(KERN_DEBUG __FILE__ ": report (size %u) (%snumbered)\n", len, report_enum->numbered ? "" : "un");
++#endif
++
++	n = 0;				/* Normally report number is 0 */
++	if (report_enum->numbered) {	/* Device uses numbered reports, data[0] is report number */
++		n = *data++;
++		size--;
++	}
++
++#ifdef DEBUG_DATA
++	{
++		int i;
++		printk(KERN_DEBUG __FILE__ ": report %d (size %u) = ", n, size);
++		for (i = 0; i < size; i++)
++			printk(" %02x", data[i]);
++		printk("\n");
++	}
++#endif
++
++	if (!(report = report_enum->report_id_hash[n])) {
++		dbg("undefined report_id %d received", n);
++		return -1;
++	}
++
++	rsize = ((report->size - 1) >> 3) + 1;
++
++	if (size < rsize) {
++		dbg("report %d is too short, (%d < %d)", report->id, size, rsize);
++		return -1;
++	}
++
++	for (n = 0; n < report->maxfield; n++)
++		hid_input_field(hid, report->field[n], data);
++
++	hidinput_report_event(hid, report);
++
++	return 0;
++}
++
++/*
++ * Output the field into the report.
++ */
++
++static void hid_output_field(struct hid_field *field, __u8 *data)
++{
++	unsigned count = field->report_count;
++	unsigned offset = field->report_offset;
++	unsigned size = field->report_size;
++	unsigned n;
++
++	for (n = 0; n < count; n++) {
++		if (field->logical_minimum < 0)	/* signed values */
++			implement(data, offset + n * size, size, s32ton(field->value[n], size));
++		 else				/* unsigned values */
++			implement(data, offset + n * size, size, field->value[n]);
++	}
++}
++
++/*
++ * Create a report.
++ */
++
++static void hid_output_report(struct hid_report *report, __u8 *data)
++{
++	unsigned n;
++
++	if (report->id > 0)
++		*data++ = report->id;
++
++	for (n = 0; n < report->maxfield; n++)
++		hid_output_field(report->field[n], data);
++}
++
++/*
++ * Set a field value. The report this field belongs to has to be
++ * created and transferred to the device, to set this value in the
++ * device.
++ */
++
++static int hid_set_field(struct hid_field *field, unsigned offset, __s32 value)
++{
++	unsigned size = field->report_size;
++
++	hid_dump_input(field->usage + offset, value);
++
++	if (offset >= field->report_count) {
++		dbg("offset (%d) exceeds report_count (%d)", offset, field->report_count);
++		hid_dump_field(field, 8);
++		return -1;
++	}
++	if (field->logical_minimum < 0) {
++		if (value != snto32(s32ton(value, size), size)) {
++			dbg("value %d is out of range", value);
++			return -1;
++		}
++	}
++	field->value[offset] = value;
++	return 0;
++}
++
++static int hid_find_field(struct hid_device *hid, unsigned int type, unsigned int code, struct hid_field **field)
++{
++	struct hid_report_enum *report_enum = hid->report_enum + HID_OUTPUT_REPORT;
++	struct list_head *list = report_enum->report_list.next;
++	int i, j;
++
++	while (list != &report_enum->report_list) {
++		struct hid_report *report = (struct hid_report *) list;
++		list = list->next;
++		for (i = 0; i < report->maxfield; i++) {
++			*field = report->field[i];
++			for (j = 0; j < (*field)->maxusage; j++)
++				if ((*field)->usage[j].type == type && (*field)->usage[j].code == code)
++					return j;
++		}
++	}
++	return -1;
++}
++
++#if 0
++/*
++ * Find a report with a specified HID usage.
++ */
++
++static int hid_find_report_by_usage(struct hid_device *hid, __u32 wanted_usage, struct hid_report **report, int type)
++{
++	struct hid_report_enum *report_enum = hid->report_enum + type;
++	struct list_head *list = report_enum->report_list.next;
++	int i, j;
++
++	while (list != &report_enum->report_list) {
++		*report = (struct hid_report *) list;
++		list = list->next;
++		for (i = 0; i < (*report)->maxfield; i++) {
++			struct hid_field *field = (*report)->field[i];
++			for (j = 0; j < field->maxusage; j++)
++				if (field->logical == wanted_usage)
++					return j;
++		}
++	}
++	return -1;
++}
++
++static int hid_find_field_in_report(struct hid_report *report, __u32 wanted_usage, struct hid_field **field)
++{
++	int i, j;
++
++	for (i = 0; i < report->maxfield; i++) {
++		*field = report->field[i];
++		for (j = 0; j < (*field)->maxusage; j++)
++			if ((*field)->usage[j].hid == wanted_usage)
++				return j;
++	}
++
++	return -1;
++}
++#endif
++
++static int hid_submit_report(struct hid_device *hid, struct hid_report *report)
++{
++	unsigned char buf[32];
++	int rsize;
++
++	rsize = ((report->size - 1) >> 3) + 1 + (report->id > 0);
++	if (rsize > sizeof(buf))
++		return -EIO;
++
++	hid_output_report(report, buf);
++
++	if (hid->send)
++		hid->send(hid, buf, rsize);
++
++	return 0;
++}
++
++/*
++ * Initialize all reports
++ */
++
++static void hid_init_reports(struct hid_device *hid)
++{
++	struct hid_report_enum *report_enum;
++	struct hid_report *report;
++	struct list_head *list;
++	int len;
++
++	report_enum = hid->report_enum + HID_INPUT_REPORT;
++	list = report_enum->report_list.next;
++	while (list != &report_enum->report_list) {
++		report = (struct hid_report *) list;
++		hid_submit_report(hid, report);
++		list = list->next;
++	}
++
++	report_enum = hid->report_enum + HID_FEATURE_REPORT;
++	list = report_enum->report_list.next;
++	while (list != &report_enum->report_list) {
++		report = (struct hid_report *) list;
++		hid_submit_report(hid, report);
++		list = list->next;
++	}
++
++	report_enum = hid->report_enum + HID_INPUT_REPORT;
++	list = report_enum->report_list.next;
++	while (list != &report_enum->report_list) {
++		report = (struct hid_report *) list;
++		len = ((report->size - 1) >> 3) + 1 + report_enum->numbered;
++		list = list->next;
++	}
++}
++
++
++#define unk	KEY_UNKNOWN
++
++static unsigned char hid_keyboard[256] = {
++	  0,  0,  0,  0, 30, 48, 46, 32, 18, 33, 34, 35, 23, 36, 37, 38,
++	 50, 49, 24, 25, 16, 19, 31, 20, 22, 47, 17, 45, 21, 44,  2,  3,
++	  4,  5,  6,  7,  8,  9, 10, 11, 28,  1, 14, 15, 57, 12, 13, 26,
++	 27, 43, 43, 39, 40, 41, 51, 52, 53, 58, 59, 60, 61, 62, 63, 64,
++	 65, 66, 67, 68, 87, 88, 99, 70,119,110,102,104,111,107,109,106,
++	105,108,103, 69, 98, 55, 74, 78, 96, 79, 80, 81, 75, 76, 77, 71,
++	 72, 73, 82, 83, 86,127,116,117,183,184,185,186,187,188,189,190,
++	191,192,193,194,134,138,130,132,128,129,131,137,133,135,136,113,
++	115,114,unk,unk,unk,121,unk, 89, 93,124, 92, 94, 95,unk,unk,unk,
++	122,123, 90, 91, 85,unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,
++	unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,
++	unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,
++	unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,
++	unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,unk,
++	 29, 42, 56,125, 97, 54,100,126,164,166,165,163,161,115,114,113,
++	150,158,159,128,136,177,178,176,142,152,173,140,unk,unk,unk,unk
++};
++
++static struct {
++	__s32 x;
++	__s32 y;
++} hid_hat_to_axis[] = {{ 0, 0}, { 0,-1}, { 1,-1}, { 1, 0}, { 1, 1}, { 0, 1}, {-1, 1}, {-1, 0}, {-1,-1}};
++
++static struct input_dev *find_input(struct hid_device *hid, struct hid_field *field)
++{
++	struct list_head *lh;
++	struct hid_input *hidinput;
++
++	list_for_each (lh, &hid->inputs) {
++		int i;
++
++		hidinput = list_entry(lh, struct hid_input, list);
++
++		if (! hidinput->report)
++			continue;
++
++		for (i = 0; i < hidinput->report->maxfield; i++)
++			if (hidinput->report->field[i] == field)
++				return hidinput->input;
++	}
++
++	/* Assume we only have one input and use it */
++	if (!list_empty(&hid->inputs)) {
++		hidinput = list_entry(hid->inputs.next, struct hid_input, list);
++		return hidinput->input;
++	}
++
++	/* This is really a bug */
++	return NULL;
++}
++
++static void hidinput_configure_usage(struct hid_input *hidinput, struct hid_field *field,
++				     struct hid_usage *usage)
++{
++	struct input_dev *input = hidinput->input;
++	struct hid_device *device = input->private;
++	int max;
++	int is_abs = 0;
++	unsigned long *bit;
++
++	switch (usage->hid & HID_USAGE_PAGE) {
++
++		case HID_UP_KEYBOARD:
++
++			set_bit(EV_REP, input->evbit);
++			usage->type = EV_KEY; bit = input->keybit; max = KEY_MAX;
++
++			if ((usage->hid & HID_USAGE) < 256) {
++				if (!(usage->code = hid_keyboard[usage->hid & HID_USAGE]))
++					return;
++				clear_bit(usage->code, bit);
++			} else
++				usage->code = KEY_UNKNOWN;
++
++			break;
++
++		case HID_UP_BUTTON:
++
++			usage->code = ((usage->hid - 1) & 0xf) + 0x100;
++			usage->type = EV_KEY; bit = input->keybit; max = KEY_MAX;
++
++			switch (field->application) {
++				case HID_GD_GAMEPAD:  usage->code += 0x10;
++				case HID_GD_JOYSTICK: usage->code += 0x10;
++				case HID_GD_MOUSE:    usage->code += 0x10; break;
++				default:
++					if (field->physical == HID_GD_POINTER)
++						usage->code += 0x10;
++					break;
++			}
++			break;
++
++		case HID_UP_GENDESK:
++
++			if ((usage->hid & 0xf0) == 0x80) {	/* SystemControl */
++				switch (usage->hid & 0xf) {
++					case 0x1: usage->code = KEY_POWER;  break;
++					case 0x2: usage->code = KEY_SLEEP;  break;
++					case 0x3: usage->code = KEY_WAKEUP; break;
++					default:  usage->code = KEY_UNKNOWN; break;
++				}
++				usage->type = EV_KEY; bit = input->keybit; max = KEY_MAX;
++				break;
++			}
++
++			usage->code = usage->hid & 0xf;
++
++			if (field->report_size == 1) {
++				usage->code = BTN_MISC;
++				usage->type = EV_KEY; bit = input->keybit; max = KEY_MAX;
++				break;
++			}
++
++			if (field->flags & HID_MAIN_ITEM_RELATIVE) {
++				usage->type = EV_REL; bit = input->relbit; max = REL_MAX;
++				break;
++			}
++
++			usage->type = EV_ABS; bit = input->absbit; max = ABS_MAX;
++
++			if (usage->hid == HID_GD_HATSWITCH) {
++				usage->code = ABS_HAT0X;
++				usage->hat_min = field->logical_minimum;
++				usage->hat_max = field->logical_maximum;
++			}
++			break;
++
++		case HID_UP_LED:
++
++			usage->code = (usage->hid - 1) & 0xf;
++			usage->type = EV_LED; bit = input->ledbit; max = LED_MAX;
++			break;
++
++		case HID_UP_DIGITIZER:
++
++			switch (usage->hid & 0xff) {
++
++				case 0x30: /* TipPressure */
++
++					if (!test_bit(BTN_TOUCH, input->keybit)) {
++						device->quirks |= HID_QUIRK_NOTOUCH;
++						set_bit(EV_KEY, input->evbit);
++						set_bit(BTN_TOUCH, input->keybit);
++					}
++					usage->type = EV_ABS; bit = input->absbit; max = ABS_MAX;
++					usage->code = ABS_PRESSURE;
++					clear_bit(usage->code, bit);
++					break;
++
++				case 0x32: /* InRange */
++
++					usage->type = EV_KEY; bit = input->keybit; max = KEY_MAX;
++					switch (field->physical & 0xff) {
++						case 0x21: usage->code = BTN_TOOL_MOUSE; break;
++						case 0x22: usage->code = BTN_TOOL_FINGER; break;
++						default: usage->code = BTN_TOOL_PEN; break;
++					}
++					break;
++
++				case 0x3c: /* Invert */
++
++					usage->type = EV_KEY; bit = input->keybit; max = KEY_MAX;
++					usage->code = BTN_TOOL_RUBBER;
++					clear_bit(usage->code, bit);
++					break;
++
++				case 0x33: /* Touch */
++				case 0x42: /* TipSwitch */
++				case 0x43: /* TipSwitch2 */
++
++					device->quirks &= ~HID_QUIRK_NOTOUCH;
++					usage->type = EV_KEY; bit = input->keybit; max = KEY_MAX;
++					usage->code = BTN_TOUCH;
++					clear_bit(usage->code, bit);
++					break;
++
++				case 0x44: /* BarrelSwitch */
++
++					usage->type = EV_KEY; bit = input->keybit; max = KEY_MAX;
++					usage->code = BTN_STYLUS;
++					clear_bit(usage->code, bit);
++					break;
++
++				default:  goto unknown;
++			}
++			break;
++
++		case HID_UP_CONSUMER:	/* USB HUT v1.1, pages 56-62 */
++
++			set_bit(EV_REP, input->evbit);
++			switch (usage->hid & HID_USAGE) {
++				case 0x000: usage->code = 0; break;
++				case 0x034: usage->code = KEY_SLEEP;		break;
++				case 0x036: usage->code = BTN_MISC;		break;
++				case 0x08a: usage->code = KEY_WWW;		break;
++				case 0x095: usage->code = KEY_HELP;		break;
++
++				case 0x0b0: usage->code = KEY_PLAY;		break;
++				case 0x0b1: usage->code = KEY_PAUSE;		break;
++				case 0x0b2: usage->code = KEY_RECORD;		break;
++				case 0x0b3: usage->code = KEY_FASTFORWARD;	break;
++				case 0x0b4: usage->code = KEY_REWIND;		break;
++				case 0x0b5: usage->code = KEY_NEXTSONG;		break;
++				case 0x0b6: usage->code = KEY_PREVIOUSSONG;	break;
++				case 0x0b7: usage->code = KEY_STOPCD;		break;
++				case 0x0b8: usage->code = KEY_EJECTCD;		break;
++				case 0x0cd: usage->code = KEY_PLAYPAUSE;	break;
++				case 0x0e0: is_abs = 1;
++					    usage->code = ABS_VOLUME;		break;
++				case 0x0e2: usage->code = KEY_MUTE;		break;
++				case 0x0e5: usage->code = KEY_BASSBOOST;	break;
++				case 0x0e9: usage->code = KEY_VOLUMEUP;		break;
++				case 0x0ea: usage->code = KEY_VOLUMEDOWN;	break;
++
++				case 0x183: usage->code = KEY_CONFIG;		break;
++				case 0x18a: usage->code = KEY_MAIL;		break;
++				case 0x192: usage->code = KEY_CALC;		break;
++				case 0x194: usage->code = KEY_FILE;		break;
++				case 0x21a: usage->code = KEY_UNDO;		break;
++				case 0x21b: usage->code = KEY_COPY;		break;
++				case 0x21c: usage->code = KEY_CUT;		break;
++				case 0x21d: usage->code = KEY_PASTE;		break;
++
++				case 0x221: usage->code = KEY_FIND;		break;
++				case 0x223: usage->code = KEY_HOMEPAGE;		break;
++				case 0x224: usage->code = KEY_BACK;		break;
++				case 0x225: usage->code = KEY_FORWARD;		break;
++				case 0x226: usage->code = KEY_STOP;		break;
++				case 0x227: usage->code = KEY_REFRESH;		break;
++				case 0x22a: usage->code = KEY_BOOKMARKS;	break;
++
++				default:    usage->code = KEY_UNKNOWN;		break;
++			}
++
++			if (is_abs) {
++			        usage->type = EV_ABS; bit = input->absbit; max = ABS_MAX;
++			} else  {
++				usage->type = EV_KEY; bit = input->keybit; max = KEY_MAX;
++			}
++			break;
++
++		case HID_UP_HPVENDOR:	/* Reported on a Dutch layout HP5308 */
++
++			set_bit(EV_REP, input->evbit);
++			switch (usage->hid & HID_USAGE) {
++				case 0x021: usage->code = KEY_PRINT;		break;
++				case 0x070: usage->code = KEY_HP;		break;
++				case 0x071: usage->code = KEY_CAMERA;		break;
++				case 0x072: usage->code = KEY_SOUND;		break;
++				case 0x073: usage->code = KEY_QUESTION;		break;
++
++				case 0x080: usage->code = KEY_EMAIL;		break;
++				case 0x081: usage->code = KEY_CHAT;		break;
++				case 0x082: usage->code = KEY_SEARCH;		break;
++				case 0x083: usage->code = KEY_CONNECT;	        break;
++				case 0x084: usage->code = KEY_FINANCE;		break;
++				case 0x085: usage->code = KEY_SPORT;		break;
++				case 0x086: usage->code = KEY_SHOP;		break;
++
++				default:    usage->code = KEY_UNKNOWN;		break;
++
++			}
++
++			usage->type = EV_KEY; bit = input->keybit; max = KEY_MAX;
++			break;
++			
++		case HID_UP_PID:
++
++			usage->type = EV_FF; bit = input->ffbit; max = FF_MAX;
++			
++			switch(usage->hid & HID_USAGE) {
++				case 0x26: set_bit(FF_CONSTANT, input->ffbit); break;
++				case 0x27: set_bit(FF_RAMP,     input->ffbit); break;
++				case 0x28: set_bit(FF_CUSTOM,   input->ffbit); break;
++				case 0x30: set_bit(FF_SQUARE,   input->ffbit);
++				           set_bit(FF_PERIODIC, input->ffbit); break;
++				case 0x31: set_bit(FF_SINE,     input->ffbit);
++				           set_bit(FF_PERIODIC, input->ffbit); break;
++				case 0x32: set_bit(FF_TRIANGLE, input->ffbit);
++				           set_bit(FF_PERIODIC, input->ffbit); break;
++				case 0x33: set_bit(FF_SAW_UP,   input->ffbit);
++				           set_bit(FF_PERIODIC, input->ffbit); break;
++				case 0x34: set_bit(FF_SAW_DOWN, input->ffbit);
++				           set_bit(FF_PERIODIC, input->ffbit); break;
++				case 0x40: set_bit(FF_SPRING,   input->ffbit); break;
++				case 0x41: set_bit(FF_DAMPER,   input->ffbit); break;
++				case 0x42: set_bit(FF_INERTIA , input->ffbit); break;
++				case 0x43: set_bit(FF_FRICTION, input->ffbit); break;
++				case 0x7e: usage->code = FF_GAIN;       break;
++				case 0x83:  /* Simultaneous Effects Max */
++					input->ff_effects_max = (field->value[0]);
++					dbg("Maximum Effects - %d", input->ff_effects_max);
++					break;
++				case 0x98:  /* Device Control */
++					usage->code = FF_AUTOCENTER;    break;
++				case 0xa4:  /* Safety Switch */
++					usage->code = BTN_DEAD;
++					bit = input->keybit;
++					usage->type = EV_KEY;
++					max = KEY_MAX;
++					dbg("Safety Switch Report");
++					break;
++				case 0x9f: /* Device Paused */
++				case 0xa0: /* Actuators Enabled */
++					dbg("Not telling the input API about ");
++					resolv_usage(usage->hid);
++					return;
++			}
++			break;
++		default:
++		unknown:
++			resolv_usage(usage->hid);
++
++			if (field->report_size == 1) {
++
++				if (field->report->type == HID_OUTPUT_REPORT) {
++					usage->code = LED_MISC;
++					usage->type = EV_LED; bit = input->ledbit; max = LED_MAX;
++					break;
++				}
++
++				usage->code = BTN_MISC;
++				usage->type = EV_KEY; bit = input->keybit; max = KEY_MAX;
++				break;
++			}
++
++			if (field->flags & HID_MAIN_ITEM_RELATIVE) {
++				usage->code = REL_MISC;
++				usage->type = EV_REL; bit = input->relbit; max = REL_MAX;
++				break;
++			}
++
++			usage->code = ABS_MISC;
++			usage->type = EV_ABS; bit = input->absbit; max = ABS_MAX;
++			break;
++	}
++
++	set_bit(usage->type, input->evbit);
++	if ((usage->type == EV_REL)
++			&& (device->quirks & HID_QUIRK_2WHEEL_MOUSE_HACK)
++			&& (usage->code == REL_WHEEL)) {
++		set_bit(REL_HWHEEL, bit);
++	}
++
++	while (usage->code <= max && test_and_set_bit(usage->code, bit)) {
++		usage->code = find_next_zero_bit(bit, max + 1, usage->code);
++	}
++
++	if (usage->code > max)
++		return;
++
++	if (usage->type == EV_ABS) {
++		int a = field->logical_minimum;
++		int b = field->logical_maximum;
++
++		if ((device->quirks & HID_QUIRK_BADPAD) && (usage->code == ABS_X || usage->code == ABS_Y)) {
++			a = field->logical_minimum = 0;
++			b = field->logical_maximum = 255;
++		}
++		
++		input->absmin[usage->code] = a;
++		input->absmax[usage->code] = b;
++		input->absfuzz[usage->code] = 0;
++		input->absflat[usage->code] = 0;
++
++		if (field->application == HID_GD_GAMEPAD || field->application == HID_GD_JOYSTICK) {
++			input->absfuzz[usage->code] = (b - a) >> 8;
++			input->absflat[usage->code] = (b - a) >> 4;
++		}
++	}
++
++	if (usage->hat_min != usage->hat_max) {
++		int i;
++		for (i = usage->code; i < usage->code + 2 && i <= max; i++) {
++			input->absmax[i] = 1;
++			input->absmin[i] = -1;
++			input->absfuzz[i] = 0;
++			input->absflat[i] = 0;
++		}
++		set_bit(usage->code + 1, input->absbit);
++	}
++}
++
++static void hidinput_hid_event(struct hid_device *hid, struct hid_field *field, struct hid_usage *usage, __s32 value)
++{
++	struct input_dev *input = find_input(hid, field);
++	unsigned long *quirks = &hid->quirks;
++
++	if (!input)
++		return;
++
++	if ((hid->quirks & HID_QUIRK_2WHEEL_MOUSE_HACK)
++			&& (usage->code == BTN_BACK)) {
++		if (value)
++			hid->quirks |= HID_QUIRK_2WHEEL_MOUSE_HACK_ON;
++		else
++			hid->quirks &= ~HID_QUIRK_2WHEEL_MOUSE_HACK_ON;
++		return;
++	}
++	if ((hid->quirks & HID_QUIRK_2WHEEL_MOUSE_HACK_ON)
++			&& (usage->code == REL_WHEEL)) {
++		input_event(input, usage->type, REL_HWHEEL, value);
++		return;
++	}
++
++	if (usage->hat_min != usage->hat_max) {
++		if (usage->hat_max - usage->hat_min + 1 != 0)
++			value = (value - usage->hat_min) * 8 / (usage->hat_max - usage->hat_min + 1) + 1;
++		if (value < 0 || value > 8) value = 0;
++		input_event(input, usage->type, usage->code    , hid_hat_to_axis[value].x);
++		input_event(input, usage->type, usage->code + 1, hid_hat_to_axis[value].y);
++		return;
++	}
++
++	if (usage->hid == (HID_UP_DIGITIZER | 0x003c)) { /* Invert */
++		*quirks = value ? (*quirks | HID_QUIRK_INVERT) : (*quirks & ~HID_QUIRK_INVERT);
++		return;
++	}
++
++	if (usage->hid == (HID_UP_DIGITIZER | 0x0032)) { /* InRange */
++		if (value) {
++			input_event(input, usage->type, (*quirks & HID_QUIRK_INVERT) ? BTN_TOOL_RUBBER : usage->code, 1);
++			return;
++		}
++		input_event(input, usage->type, usage->code, 0);
++		input_event(input, usage->type, BTN_TOOL_RUBBER, 0);
++		return;
++	}
++
++	if (usage->hid == (HID_UP_DIGITIZER | 0x0030) && (*quirks & HID_QUIRK_NOTOUCH)) { /* Pressure */
++		int a = field->logical_minimum;
++		int b = field->logical_maximum;
++		input_event(input, EV_KEY, BTN_TOUCH, value > a + ((b - a) >> 3));
++	}
++
++	if (usage->hid == (HID_UP_PID | 0x83UL)) { /* Simultaneous Effects Max */
++		input->ff_effects_max = value;
++		dbg("Maximum Effects - %d", input->ff_effects_max);
++		return;
++	}
++	if (usage->hid == (HID_UP_PID | 0x7fUL)) {
++		dbg("PID Pool Report");
++		return;
++	}
++
++	if((usage->type == EV_KEY) && (usage->code == 0)) /* Key 0 is "unassigned", not KEY_UKNOWN */
++		return;
++
++	input_event(input, usage->type, usage->code, value);
++
++	if ((field->flags & HID_MAIN_ITEM_RELATIVE) && (usage->type == EV_KEY))
++		input_event(input, usage->type, usage->code, 0);
++}
++
++static void hidinput_report_event(struct hid_device *hid, struct hid_report *report)
++{
++	struct list_head *lh;
++	struct hid_input *hidinput;
++
++	list_for_each (lh, &hid->inputs) {
++		hidinput = list_entry(lh, struct hid_input, list);
++		input_sync(hidinput->input);
++	}
++}
++
++static int hidinput_input_event(struct input_dev *dev, unsigned int type, unsigned int code, int value)
++{
++	struct hid_device *hid = dev->private;
++	struct hid_field *field = NULL;
++	int offset;
++
++	if ((offset = hid_find_field(hid, type, code, &field)) == -1) {
++		warn("event field not found");
++		return -1;
++	}
++
++	hid_set_field(field, offset, value);
++
++	return hid_submit_report(hid, field->report);
++}
++
++
++static char *hid_types[] = {"Device", "Pointer", "Mouse", "Device", "Joystick",
++				"Gamepad", "Keyboard", "Keypad", "Multi-Axis Controller"};
++
++/*
++ * Register the input device; print a message.
++ * Configure the input layer interface
++ * Read all reports and initialize the absolute field values.
++ */
++
++int hid_register_device(struct hid_device *hid)
++{
++	struct hid_report_enum *report_enum;
++	struct hid_report *report;
++	struct list_head *list;
++	struct hid_input *hidinput = NULL;
++	struct input_dev *input_dev;
++	int i, j, k;
++	char *c;
++
++	if (!hid)
++		return -ENODEV;
++
++	hid_init_reports(hid);
++
++	INIT_LIST_HEAD(&hid->inputs);
++
++	for (i = 0; i < hid->maxcollection; i++)
++		if (hid->collection[i].type == HID_COLLECTION_APPLICATION &&
++		    IS_INPUT_APPLICATION(hid->collection[i].usage))
++			break;
++
++	if (i == hid->maxcollection)
++		return -1;
++
++	for (k = HID_INPUT_REPORT; k <= HID_OUTPUT_REPORT; k++) {
++		report_enum = hid->report_enum + k;
++		list = report_enum->report_list.next;
++		while (list != &report_enum->report_list) {
++			report = (struct hid_report *) list;
++
++			if (!report->maxfield)
++				continue;
++
++			if (!hidinput) {
++				hidinput = kzalloc(sizeof(*hidinput), GFP_KERNEL);
++				input_dev = input_allocate_device();
++				if (!hidinput || !input_dev) {
++					kfree(hidinput);
++					input_free_device(input_dev);
++					err("Out of memory during hid input probe");
++					return -1;
++				}
++
++				input_dev->private = hid;
++				input_dev->event = hidinput_input_event;
++
++				input_dev->name = hid->name;
++				input_dev->phys = hid->phys;
++				input_dev->uniq = hid->uniq;
++				input_dev->id.bustype = hid->bus;
++				input_dev->id.vendor  = hid->vendor;
++				input_dev->id.product = hid->product;
++				input_dev->id.version = hid->version;
++				input_dev->cdev.dev = hid->dev;
++
++				hidinput->input = input_dev;
++				list_add_tail(&hidinput->list, &hid->inputs);
++			}
++
++			for (i = 0; i < report->maxfield; i++)
++				for (j = 0; j < report->field[i]->maxusage; j++)
++					hidinput_configure_usage(hidinput, report->field[i],
++								 report->field[i]->usage + j);
++
++			if (hid->quirks & HID_QUIRK_MULTI_INPUT) {
++				/* This will leave hidinput NULL, so that it
++				 * allocates another one if we have more inputs on
++				 * the same interface. Some devices (e.g. Happ's
++				 * UGCI) cram a lot of unrelated inputs into the
++				 * same interface. */
++				hidinput->report = report;
++				input_register_device(hidinput->input);
++				hidinput = NULL;
++			}
++
++			list = list->next;
++		}
++	}
++
++	/* This only gets called when we are a single-input (most of the
++	 * time). IOW, not a HID_QUIRK_MULTI_INPUT. The hid_ff_init() is
++	 * only useful in this case, and not for multi-input quirks. */
++	if (hidinput)
++		input_register_device(hidinput->input);
++
++	c = "Device";
++	for (i = 0; i < hid->maxcollection; i++) {
++		if (hid->collection[i].type == HID_COLLECTION_APPLICATION &&
++				(hid->collection[i].usage & HID_USAGE_PAGE) == HID_UP_GENDESK &&
++				(hid->collection[i].usage & 0xffff) < ARRAY_SIZE(hid_types)) {
++			c = hid_types[hid->collection[i].usage & 0xffff];
++			break;
++		}
++	}
++
++	dbg("HID: Bluetooth %s %04x:%04x [%s]", c, hid->vendor, hid->product, hid->name);
++
++	return 0;
++}
++
++void hid_unregister_device(struct hid_device *hid)
++{
++	struct list_head *lh, *next;
++	struct hid_input *hidinput;
++
++	if (!hid)
++		return;
++
++	list_for_each_safe (lh, next, &hid->inputs) {
++		hidinput = list_entry(lh, struct hid_input, list);
++		input_unregister_device(hidinput->input);
++		list_del(&hidinput->list);
++		kfree(hidinput);
++	}
++}
+diff -urN linux-2.6.18/net/bluetooth/hidp/hid.h linux-2.6.18-mh8/net/bluetooth/hidp/hid.h
+--- linux-2.6.18/net/bluetooth/hidp/hid.h	1970-01-01 01:00:00.000000000 +0100
++++ linux-2.6.18-mh8/net/bluetooth/hidp/hid.h	2006-11-18 22:26:03.000000000 +0100
+@@ -0,0 +1,352 @@
++/*
++ *
++ *  Human Interface Device driver (HID)
++ *
++ *  Copyright (C) 1999  Andreas Gal
++ *  Copyright (C) 2000-2001  Vojtech Pavlik <vojtech@suse.cz>
++ *  Copyright (C) 2003-2004  Marcel Holtmann <marcel@holtmann.org>
++ *
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++ *
++ */
++
++#ifndef __HID_H
++#define __HID_H
++
++#ifdef DEBUG
++#define dbg(format, arg...) printk(KERN_DEBUG "%s: " format "\n" , __FILE__ , ## arg)
++#else
++#define dbg(format, arg...) do {} while (0)
++#endif
++
++#define err(format, arg...) printk(KERN_ERR "%s: " format "\n" , __FILE__ , ## arg)
++#define info(format, arg...) printk(KERN_INFO "%s: " format "\n" , __FILE__ , ## arg)
++#define warn(format, arg...) printk(KERN_WARNING "%s: " format "\n" , __FILE__ , ## arg)
++
++/*
++ * We parse each description item into this structure. Short items data
++ * values are expanded to 32-bit signed int, long items contain a pointer
++ * into the data area.
++ */
++
++struct hid_item {
++	unsigned  format;
++	__u8      size;
++	__u8      type;
++	__u8      tag;
++	union {
++	    __u8   u8;
++	    __s8   s8;
++	    __u16  u16;
++	    __s16  s16;
++	    __u32  u32;
++	    __s32  s32;
++	    __u8  *longdata;
++	} data;
++};
++
++/*
++ * HID report item format
++ */
++
++#define HID_ITEM_FORMAT_SHORT	0
++#define HID_ITEM_FORMAT_LONG	1
++
++/*
++ * Special tag indicating long items
++ */
++
++#define HID_ITEM_TAG_LONG	15
++
++/*
++ * HID report descriptor item type (prefix bit 2,3)
++ */
++
++#define HID_ITEM_TYPE_MAIN		0
++#define HID_ITEM_TYPE_GLOBAL		1
++#define HID_ITEM_TYPE_LOCAL		2
++#define HID_ITEM_TYPE_RESERVED		3
++
++/*
++ * HID report descriptor main item tags
++ */
++
++#define HID_MAIN_ITEM_TAG_INPUT			8
++#define HID_MAIN_ITEM_TAG_OUTPUT		9
++#define HID_MAIN_ITEM_TAG_FEATURE		11
++#define HID_MAIN_ITEM_TAG_BEGIN_COLLECTION	10
++#define HID_MAIN_ITEM_TAG_END_COLLECTION	12
++
++/*
++ * HID report descriptor main item contents
++ */
++
++#define HID_MAIN_ITEM_CONSTANT		0x001
++#define HID_MAIN_ITEM_VARIABLE		0x002
++#define HID_MAIN_ITEM_RELATIVE		0x004
++#define HID_MAIN_ITEM_WRAP		0x008	
++#define HID_MAIN_ITEM_NONLINEAR		0x010
++#define HID_MAIN_ITEM_NO_PREFERRED	0x020
++#define HID_MAIN_ITEM_NULL_STATE	0x040
++#define HID_MAIN_ITEM_VOLATILE		0x080
++#define HID_MAIN_ITEM_BUFFERED_BYTE	0x100
++
++/*
++ * HID report descriptor collection item types
++ */
++
++#define HID_COLLECTION_PHYSICAL		0
++#define HID_COLLECTION_APPLICATION	1
++#define HID_COLLECTION_LOGICAL		2
++
++/*
++ * HID report descriptor global item tags
++ */
++
++#define HID_GLOBAL_ITEM_TAG_USAGE_PAGE		0
++#define HID_GLOBAL_ITEM_TAG_LOGICAL_MINIMUM	1
++#define HID_GLOBAL_ITEM_TAG_LOGICAL_MAXIMUM	2
++#define HID_GLOBAL_ITEM_TAG_PHYSICAL_MINIMUM	3
++#define HID_GLOBAL_ITEM_TAG_PHYSICAL_MAXIMUM	4
++#define HID_GLOBAL_ITEM_TAG_UNIT_EXPONENT	5
++#define HID_GLOBAL_ITEM_TAG_UNIT		6
++#define HID_GLOBAL_ITEM_TAG_REPORT_SIZE		7
++#define HID_GLOBAL_ITEM_TAG_REPORT_ID		8
++#define HID_GLOBAL_ITEM_TAG_REPORT_COUNT	9
++#define HID_GLOBAL_ITEM_TAG_PUSH		10
++#define HID_GLOBAL_ITEM_TAG_POP			11
++
++/*
++ * HID report descriptor local item tags
++ */
++
++#define HID_LOCAL_ITEM_TAG_USAGE		0
++#define HID_LOCAL_ITEM_TAG_USAGE_MINIMUM	1
++#define HID_LOCAL_ITEM_TAG_USAGE_MAXIMUM	2
++#define HID_LOCAL_ITEM_TAG_DESIGNATOR_INDEX	3
++#define HID_LOCAL_ITEM_TAG_DESIGNATOR_MINIMUM	4
++#define HID_LOCAL_ITEM_TAG_DESIGNATOR_MAXIMUM	5
++#define HID_LOCAL_ITEM_TAG_STRING_INDEX		7
++#define HID_LOCAL_ITEM_TAG_STRING_MINIMUM	8
++#define HID_LOCAL_ITEM_TAG_STRING_MAXIMUM	9
++#define HID_LOCAL_ITEM_TAG_DELIMITER		10
++
++/*
++ * HID usage tables
++ */
++
++#define HID_USAGE_PAGE		0xffff0000
++
++#define HID_UP_GENDESK 		0x00010000
++#define HID_UP_KEYBOARD 	0x00070000
++#define HID_UP_LED 		0x00080000
++#define HID_UP_BUTTON 		0x00090000
++#define HID_UP_ORDINAL 		0x000a0000
++#define HID_UP_CONSUMER		0x000c0000
++#define HID_UP_DIGITIZER 	0x000d0000
++#define HID_UP_PID 		0x000f0000
++#define HID_UP_HPVENDOR         0xff7f0000
++
++#define HID_USAGE		0x0000ffff
++
++#define HID_GD_POINTER		0x00010001
++#define HID_GD_MOUSE		0x00010002
++#define HID_GD_JOYSTICK		0x00010004
++#define HID_GD_GAMEPAD		0x00010005
++#define HID_GD_HATSWITCH	0x00010039
++
++/*
++ * HID report types --- Ouch! HID spec says 1 2 3!
++ */
++
++#define HID_INPUT_REPORT	0
++#define HID_OUTPUT_REPORT	1
++#define HID_FEATURE_REPORT	2
++
++/*
++ * HID device quirks.
++ */
++
++#define HID_QUIRK_INVERT		0x001
++#define HID_QUIRK_NOTOUCH		0x002
++#define HID_QUIRK_IGNORE		0x004
++#define HID_QUIRK_NOGET			0x008
++#define HID_QUIRK_HIDDEV		0x010
++#define HID_QUIRK_BADPAD		0x020
++#define HID_QUIRK_MULTI_INPUT		0x040
++#define HID_QUIRK_2WHEEL_MOUSE_HACK	0x080
++#define HID_QUIRK_2WHEEL_MOUSE_HACK_ON	0x100
++
++/*
++ * This is the global environment of the parser. This information is
++ * persistent for main-items. The global environment can be saved and
++ * restored with PUSH/POP statements.
++ */
++
++struct hid_global {
++	unsigned usage_page;
++	__s32    logical_minimum;
++	__s32    logical_maximum;
++	__s32    physical_minimum;
++	__s32    physical_maximum;
++	__s32    unit_exponent;
++	unsigned unit;
++	unsigned report_id;
++	unsigned report_size;
++	unsigned report_count;
++};
++
++/*
++ * This is the local environment. It is persistent up the next main-item.
++ */
++
++#define HID_MAX_DESCRIPTOR_SIZE		4096
++#define HID_MAX_USAGES			1024
++#define HID_DEFAULT_NUM_COLLECTIONS	16
++
++struct hid_local {
++	unsigned usage[HID_MAX_USAGES]; /* usage array */
++	unsigned collection_index[HID_MAX_USAGES]; /* collection index array */
++	unsigned usage_index;
++	unsigned usage_minimum;
++	unsigned delimiter_depth;
++	unsigned delimiter_branch;
++};
++
++/*
++ * This is the collection stack. We climb up the stack to determine
++ * application and function of each field.
++ */
++
++struct hid_collection {
++	unsigned type;
++	unsigned usage;
++	unsigned level;
++};
++
++struct hid_usage {
++	unsigned  hid;			/* hid usage code */
++	unsigned  collection_index;	/* index into collection array */
++	__u16     code;			/* input driver code */
++	__u8      type;			/* input driver type */
++	__s8	  hat_min;		/* hat switch fun */
++	__s8	  hat_max;		/* ditto */
++};
++
++struct hid_field {
++	unsigned  physical;		/* physical usage for this field */
++	unsigned  logical;		/* logical usage for this field */
++	unsigned  application;		/* application usage for this field */
++	struct hid_usage *usage;	/* usage table for this function */
++	unsigned  maxusage;		/* maximum usage index */
++	unsigned  flags;		/* main-item flags (i.e. volatile,array,constant) */
++	unsigned  report_offset;	/* bit offset in the report */
++	unsigned  report_size;		/* size of this field in the report */
++	unsigned  report_count;		/* number of this field in the report */
++	unsigned  report_type;		/* (input,output,feature) */
++	__s32    *value;		/* last known value(s) */
++	__s32     logical_minimum;
++	__s32     logical_maximum;
++	__s32     physical_minimum;
++	__s32     physical_maximum;
++	__s32     unit_exponent;
++	unsigned  unit;
++	struct hid_report *report;	/* associated report */
++	unsigned index;			/* index into report->field[] */
++};
++
++#define HID_MAX_FIELDS 64
++
++struct hid_report {
++	struct list_head list;
++	unsigned id;					/* id of this report */
++	unsigned type;					/* report type */
++	struct hid_field *field[HID_MAX_FIELDS];	/* fields of the report */
++	unsigned maxfield;				/* maximum valid field index */
++	unsigned size;					/* size of the report (bits) */
++	struct hid_device *device;			/* associated device */
++};
++
++struct hid_report_enum {
++	unsigned numbered;
++	struct list_head report_list;
++	struct hid_report *report_id_hash[256];
++};
++
++#define HID_REPORT_TYPES 3
++
++struct hid_input {
++	struct list_head list;
++	struct hid_report *report;
++	struct input_dev *input;
++};
++
++struct hid_device {						/* device report descriptor */
++	 __u8 *rdesc;
++	unsigned rsize;
++	struct hid_collection *collection;			/* List of HID collections */
++	unsigned collection_size;				/* Number of allocated hid_collections */
++	unsigned maxcollection;					/* Number of parsed collections */
++	unsigned maxapplication;				/* Number of applications */
++	unsigned parser_version;				/* HID parser version */
++	unsigned country_code;					/* HID country code */
++	struct hid_report_enum report_enum[HID_REPORT_TYPES];
++
++	unsigned long quirks;					/* Various quirks the device can pull on us */
++
++	struct list_head inputs;				/* The list of inputs */
++
++	char name[128];						/* Device name */
++	char phys[64];						/* Device physical location */
++	char uniq[64];						/* Device unique identifier (serial #) */
++
++	unsigned short bus;
++	unsigned short vendor;
++	unsigned short product;
++	unsigned short version;
++
++	struct device *dev;
++
++	void *driver_data;
++
++	int (*send)(struct hid_device *device, unsigned char *data, int size);
++};
++
++#define HID_GLOBAL_STACK_SIZE 4
++#define HID_COLLECTION_STACK_SIZE 4
++
++struct hid_parser {
++	struct hid_global     global;
++	struct hid_global     global_stack[HID_GLOBAL_STACK_SIZE];
++	unsigned              global_stack_ptr;
++	struct hid_local      local;
++	unsigned              collection_stack[HID_COLLECTION_STACK_SIZE];
++	unsigned              collection_stack_ptr;
++	struct hid_device    *device;
++};
++
++#define hid_dump_input(a,b)	do { } while (0)
++#define hid_dump_device(c)	do { } while (0)
++#define hid_dump_field(a,b)	do { } while (0)
++#define resolv_usage(a)		do { } while (0)
++
++struct hid_device *hid_alloc_device(u8 *data, int size);
++void hid_free_device(struct hid_device *device);
++int hid_register_device(struct hid_device *device);
++void hid_unregister_device(struct hid_device *device);
++int hid_recv_report(struct hid_device *hid, int type, u8 *data, int size);
++
++#endif /* __HID_H */
+diff -urN linux-2.6.18/net/bluetooth/hidp/hidp.h linux-2.6.18-mh8/net/bluetooth/hidp/hidp.h
+--- linux-2.6.18/net/bluetooth/hidp/hidp.h	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18-mh8/net/bluetooth/hidp/hidp.h	2006-11-18 22:26:03.000000000 +0100
+@@ -86,7 +86,7 @@
+ 	int   intr_sock;	// Connteted interrupt socket
+ 	__u16 parser;
+ 	__u16 rd_size;
+-	__u8 *rd_data;
++	__u8  __user *rd_data;
+ 	__u8  country;
+ 	__u8  subclass;
+ 	__u16 vendor;
+@@ -143,7 +143,8 @@
+ 	unsigned char keys[8];
+ 	unsigned char leds;
+ 
+-	struct input_dev *input;
++	struct input_dev  *input;
++	struct hid_device *hid;
+ 
+ 	struct timer_list timer;
+ 
+diff -urN linux-2.6.18/net/bluetooth/hidp/Makefile linux-2.6.18-mh8/net/bluetooth/hidp/Makefile
+--- linux-2.6.18/net/bluetooth/hidp/Makefile	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18-mh8/net/bluetooth/hidp/Makefile	2006-11-18 22:26:03.000000000 +0100
+@@ -4,4 +4,4 @@
+ 
+ obj-$(CONFIG_BT_HIDP) += hidp.o
+ 
+-hidp-objs := core.o sock.o
++hidp-objs := core.o sock.o hid.o
+diff -urN linux-2.6.18/net/bluetooth/hidp/sock.c linux-2.6.18-mh8/net/bluetooth/hidp/sock.c
+--- linux-2.6.18/net/bluetooth/hidp/sock.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18-mh8/net/bluetooth/hidp/sock.c	2006-11-18 22:26:02.000000000 +0100
+@@ -35,6 +35,7 @@
+ #include <linux/ioctl.h>
+ #include <linux/file.h>
+ #include <linux/init.h>
++#include <linux/compat.h>
+ #include <net/sock.h>
+ 
+ #include "hidp.h"
+@@ -143,11 +144,88 @@
+ 	return -EINVAL;
+ }
+ 
++#ifdef CONFIG_COMPAT
++struct compat_hidp_connadd_req {
++	int   ctrl_sock;	// Connected control socket
++	int   intr_sock;	// Connteted interrupt socket
++	__u16 parser;
++	__u16 rd_size;
++	compat_uptr_t rd_data;
++	__u8  country;
++	__u8  subclass;
++	__u16 vendor;
++	__u16 product;
++	__u16 version;
++	__u32 flags;
++	__u32 idle_to;
++	char  name[128];
++};
++
++static int hidp_sock_compat_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
++{
++	if (cmd == HIDPGETCONNLIST) {
++		struct hidp_connlist_req cl;
++		uint32_t uci;
++		int err;
++
++		if (get_user(cl.cnum, (uint32_t __user *) arg) ||
++				get_user(uci, (u32 __user *) (arg + 4)))
++			return -EFAULT;
++
++		cl.ci = compat_ptr(uci);
++
++		if (cl.cnum <= 0)
++			return -EINVAL;
++
++		err = hidp_get_connlist(&cl);
++
++		if (!err && put_user(cl.cnum, (uint32_t __user *) arg))
++			err = -EFAULT;
++
++		return err;
++	} else if (cmd == HIDPCONNADD) {
++		struct compat_hidp_connadd_req ca;
++		struct hidp_connadd_req __user *uca;
++
++		uca = compat_alloc_user_space(sizeof(*uca));
++
++		if (copy_from_user(&ca, (void *) arg, sizeof(ca)))
++			return -EFAULT;
++
++		if (put_user(ca.ctrl_sock, &uca->ctrl_sock) ||
++				put_user(ca.intr_sock, &uca->intr_sock) ||
++				put_user(ca.parser, &uca->parser) ||
++				put_user(ca.rd_size, &uca->parser) ||
++				put_user(compat_ptr(ca.rd_data), &uca->rd_data) ||
++				put_user(ca.country, &uca->country) ||
++				put_user(ca.subclass, &uca->subclass) ||
++				put_user(ca.vendor, &uca->vendor) ||
++				put_user(ca.product, &uca->product) ||
++				put_user(ca.version, &uca->version) ||
++				put_user(ca.flags, &uca->flags) ||
++				put_user(ca.idle_to, &uca->idle_to) ||
++				copy_to_user(&uca->name[0], &ca.name[0], 128))
++			return -EFAULT;
++		
++		arg = (unsigned long) uca;
++
++		/* Fall through. We don't actually write back any _changes_
++		   to the structure anyway, so there's no need to copy back
++		   into the original compat version */
++	}
++
++	return hidp_sock_ioctl(sock, cmd, arg);
++}
++#endif
++
+ static const struct proto_ops hidp_sock_ops = {
+ 	.family		= PF_BLUETOOTH,
+ 	.owner		= THIS_MODULE,
+ 	.release	= hidp_sock_release,
+ 	.ioctl		= hidp_sock_ioctl,
++#ifdef CONFIG_COMPAT
++	.compat_ioctl	= hidp_sock_compat_ioctl,
++#endif
+ 	.bind		= sock_no_bind,
+ 	.getname	= sock_no_getname,
+ 	.sendmsg	= sock_no_sendmsg,
+@@ -178,7 +256,7 @@
+ 	if (sock->type != SOCK_RAW)
+ 		return -ESOCKTNOSUPPORT;
+ 
+-	sk = sk_alloc(PF_BLUETOOTH, GFP_KERNEL, &hidp_proto, 1);
++	sk = sk_alloc(PF_BLUETOOTH, GFP_ATOMIC, &hidp_proto, 1);
+ 	if (!sk)
+ 		return -ENOMEM;
+ 
+diff -urN linux-2.6.18/net/bluetooth/l2cap.c linux-2.6.18-mh8/net/bluetooth/l2cap.c
+--- linux-2.6.18/net/bluetooth/l2cap.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18-mh8/net/bluetooth/l2cap.c	2006-11-18 22:26:03.000000000 +0100
+@@ -559,7 +559,7 @@
+ 
+ 	sock->ops = &l2cap_sock_ops;
+ 
+-	sk = l2cap_sock_alloc(sock, protocol, GFP_KERNEL);
++	sk = l2cap_sock_alloc(sock, protocol, GFP_ATOMIC);
+ 	if (!sk)
+ 		return -ENOMEM;
+ 
+@@ -1353,12 +1353,12 @@
+ 
+ 	/* Configure output options and let the other side know
+ 	 * which ones we don't like. */
+-	if (pi->conf_mtu < pi->omtu) {
+-		l2cap_add_conf_opt(ptr, L2CAP_CONF_MTU, 2, pi->omtu);
++	if (pi->conf_mtu < pi->omtu)
+ 		result = L2CAP_CONF_UNACCEPT;
+-	} else {
++	else
+ 		pi->omtu = pi->conf_mtu;
+-	}
++
++	l2cap_add_conf_opt(ptr, L2CAP_CONF_MTU, 2, pi->omtu);
+ 
+ 	BT_DBG("sk %p result %d", sk, result);
+ 	return result;
+@@ -1533,6 +1533,9 @@
+ 	if (!(sk = l2cap_get_chan_by_scid(&conn->chan_list, dcid)))
+ 		return -ENOENT;
+ 
++	if (sk->sk_state == BT_DISCONN)
++		goto unlock;
++
+ 	l2cap_parse_conf_req(sk, req->data, cmd->len - sizeof(*req));
+ 
+ 	if (flags & 0x0001) {
+@@ -2216,7 +2219,8 @@
+ 		goto error;
+ 	}
+ 
+-	class_create_file(bt_class, &class_attr_l2cap);
++	if (class_create_file(bt_class, &class_attr_l2cap) < 0)
++		BT_ERR("Failed to create L2CAP info file");
+ 
+ 	BT_INFO("L2CAP ver %s", VERSION);
+ 	BT_INFO("L2CAP socket layer initialized");
+diff -urN linux-2.6.18/net/bluetooth/rfcomm/core.c linux-2.6.18-mh8/net/bluetooth/rfcomm/core.c
+--- linux-2.6.18/net/bluetooth/rfcomm/core.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18-mh8/net/bluetooth/rfcomm/core.c	2006-11-18 22:26:01.000000000 +0100
+@@ -644,7 +644,7 @@
+ 	addr.l2_family = AF_BLUETOOTH;
+ 	addr.l2_psm    = htobs(RFCOMM_PSM);
+ 	*err = sock->ops->connect(sock, (struct sockaddr *) &addr, sizeof(addr), O_NONBLOCK);
+-	if (*err == 0 || *err == -EAGAIN)
++	if (*err == 0 || *err == -EINPROGRESS)
+ 		return s;
+ 
+ 	rfcomm_session_del(s);
+@@ -2058,7 +2058,8 @@
+ 
+ 	kernel_thread(rfcomm_run, NULL, CLONE_KERNEL);
+ 
+-	class_create_file(bt_class, &class_attr_rfcomm_dlc);
++	if (class_create_file(bt_class, &class_attr_rfcomm_dlc) < 0)
++		BT_ERR("Failed to create RFCOMM info file");
+ 
+ 	rfcomm_init_sockets();
+ 
+diff -urN linux-2.6.18/net/bluetooth/rfcomm/sock.c linux-2.6.18-mh8/net/bluetooth/rfcomm/sock.c
+--- linux-2.6.18/net/bluetooth/rfcomm/sock.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18-mh8/net/bluetooth/rfcomm/sock.c	2006-11-18 22:26:02.000000000 +0100
+@@ -336,7 +336,8 @@
+ 
+ 	sock->ops = &rfcomm_sock_ops;
+ 
+-	if (!(sk = rfcomm_sock_alloc(sock, protocol, GFP_KERNEL)))
++	sk = rfcomm_sock_alloc(sock, protocol, GFP_ATOMIC);
++	if (!sk)
+ 		return -ENOMEM;
+ 
+ 	rfcomm_sock_init(sk, NULL);
+@@ -944,7 +945,8 @@
+ 	if (err < 0)
+ 		goto error;
+ 
+-	class_create_file(bt_class, &class_attr_rfcomm);
++	if (class_create_file(bt_class, &class_attr_rfcomm) < 0)
++		BT_ERR("Failed to create RFCOMM info file");
+ 
+ 	BT_INFO("RFCOMM socket layer initialized");
+ 
+diff -urN linux-2.6.18/net/bluetooth/rfcomm/tty.c linux-2.6.18-mh8/net/bluetooth/rfcomm/tty.c
+--- linux-2.6.18/net/bluetooth/rfcomm/tty.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18-mh8/net/bluetooth/rfcomm/tty.c	2006-11-18 22:26:03.000000000 +0100
+@@ -38,6 +38,7 @@
+ #include <linux/skbuff.h>
+ 
+ #include <net/bluetooth/bluetooth.h>
++#include <net/bluetooth/hci_core.h>
+ #include <net/bluetooth/rfcomm.h>
+ 
+ #ifndef CONFIG_BT_RFCOMM_DEBUG
+@@ -161,6 +162,22 @@
+ 	return dev;
+ }
+ 
++static struct device *rfcomm_get_device(struct rfcomm_dev *dev)
++{
++	struct hci_dev *hdev;
++	struct hci_conn *conn;
++
++	hdev = hci_get_route(&dev->dst, &dev->src);
++	if (!hdev)
++		return NULL;
++
++	conn = hci_conn_hash_lookup_ba(hdev, ACL_LINK, &dev->dst);
++
++	hci_dev_put(hdev);
++
++	return conn ? &conn->dev : NULL;
++}
++
+ static int rfcomm_dev_add(struct rfcomm_dev_req *req, struct rfcomm_dlc *dlc)
+ {
+ 	struct rfcomm_dev *dev;
+@@ -244,7 +261,7 @@
+ 		return err;
+ 	}
+ 
+-	tty_register_device(rfcomm_tty_driver, dev->id, NULL);
++	tty_register_device(rfcomm_tty_driver, dev->id, rfcomm_get_device(dev));
+ 
+ 	return dev->id;
+ }
+@@ -748,6 +765,9 @@
+ 
+ 	BT_DBG("tty %p termios %p", tty, old);
+ 
++	if (!dev || !dev->dlc || !dev->dlc->session)
++		return;
++
+ 	/* Handle turning off CRTSCTS */
+ 	if ((old->c_cflag & CRTSCTS) && !(new->c_cflag & CRTSCTS)) 
+ 		BT_DBG("Turning off CRTSCTS unsupported");
+diff -urN linux-2.6.18/net/bluetooth/sco.c linux-2.6.18-mh8/net/bluetooth/sco.c
+--- linux-2.6.18/net/bluetooth/sco.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18-mh8/net/bluetooth/sco.c	2006-11-18 22:26:02.000000000 +0100
+@@ -452,7 +452,8 @@
+ 
+ 	sock->ops = &sco_sock_ops;
+ 
+-	if (!(sk = sco_sock_alloc(sock, protocol, GFP_KERNEL)))
++	sk = sco_sock_alloc(sock, protocol, GFP_ATOMIC);
++	if (!sk)
+ 		return -ENOMEM;
+ 
+ 	sco_sock_init(sk, NULL);
+@@ -967,7 +968,8 @@
+ 		goto error;
+ 	}
+ 
+-	class_create_file(bt_class, &class_attr_sco);
++	if (class_create_file(bt_class, &class_attr_sco) < 0)
++		BT_ERR("Failed to create SCO info file");
+ 
+ 	BT_INFO("SCO (Voice Link) ver %s", VERSION);
+ 	BT_INFO("SCO socket layer initialized");

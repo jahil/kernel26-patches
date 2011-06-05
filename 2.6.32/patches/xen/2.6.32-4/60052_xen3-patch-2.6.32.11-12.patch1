@@ -1,0 +1,110 @@
+From: Greg Kroah-Hartman <gregkh@suse.de>
+Subject: Linux 2.6.32.12
+Patch-mainline: 2.6.32.12
+
+Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+
+Automatically created from "patches.kernel.org/patch-2.6.32.11-12" by xen-port-patches.py
+
+--- sle11sp1-2010-05-20.orig/arch/x86/include/mach-xen/asm/smp.h	2009-11-20 11:18:10.000000000 +0100
++++ sle11sp1-2010-05-20/arch/x86/include/mach-xen/asm/smp.h	2010-04-26 11:32:06.000000000 +0200
+@@ -135,6 +135,8 @@ int native_cpu_disable(void);
+ void native_cpu_die(unsigned int cpu);
+ void native_play_dead(void);
+ void play_dead_common(void);
++void wbinvd_on_cpu(int cpu);
++int wbinvd_on_all_cpus(void);
+ 
+ #else /* CONFIG_XEN */
+ 
+@@ -162,8 +164,19 @@ static inline int num_booting_cpus(void)
+ {
+ 	return cpumask_weight(cpu_callout_mask);
+ }
++#elif /* !CONFIG_SMP && */ !defined(CONFIG_XEN)
++#define wbinvd_on_cpu(cpu)     wbinvd()
++static inline int wbinvd_on_all_cpus(void)
++{
++	wbinvd();
++	return 0;
++}
+ #endif /* CONFIG_SMP */
+ 
++#ifdef CONFIG_XEN
++int wbinvd_on_all_cpus(void);
++#endif
++
+ extern unsigned disabled_cpus __cpuinitdata;
+ 
+ #include <asm/smp-processor-id.h>
+--- sle11sp1-2010-05-20.orig/arch/x86/kernel/cpu/intel_cacheinfo.c	2010-05-07 11:21:58.000000000 +0200
++++ sle11sp1-2010-05-20/arch/x86/kernel/cpu/intel_cacheinfo.c	2010-05-20 11:30:31.000000000 +0200
+@@ -299,7 +299,7 @@ struct _cache_attr {
+ 	ssize_t (*store)(struct _cpuid4_info *, const char *, size_t count);
+ };
+ 
+-#ifdef CONFIG_CPU_SUP_AMD
++#if defined(CONFIG_CPU_SUP_AMD) && !defined(CONFIG_XEN)
+ static unsigned int __cpuinit amd_calc_l3_indices(void)
+ {
+ 	/*
+@@ -871,7 +871,7 @@ static struct attribute *default_attrs[]
+ 
+ static struct attribute *default_l3_attrs[] = {
+ 	DEFAULT_SYSFS_CACHE_ATTRS,
+-#ifdef CONFIG_CPU_SUP_AMD
++#if defined(CONFIG_CPU_SUP_AMD) && !defined(CONFIG_XEN)
+ 	&cache_disable_0.attr,
+ 	&cache_disable_1.attr,
+ #endif
+--- sle11sp1-2010-05-20.orig/arch/x86/lib/Makefile	2010-03-29 09:06:18.000000000 +0200
++++ sle11sp1-2010-05-20/arch/x86/lib/Makefile	2010-04-26 11:34:51.000000000 +0200
+@@ -3,6 +3,7 @@
+ #
+ 
+ obj-$(CONFIG_SMP) += msr-smp.o cache-smp.o
++obj-$(CONFIG_XEN) += cache-smp.o
+ 
+ lib-y := delay.o
+ lib-y += thunk_$(BITS).o
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ sle11sp1-2010-05-20/arch/x86/lib/cache-smp-xen.c	2010-05-07 11:12:27.000000000 +0200
+@@ -0,0 +1,27 @@
++#include <linux/smp.h>
++#include <linux/module.h>
++#include <asm/hypervisor.h>
++
++static void __wbinvd(void *dummy)
++{
++	wbinvd();
++}
++
++#ifndef CONFIG_XEN /* XXX Needs hypervisor support. */
++void wbinvd_on_cpu(int cpu)
++{
++	smp_call_function_single(cpu, __wbinvd, NULL, 1);
++}
++EXPORT_SYMBOL(wbinvd_on_cpu);
++#endif
++
++int wbinvd_on_all_cpus(void)
++{
++	struct mmuext_op op = { .cmd = MMUEXT_FLUSH_CACHE_GLOBAL };
++
++	if (HYPERVISOR_mmuext_op(&op, 1, NULL, DOMID_SELF) == 0)
++		return 0;
++	/* Best effort as fallback. */
++	return on_each_cpu(__wbinvd, NULL, 1);
++}
++EXPORT_SYMBOL(wbinvd_on_all_cpus);
+--- sle11sp1-2010-05-20.orig/arch/x86/pci/irq-xen.c	2009-11-06 10:52:09.000000000 +0100
++++ sle11sp1-2010-05-20/arch/x86/pci/irq-xen.c	2010-04-26 10:41:20.000000000 +0200
+@@ -596,6 +596,8 @@ static __init int intel_router_probe(str
+ 	case PCI_DEVICE_ID_INTEL_ICH10_1:
+ 	case PCI_DEVICE_ID_INTEL_ICH10_2:
+ 	case PCI_DEVICE_ID_INTEL_ICH10_3:
++	case PCI_DEVICE_ID_INTEL_CPT_LPC1:
++	case PCI_DEVICE_ID_INTEL_CPT_LPC2:
+ 		r->name = "PIIX/ICH";
+ 		r->get = pirq_piix_get;
+ 		r->set = pirq_piix_set;

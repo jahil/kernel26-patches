@@ -1,0 +1,758 @@
+diff --git a/include/linux/netfilter_ipv4/ip_conntrack.h b/include/linux/netfilter_ipv4/ip_conntrack.h
+index 64e8680..4e54794 100644
+--- a/include/linux/netfilter_ipv4/ip_conntrack.h
++++ b/include/linux/netfilter_ipv4/ip_conntrack.h
+@@ -164,6 +164,11 @@ #ifdef CONFIG_IP_NF_NAT_NEEDED
+ 	/* Direction relative to the master connection. */
+ 	enum ip_conntrack_dir dir;
+ #endif
++
++#ifdef CONFIG_IP_NF_NAT_NRES
++	/* List of registered reservations */
++	struct list_head reserved_list;
++#endif
+ };
+ 
+ #define IP_CT_EXPECT_PERMANENT	0x1
+@@ -239,6 +244,10 @@ extern void ip_conntrack_tcp_update(stru
+ 
+ /* Call me when a conntrack is destroyed. */
+ extern void (*ip_conntrack_destroyed)(struct ip_conntrack *conntrack);
++#ifdef CONFIG_IP_NF_NAT_NRES
++/* Call when an expectation is destroyed. */
++extern void (*ip_conntrack_expect_destroyed)(struct ip_conntrack_expect *exp);
++#endif
+ 
+ /* Fake conntrack entry for untracked connections */
+ extern struct ip_conntrack ip_conntrack_untracked;
+diff --git a/include/linux/netfilter_ipv4/ip_nat.h b/include/linux/netfilter_ipv4/ip_nat.h
+index bdf5536..ce11962 100644
+--- a/include/linux/netfilter_ipv4/ip_nat.h
++++ b/include/linux/netfilter_ipv4/ip_nat.h
+@@ -17,6 +17,10 @@ #define HOOK2MANIP(hooknum) ((hooknum) !
+ #define IP_NAT_RANGE_MAP_IPS 1
+ #define IP_NAT_RANGE_PROTO_SPECIFIED 2
+ 
++#ifdef CONFIG_IP_NF_NAT_NRES
++#define IP_NAT_RANGE_USE_RESERVED 8
++#endif
++
+ /* NAT sequence number modifications */
+ struct ip_nat_seq {
+ 	/* position of the last TCP sequence number 
+@@ -63,6 +67,18 @@ struct ip_nat_info
+ 
+ struct ip_conntrack;
+ 
++#ifdef CONFIG_IP_NF_NAT_NRES
++/* Structure to store reserved manips */
++struct ip_nat_reserved {
++	struct list_head hash;			/* Hash chain */
++	struct list_head exp;			/* Per-expectation list */
++	atomic_t use;				/* Reference count */
++	struct ip_conntrack_manip manip;	/* Reserved manip */
++	struct ip_conntrack_manip peer;		/* Peer (optional) */
++	u_int16_t proto;			/* Protocol number of reserved manip */
++};
++#endif
++
+ /* Set up the info structure to map into this range. */
+ extern unsigned int ip_nat_setup_info(struct ip_conntrack *conntrack,
+ 				      const struct ip_nat_range *range,
+@@ -70,7 +86,39 @@ extern unsigned int ip_nat_setup_info(st
+ 
+ /* Is this tuple already taken? (not by us)*/
+ extern int ip_nat_used_tuple(const struct ip_conntrack_tuple *tuple,
+-			     const struct ip_conntrack *ignored_conntrack);
++			     const struct ip_conntrack *ignored_conntrack,
++			     const enum ip_nat_manip_type maniptype,
++			     const unsigned int flags);
++
++#ifdef CONFIG_IP_NF_NAT_NRES
++struct ip_conntrack_expect;
++
++/* NAT port reservation: allocate and hash a new entry */
++extern struct ip_nat_reserved *__ip_nat_reserved_new_hash(const struct ip_conntrack_manip *manip,
++					 const u_int16_t proto, const struct ip_conntrack_manip *peer);
++
++/* NAT port reservation: unhash an entry */
++extern struct ip_nat_reserved *__ip_nat_reserved_unhash(const struct ip_conntrack_manip *manip,
++				       const u_int16_t proto, const struct ip_conntrack_manip *peer);
++
++/* NAT port reservation: free a reservation */
++extern void __ip_nat_reserved_free(struct ip_nat_reserved *res);
++
++/* NAT port reservation: register a new reservation */
++extern int ip_nat_reserved_register(struct ip_conntrack_expect *exp,
++				    const struct ip_conntrack_manip *manip,
++				    const u_int16_t proto,
++				    const struct ip_conntrack_manip *peer);
++
++/* NAT port reservation: unregister a reservation */
++extern int ip_nat_reserved_unregister(struct ip_conntrack_expect *exp,
++				      const struct ip_conntrack_manip *manip,
++				      const u_int16_t proto,
++				      const struct ip_conntrack_manip *peer);
++
++/* NAT port reservation: unregister all reservations for a given expectation */
++extern void ip_nat_reserved_unregister_all(struct ip_conntrack_expect *exp);
++#endif /*CONFIG_IP_NF_NAT_NRES*/
+ 
+ #else  /* !__KERNEL__: iptables wants this to compile. */
+ #define ip_nat_multi_range ip_nat_multi_range_compat
+diff --git a/net/ipv4/netfilter/Kconfig b/net/ipv4/netfilter/Kconfig
+index d88c292..3259652 100644
+--- a/net/ipv4/netfilter/Kconfig
++++ b/net/ipv4/netfilter/Kconfig
+@@ -463,6 +463,16 @@ config IP_NF_TARGET_SAME
+ 
+ 	  To compile it as a module, choose M here.  If unsure, say N.
+ 
++config IP_NF_NAT_NRES
++	bool "NAT reservations support"
++	depends on IP_NF_NAT
++	help
++	  This option enables support for NAT reservations. This makes
++	  transparent proxying more reliable, but unneeded if you don't
++	  need TProxy support.
++
++	  If unsure, say 'N'.
++
+ config IP_NF_NAT_SNMP_BASIC
+ 	tristate "Basic SNMP-ALG support (EXPERIMENTAL)"
+ 	depends on EXPERIMENTAL && IP_NF_NAT
+diff --git a/net/ipv4/netfilter/ip_conntrack_core.c b/net/ipv4/netfilter/ip_conntrack_core.c
+index 8b848aa..d6df7e9 100644
+--- a/net/ipv4/netfilter/ip_conntrack_core.c
++++ b/net/ipv4/netfilter/ip_conntrack_core.c
+@@ -62,6 +62,9 @@ DEFINE_RWLOCK(ip_conntrack_lock);
+ atomic_t ip_conntrack_count = ATOMIC_INIT(0);
+ 
+ void (*ip_conntrack_destroyed)(struct ip_conntrack *conntrack) = NULL;
++#ifdef CONFIG_IP_NF_NAT_NRES
++void (*ip_conntrack_expect_destroyed)(struct ip_conntrack_expect *expect) = NULL;
++#endif
+ LIST_HEAD(ip_conntrack_expect_list);
+ struct ip_conntrack_protocol *ip_ct_protos[MAX_IP_CT_PROTO] __read_mostly;
+ static LIST_HEAD(helpers);
+@@ -206,6 +209,12 @@ void ip_ct_unlink_expect(struct ip_connt
+ 	list_del(&exp->list);
+ 	CONNTRACK_STAT_INC(expect_delete);
+ 	exp->master->expecting--;
++
++#ifdef CONFIG_IP_NF_NAT_NRES
++	if (ip_conntrack_expect_destroyed)
++		ip_conntrack_expect_destroyed(exp);
++#endif
++
+ 	ip_conntrack_expect_put(exp);
+ }
+ 
+@@ -942,6 +951,9 @@ struct ip_conntrack_expect *ip_conntrack
+ 	}
+ 	new->master = me;
+ 	atomic_set(&new->use, 1);
++#ifdef CONFIG_IP_NF_NAT_NRES
++	INIT_LIST_HEAD(&new->reserved_list);
++#endif
+ 	return new;
+ }
+ 
+diff --git a/net/ipv4/netfilter/ip_conntrack_standalone.c b/net/ipv4/netfilter/ip_conntrack_standalone.c
+index 0213575..46985bc 100644
+--- a/net/ipv4/netfilter/ip_conntrack_standalone.c
++++ b/net/ipv4/netfilter/ip_conntrack_standalone.c
+@@ -929,6 +929,9 @@ EXPORT_SYMBOL_GPL(__ip_conntrack_expect_
+ EXPORT_SYMBOL_GPL(ip_conntrack_expect_find);
+ EXPORT_SYMBOL(ip_conntrack_expect_related);
+ EXPORT_SYMBOL(ip_conntrack_unexpect_related);
++#ifdef CONFIG_IP_NF_NAT_NRES
++EXPORT_SYMBOL(ip_conntrack_expect_destroyed);
++#endif
+ EXPORT_SYMBOL_GPL(ip_conntrack_expect_list);
+ EXPORT_SYMBOL_GPL(ip_ct_unlink_expect);
+ 
+diff --git a/net/ipv4/netfilter/ip_nat_core.c b/net/ipv4/netfilter/ip_nat_core.c
+index 4b6260a..a191f5e 100644
+--- a/net/ipv4/netfilter/ip_nat_core.c
++++ b/net/ipv4/netfilter/ip_nat_core.c
+@@ -14,6 +14,8 @@ #include <linux/timer.h>
+ #include <linux/skbuff.h>
+ #include <linux/netfilter_ipv4.h>
+ #include <linux/vmalloc.h>
++#include <linux/slab.h>
++#include <linux/list.h>
+ #include <net/checksum.h>
+ #include <net/icmp.h>
+ #include <net/ip.h>
+@@ -42,6 +44,12 @@ DEFINE_RWLOCK(ip_nat_lock);
+ /* Calculated at init based on memory size */
+ static unsigned int ip_nat_htable_size;
+ 
++#ifdef CONFIG_IP_NF_NAT_NRES
++static kmem_cache_t *ip_nat_reserved_cachep;
++static atomic_t ip_nat_reserved_count;
++static struct list_head *natreserved;
++#endif
++
+ static struct list_head *bysource;
+ 
+ #define MAX_IP_NAT_PROTO 256
+@@ -86,6 +94,19 @@ hash_by_src(const struct ip_conntrack_tu
+ 			    tuple->dst.protonum, 0) % ip_nat_htable_size;
+ }
+ 
++#ifdef CONFIG_IP_NF_NAT_NRES
++static inline unsigned int
++hash_nat_reserved(const struct ip_conntrack_manip *foreign,
++		  const struct ip_conntrack_manip *peer,
++		  const u_int16_t proto)
++{
++	return jhash_3words(foreign->ip,
++			    (proto << 16) + foreign->u.all,
++			    (peer ? (peer->ip + peer->u.all) : 0),
++			    0) % ip_nat_htable_size;
++}
++#endif
++
+ /* Noone using conntrack by the time this called. */
+ static void ip_nat_cleanup_conntrack(struct ip_conntrack *conn)
+ {
+@@ -97,10 +118,374 @@ static void ip_nat_cleanup_conntrack(str
+ 	write_unlock_bh(&ip_nat_lock);
+ }
+ 
++#ifdef CONFIG_IP_NF_NAT_NRES
++static inline int
++reserved_manip_cmp(const struct ip_nat_reserved *i,
++		   const struct ip_conntrack_manip *manip,
++		   const u_int16_t proto)
++{
++	DEBUGP("reserved_manip_cmp: manip proto %u %u.%u.%u.%u:%u, "
++	       "reservation proto %u %u.%u.%u.%u:%u\n peer %u.%u.%u.%u:%u\n",
++			proto, NIPQUAD(manip->ip), ntohs(manip->u.all),
++			i->proto, NIPQUAD(i->manip.ip), ntohs(i->manip.u.all),
++			NIPQUAD(i->peer.ip), ntohs(i->peer.u.all));
++	return (i->proto == proto &&
++		i->manip.ip == manip->ip && i->manip.u.all == manip->u.all);
++}
++
++static inline int
++reserved_manip_cmp_peer(const struct ip_nat_reserved *i,
++			const struct ip_conntrack_manip *manip,
++			const u_int16_t proto,
++			const struct ip_conntrack_manip *peer)
++{
++	DEBUGP("reserved_manip_cmp_peer: manip proto %u %u.%u.%u.%u:%u peer %u.%u.%u.%u:%u, "
++	       "reservation proto %u %u.%u.%u.%u:%u peer %u.%u.%u.%u:%u\n",
++	       proto, NIPQUAD(manip->ip), ntohs(manip->u.all),
++	       NIPQUAD(peer->ip), ntohs(peer->u.all),
++	       i->proto, NIPQUAD(i->manip.ip), ntohs(i->manip.u.all),
++	       NIPQUAD(i->peer.ip), ntohs(i->peer.u.all));
++
++	return (i->proto == proto &&
++		i->manip.ip == manip->ip && i->manip.u.all == manip->u.all &&
++		((i->peer.ip == 0) || (i->peer.ip == peer->ip && i->peer.u.all == peer->u.all)));
++}
++
++static inline int
++reserved_manip_cmp_peer_exact(const struct ip_nat_reserved *i,
++			      const struct ip_conntrack_manip *manip,
++			      const u_int16_t proto,
++			      const struct ip_conntrack_manip *peer)
++{
++	DEBUGP("reserved_manip_cmp_peer_exact: manip proto %u %u.%u.%u.%u:%u peer %u.%u.%u.%u:%u, "
++	       "reservation proto %u %u.%u.%u.%u:%u peer %u.%u.%u.%u:%u\n",
++	       proto, NIPQUAD(manip->ip), ntohs(manip->u.all),
++	       NIPQUAD(peer->ip), ntohs(peer->u.all),
++	       i->proto, NIPQUAD(i->manip.ip), ntohs(i->manip.u.all),
++	       NIPQUAD(i->peer.ip), ntohs(i->peer.u.all));
++
++	return (i->proto == proto &&
++		i->manip.ip == manip->ip && i->manip.u.all == manip->u.all &&
++		i->peer.ip == peer->ip && i->peer.u.all == peer->u.all);
++}
++
++/* Is this manip reserved?
++ * exact means full peer match is required, used for reservation deletion */
++static struct ip_nat_reserved *
++__ip_nat_reserved_find_manip(const struct ip_conntrack_manip *manip,
++			     const u_int16_t proto,
++			     const struct ip_conntrack_manip *peer,
++			     const int exact)
++{
++	struct ip_nat_reserved *i;
++	struct ip_nat_reserved *res = NULL;
++	unsigned int h = hash_nat_reserved(manip, peer, proto);
++
++	DEBUGP("__ip_nat_reserved_find_manip: find proto %u %u.%u.%u.%u:%u\n",
++			proto, NIPQUAD(manip->ip), ntohs(manip->u.all));
++
++	if (peer) {
++		if (exact)
++			list_for_each_entry(i, &natreserved[h], hash)
++				if (reserved_manip_cmp_peer_exact(i, manip, proto, peer)) {
++					res = i;
++					goto out;
++				}
++		else
++			list_for_each_entry(i, &natreserved[h], hash)
++				if (reserved_manip_cmp_peer(i, manip, proto, peer)) {
++					res = i;
++					goto out;
++				}
++	} else
++		list_for_each_entry(i, &natreserved[h], hash)
++			if (reserved_manip_cmp(i, manip, proto)) {
++				res = i;
++				goto out;
++			}
++
++out:
++	return res;
++}
++
++/* Is this tuple clashing with a reserved manip? */
++static struct ip_nat_reserved *
++__ip_nat_reserved_find_tuple(const struct ip_conntrack_tuple *tuple,
++			     enum ip_nat_manip_type maniptype)
++{
++	struct ip_conntrack_manip m = {.ip = tuple->dst.ip, .u = {.all = tuple->dst.u.all}};
++
++	if (maniptype == IP_NAT_MANIP_SRC) {
++		DEBUGP("__ip_nat_reserved_find_tuple: IP_NAT_MANIP_SRC search\n");
++		return __ip_nat_reserved_find_manip(&tuple->src, tuple->dst.protonum, &m, 0);
++	} else {
++		DEBUGP("__ip_nat_reserved_find_tuple: IP_NAT_MANIP_DST search\n");
++		return __ip_nat_reserved_find_manip(&m, tuple->dst.protonum, &tuple->src, 0);
++	}
++}
++
++static inline int
++clashing_ct_cmp(const struct ip_conntrack_tuple_hash *i, const void *data)
++{
++	const struct ip_conntrack_manip *m = (struct ip_conntrack_manip *) data;
++	const struct ip_conntrack_tuple *t = &i->tuple;
++
++	/* FIXME: every connection has two entries, we should check only the REPLY direction */
++
++	DEBUGP("clashing_ct_cmp: manip %u.%u.%u.%u:%u ct reply src %u.%u.%u.%u:%u dst %u.%u.%u.%u:%u\n",
++			NIPQUAD(m->ip), ntohs(m->u.all), NIPQUAD(t->src.ip), ntohs(t->src.u.all),
++			NIPQUAD(t->dst.ip), ntohs(t->dst.u.all));
++	return (((t->src.ip == m->ip) && (t->src.u.all == m->u.all)) ||
++		((t->dst.ip == m->ip) && (t->dst.u.all == m->u.all)));
++}
++
++/* Create a new reservation */
++struct ip_nat_reserved *
++__ip_nat_reserved_new_hash(const struct ip_conntrack_manip *manip,
++			   const u_int16_t proto,
++			   const struct ip_conntrack_manip *peer)
++{
++	struct ip_nat_reserved *res;
++	unsigned int h;
++
++	DEBUGP("__ip_nat_reserved_new_hash: manip proto %u %u.%u.%u.%u:%u\n",
++			proto, NIPQUAD(manip->ip), ntohs(manip->u.all));
++
++	/* check if it's already reserved */
++	if (__ip_nat_reserved_find_manip(manip, proto, peer, 1)) {
++		DEBUGP("__ip_nat_reserved_new_hash: already reserved\n");
++		return NULL;
++	}
++
++	/* FIXME: check if a clashing connection exists... This is problematic,
++	 * since the final decision in ip_nat_used_tuple() is based on a full
++	 * tuple, but we only have a manip... =(:< */
++
++	/* Current solutuion: we provide two methods for checking:
++	 *   - Strong check: in this case, the conntrack table is scanned if an
++	 *     already existing connection uses the manip in its REPLY direction.
++	 *     if such a conntrack entry is found, the mapping fails. This check is
++	 *     extremely pessimistic, since it fails to register reservations which could
++	 *     happily coexist with current conntracks if the other side of the tuple is
++	 *     different...
++	 *   - Exact check: if the callee provides a peer manip, then an exact lookup
++	 *     can be made in the conntrack hash. This is a more fine-grained check.
++	 */
++
++	if (peer) {
++		/* Exact check */
++		struct ip_conntrack_tuple t = {.src = *peer,
++					       .dst = {.protonum = proto,
++						       .ip = manip->ip,
++						       .u = {.all = manip->u.all}}};
++
++		if (ip_conntrack_tuple_taken(&t, NULL)) {
++			DEBUGP("__ip_nat_reserved_new_hash: manip clashes with an already existing connection\n");
++			return NULL;
++		}
++	} else {
++		/* Strong check: we have only a manip, unfortunately we scan the whole conntrack
++		 * hash for possible clashing connections... */
++		struct ip_conntrack_tuple_hash *h;
++		unsigned int i;
++		int found = 0;
++
++		read_lock_bh(&ip_conntrack_lock);
++		for (i = 0; !found && i < ip_conntrack_htable_size; i++)
++			list_for_each_entry(h, &ip_conntrack_hash[i], list)
++				if (clashing_ct_cmp(h, manip)) {
++					found = 1;
++					break;
++				}
++		read_unlock_bh(&ip_conntrack_lock);
++		if (found) {
++			DEBUGP("__ip_nat_reserved_new_hash: manip clashes with an already existing connection\n");
++			return NULL;
++		}
++	}
++
++	/* else allocate a new structure */
++	res = kmem_cache_alloc(ip_nat_reserved_cachep, GFP_ATOMIC);
++	if (!res)
++		return NULL;
++
++	memset(res, 0, sizeof(*res));
++	res->proto = proto;
++	res->manip = *manip;
++	if (peer)
++		res->peer = *peer;
++
++	/* put it into the hash */
++	h = hash_nat_reserved(manip, peer, proto);
++	atomic_inc(&ip_nat_reserved_count);
++	list_add(&res->hash, &natreserved[hash]);
++	DEBUGP("__ip_nat_reserved_new_hash: hashed manip proto %u %u.%u.%u.%u:%u\n",
++			proto, NIPQUAD(manip->ip), ntohs(manip->u.all));
++
++	return res;
++}
++EXPORT_SYMBOL_GPL(__ip_nat_reserved_new_hash);
++
++/* Register a new reservation */
++static int
++__ip_nat_reserved_register(struct ip_conntrack_expect *expect,
++			   const struct ip_conntrack_manip *manip,
++			   const u_int16_t proto,
++			   const struct ip_conntrack_manip *peer)
++{
++	struct ip_nat_reserved *res;
++
++	DEBUGP("__ip_nat_reserved_register: registering proto %u %u.%u.%u.%u:%u\n",
++			proto, NIPQUAD(manip->ip), ntohs(manip->u.all));
++
++	/* allocate and put into the hash */
++	res = __ip_nat_reserved_new_hash(manip, proto, peer);
++	if (!res)
++		return 0;
++
++	/* append to the per-expectation reserved list */
++	list_add_tail(&res->exp, &expect->reserved_list);
++
++	return 1;
++}
++
++int
++ip_nat_reserved_register(struct ip_conntrack_expect *expect,
++			 const struct ip_conntrack_manip *manip,
++			 const u_int16_t proto,
++			 const struct ip_conntrack_manip *peer)
++{
++	int ret;
++
++	write_lock_bh(&ip_nat_lock);
++
++	ret = __ip_nat_reserved_register(expect, manip, proto, peer);
++
++	write_unlock_bh(&ip_nat_lock);
++
++	return ret;
++}
++EXPORT_SYMBOL_GPL(ip_nat_reserved_register);
++
++/* Unhash a reservation */
++struct ip_nat_reserved *
++__ip_nat_reserved_unhash(const struct ip_conntrack_manip *manip,
++		         const u_int16_t proto,
++			 const struct ip_conntrack_manip *peer)
++{
++	struct ip_nat_reserved *res;
++
++	DEBUGP("__ip_nat_reserved_unhash: unhashing proto %u %u.%u.%u.%u:%u\n",
++			proto, NIPQUAD(manip->ip), ntohs(manip->u.all));
++
++	/* check if it's really reserved */
++	if (!(res = __ip_nat_reserved_find_manip(manip, proto, peer, 1))) {
++		DEBUGP("__ip_nat_reserved_unhash: trying to unreg a nonexisting reservation\n");
++		return NULL;
++	}
++
++	/* delete from the hash table */
++	list_del(&res->hash);
++
++	atomic_dec(&ip_nat_reserved_count);
++
++	return res;
++}
++EXPORT_SYMBOL_GPL(__ip_nat_reserved_unhash);
++
++/* Return a reservation structure into the slab cache */
++void
++__ip_nat_reserved_free(struct ip_nat_reserved *res)
++{
++	kmem_cache_free(ip_nat_reserved_cachep, res);
++}
++EXPORT_SYMBOL_GPL(__ip_nat_reserved_free);
++
++/* Unregister a reservation */
++static int
++__ip_nat_reserved_unregister(struct ip_conntrack_expect *expect,
++			     const struct ip_conntrack_manip *manip,
++			     const u_int16_t proto,
++			     const struct ip_conntrack_manip *peer)
++{
++	struct ip_nat_reserved *res;
++
++	DEBUGP("__ip_nat_reserved_unregister: unregistering proto %u %u.%u.%u.%u:%u\n",
++			proto, NIPQUAD(manip->ip), ntohs(manip->u.all));
++
++	/* look up and unhash */
++	res = __ip_nat_reserved_unhash(manip, proto, peer);
++	if (!res)
++		return 0;
++
++	/* delete from the per-expectation list */
++	list_del(&res->exp);
++
++	/* free the structure */
++	__ip_nat_reserved_free(res);
++
++	return 1;
++}
++
++int
++ip_nat_reserved_unregister(struct ip_conntrack_expect *expect,
++			   const struct ip_conntrack_manip *manip,
++			   const u_int16_t proto,
++			   const struct ip_conntrack_manip *peer)
++{
++	int ret;
++
++	write_lock_bh(&ip_nat_lock);
++
++	ret = __ip_nat_reserved_unregister(expect, manip, proto, peer);
++
++	write_unlock_bh(&ip_nat_lock);
++
++	return ret;
++}
++EXPORT_SYMBOL_GPL(ip_nat_reserved_unregister);
++
++/* Unregister all reservations for a given expectation */
++void
++ip_nat_reserved_unregister_all(struct ip_conntrack_expect *expect)
++{
++	struct list_head *i;
++	struct ip_nat_reserved *res;
++
++	DEBUGP("ip_nat_reserved_unregister_all: deleting all reservations for expectation %p\n",
++			expect);
++
++	write_lock_bh(&ip_nat_lock);
++
++	i = expect->reserved_list.next;
++	while (i != &expect->reserved_list) {
++		res = list_entry(i, struct ip_nat_reserved, exp);
++		i = i->next;
++
++		/* clear from lists */
++		list_del(&res->hash);
++		list_del(&res->exp);
++
++		kmem_cache_free(ip_nat_reserved_cachep, res);
++	}
++
++	write_unlock_bh(&ip_nat_lock);
++}
++EXPORT_SYMBOL_GPL(ip_nat_reserved_unregister_all);
++
++static void
++ip_nat_reserved_cleanup_expect(struct ip_conntrack_expect *expect)
++{
++	ip_nat_reserved_unregister_all(expect);
++}
++#endif /* CONFIG_IP_NF_NAT_NRES */
++
+ /* Is this tuple already taken? (not by us) */
+ int
+ ip_nat_used_tuple(const struct ip_conntrack_tuple *tuple,
+-		  const struct ip_conntrack *ignored_conntrack)
++		  const struct ip_conntrack *ignored_conntrack,
++		  const enum ip_nat_manip_type maniptype,
++		  const unsigned int flags)
+ {
+ 	/* Conntrack tracking doesn't keep track of outgoing tuples; only
+ 	   incoming ones.  NAT means they don't have a fixed mapping,
+@@ -108,6 +493,20 @@ ip_nat_used_tuple(const struct ip_conntr
+ 
+ 	   We could keep a separate hash if this proves too slow. */
+ 	struct ip_conntrack_tuple reply;
++#ifdef CONFIG_IP_NF_NAT_NRES
++	struct ip_nat_reserved *res;
++
++	/* check if the tuple is reserved if there are any reservations */
++	if (atomic_read(&ip_nat_reserved_count)) {
++		read_lock_bh(&ip_nat_lock);
++		res = __ip_nat_reserved_find_tuple(tuple, maniptype);
++		read_unlock_bh(&ip_nat_lock);
++
++		/* If we may not allocate reserved ports, return */
++		if (!(flags & IP_NAT_RANGE_USE_RESERVED) && res)
++			return 1;
++	}
++#endif
+ 
+ 	invert_tuplepr(&reply, tuple);
+ 	return ip_conntrack_tuple_taken(&reply, ignored_conntrack);
+@@ -246,7 +645,7 @@ get_unique_tuple(struct ip_conntrack_tup
+ 	if (maniptype == IP_NAT_MANIP_SRC) {
+ 		if (find_appropriate_src(orig_tuple, tuple, range)) {
+ 			DEBUGP("get_unique_tuple: Found current src map\n");
+-			if (!ip_nat_used_tuple(tuple, conntrack))
++			if (!ip_nat_used_tuple(tuple, conntrack, maniptype, range->flags))
+ 				return;
+ 		}
+ 	}
+@@ -264,7 +663,7 @@ get_unique_tuple(struct ip_conntrack_tup
+ 	/* Only bother mapping if it's not already in range and unique */
+ 	if ((!(range->flags & IP_NAT_RANGE_PROTO_SPECIFIED)
+ 	     || proto->in_range(tuple, maniptype, &range->min, &range->max))
+-	    && !ip_nat_used_tuple(tuple, conntrack)) {
++	    && !ip_nat_used_tuple(tuple, conntrack, maniptype, range->flags)) {
+ 		ip_nat_proto_put(proto);
+ 		return;
+ 	}
+@@ -580,10 +979,29 @@ static int __init ip_nat_init(void)
+ 	/* Leave them the same for the moment. */
+ 	ip_nat_htable_size = ip_conntrack_htable_size;
+ 
++#ifdef CONFIG_IP_NF_NAT_NRES
++	/* Create nat_reserved slab cache */
++	ip_nat_reserved_cachep = kmem_cache_create("ip_nat_reserved",
++						   sizeof(struct ip_nat_reserved), 0,
++						   SLAB_HWCACHE_ALIGN, NULL, NULL);
++	if (!ip_nat_reserved_cachep) {
++		printk(KERN_ERR "Unable to create ip_nat_reserved slab cache\n");
++		return -ENOMEM;
++	}
++#endif
++
+ 	/* One vmalloc for both hash tables */
++#ifndef CONFIG_IP_NF_NAT_NRES
+ 	bysource = vmalloc(sizeof(struct list_head) * ip_nat_htable_size);
++#else
++        bysource = vmalloc(sizeof(struct list_head) * ip_nat_htable_size * 2);
++#endif
+ 	if (!bysource)
+-		return -ENOMEM;
++		goto free_reserved_slab;
++
++#ifdef CONFIG_IP_NF_NAT_NRES
++	natreserved = bysource + ip_nat_htable_size;
++#endif
+ 
+ 	/* Sew in builtin protocols. */
+ 	write_lock_bh(&ip_nat_lock);
+@@ -596,15 +1014,28 @@ static int __init ip_nat_init(void)
+ 
+ 	for (i = 0; i < ip_nat_htable_size; i++) {
+ 		INIT_LIST_HEAD(&bysource[i]);
++#ifdef CONFIG_IP_NF_NAT_NRES
++		INIT_LIST_HEAD(&natreserved[i]);
++#endif
+ 	}
+ 
+ 	/* FIXME: Man, this is a hack.  <SIGH> */
+ 	IP_NF_ASSERT(ip_conntrack_destroyed == NULL);
+ 	ip_conntrack_destroyed = &ip_nat_cleanup_conntrack;
++#ifdef CONFIG_IP_NF_NAT_NRES
++	IP_NF_ASSERT(ip_conntrack_expect_destroyed == NULL);
++	ip_conntrack_expect_destroyed = &ip_nat_reserved_cleanup_expect;
++#endif
+ 
+ 	/* Initialize fake conntrack so that NAT will skip it */
+ 	ip_conntrack_untracked.status |= IPS_NAT_DONE_MASK;
+ 	return 0;
++
++free_reserved_slab:
++#ifdef CONFIG_IP_NF_NAT_NRES
++	kmem_cache_destroy(ip_nat_reserved_cachep);
++#endif
++	return -ENOMEM;
+ }
+ 
+ /* Clear NAT section of all conntracks, in case we're loaded again. */
+@@ -619,6 +1050,10 @@ static void __exit ip_nat_cleanup(void)
+ {
+ 	ip_ct_iterate_cleanup(&clean_nat, NULL);
+ 	ip_conntrack_destroyed = NULL;
++#ifdef CONFIG_IP_NF_NAT_NRES
++	ip_conntrack_expect_destroyed = NULL;
++	kmem_cache_destroy(ip_nat_reserved_cachep);
++#endif
+ 	vfree(bysource);
+ }
+ 
+diff --git a/net/ipv4/netfilter/ip_nat_proto_gre.c b/net/ipv4/netfilter/ip_nat_proto_gre.c
+index bf91f93..9b7c3e3 100644
+--- a/net/ipv4/netfilter/ip_nat_proto_gre.c
++++ b/net/ipv4/netfilter/ip_nat_proto_gre.c
+@@ -88,7 +88,7 @@ gre_unique_tuple(struct ip_conntrack_tup
+ 
+ 	for (i = 0; i < range_size; i++, key++) {
+ 		*keyptr = htons(min + key % range_size);
+-		if (!ip_nat_used_tuple(tuple, conntrack))
++		if (!ip_nat_used_tuple(tuple, conntrack, maniptype, range->flags))
+ 			return 1;
+ 	}
+ 
+diff --git a/net/ipv4/netfilter/ip_nat_proto_icmp.c b/net/ipv4/netfilter/ip_nat_proto_icmp.c
+index 3f6efc1..b2463d7 100644
+--- a/net/ipv4/netfilter/ip_nat_proto_icmp.c
++++ b/net/ipv4/netfilter/ip_nat_proto_icmp.c
+@@ -46,7 +46,7 @@ icmp_unique_tuple(struct ip_conntrack_tu
+ 	for (i = 0; i < range_size; i++, id++) {
+ 		tuple->src.u.icmp.id = htons(ntohs(range->min.icmp.id) +
+ 		                             (id % range_size));
+-		if (!ip_nat_used_tuple(tuple, conntrack))
++		if (!ip_nat_used_tuple(tuple, conntrack, maniptype, range->flags))
+ 			return 1;
+ 	}
+ 	return 0;
+diff --git a/net/ipv4/netfilter/ip_nat_proto_tcp.c b/net/ipv4/netfilter/ip_nat_proto_tcp.c
+index 12deb13..5876503 100644
+--- a/net/ipv4/netfilter/ip_nat_proto_tcp.c
++++ b/net/ipv4/netfilter/ip_nat_proto_tcp.c
+@@ -77,7 +77,7 @@ tcp_unique_tuple(struct ip_conntrack_tup
+ 
+ 	for (i = 0; i < range_size; i++, port++) {
+ 		*portptr = htons(min + port % range_size);
+-		if (!ip_nat_used_tuple(tuple, conntrack)) {
++		if (!ip_nat_used_tuple(tuple, conntrack, maniptype, range->flags)) {
+ 			return 1;
+ 		}
+ 	}
+diff --git a/net/ipv4/netfilter/ip_nat_proto_udp.c b/net/ipv4/netfilter/ip_nat_proto_udp.c
+index 4bbec77..3d4b76a 100644
+--- a/net/ipv4/netfilter/ip_nat_proto_udp.c
++++ b/net/ipv4/netfilter/ip_nat_proto_udp.c
+@@ -76,7 +76,7 @@ udp_unique_tuple(struct ip_conntrack_tup
+ 
+ 	for (i = 0; i < range_size; i++, port++) {
+ 		*portptr = htons(min + port % range_size);
+-		if (!ip_nat_used_tuple(tuple, conntrack))
++		if (!ip_nat_used_tuple(tuple, conntrack, maniptype, range->flags))
+ 			return 1;
+ 	}
+ 	return 0;

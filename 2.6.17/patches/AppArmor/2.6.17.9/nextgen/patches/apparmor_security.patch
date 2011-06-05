@@ -1,0 +1,24 @@
+Index: linux-2.6.17.9/security/Makefile
+===================================================================
+--- linux-2.6.17.9.orig/security/Makefile
++++ linux-2.6.17.9/security/Makefile
+@@ -4,6 +4,7 @@
+ 
+ obj-$(CONFIG_KEYS)			+= keys/
+ subdir-$(CONFIG_SECURITY_SELINUX)	+= selinux
++obj-$(CONFIG_SECURITY_APPARMOR)		+= commoncap.o apparmor/
+ 
+ # if we don't select a security model, use the default capabilities
+ ifneq ($(CONFIG_SECURITY),y)
+Index: linux-2.6.17.9/security/Kconfig
+===================================================================
+--- linux-2.6.17.9.orig/security/Kconfig
++++ linux-2.6.17.9/security/Kconfig
+@@ -100,6 +100,7 @@ config SECURITY_SECLVL
+ 	  If you are unsure how to answer this question, answer N.
+ 
+ source security/selinux/Kconfig
++source security/apparmor/Kconfig
+ 
+ endmenu
+ 

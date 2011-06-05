@@ -1,0 +1,198 @@
+Web100 Kernel Change Summary
+
+CHANGES:
+
+version 2.5.18 200711151130
+	- Update for 2.6.23
+
+version 2.5.17 200710051837
+	- Fix unsigned int bug in triage instruments that could cause
+	  overrun of cwnd
+	- Fix stale NETLINK_ROUTE6 that had slipped through a merge
+
+version 2.5.16 200707191523
+	- Integrate kernel limited slow-start with WAD_MaxSsthresh
+	- Update for 2.6.22
+
+version 2.5.15 200706041615
+	- Misc. cleanups
+	- Remove some changes made when WEB100_STATS not configured
+	- Update for 2.6.21
+
+version 2.5.14 200702061450
+
+version 2.5.13 200612211445
+
+version 2.5.12 200609221010
+
+version 2.5.11 200606191556
+
+version 2.5.10 200604071159
+	- Fix unsigned snd_wait bug.
+
+version 2.5.9 200603291825
+	- Fix race condition on skb deletion in web100_update_segsend()
+	  (reported by Maurice Volaski).
+	- Update for 2.6.16
+
+version 2.5.8 200602231756
+	- Fix bug in reno congestion control when ABC is off
+	  (from Lachlan Anderw).
+	- Fix unresolved symbol in congestion control modules
+
+version 2.5.7 200601231624
+	- Update for 2.6.15
+
+version 2.5.6 200510281308
+	- Update for 2.6.14
+	- Bugfix in the proc code from weixl@caltech.edu which caused a crash
+	  on some non-x86 arches.
+
+version 2.5.5 200509021643
+	- Update for 2.6.13
+	- New kernel includes congestion control modules, strip out our
+	  congestion control code (included now in kernel distro).
+	- Change WAD_NoAI so that it takes effect also when doing slow start.
+
+version 2.5.4 200506201449
+	- Update for 2.6.12
+	- Add writable State for deleteTCB. (RFC 2012)
+
+version 2.5.3 200503022351
+	- Update for 2.6.11
+	- Changed WAD_CwndAdjust to pull down ssthresh when set.
+	- Fix bug when compiling with web100 on, and net100 off
+	- Update packet counters to deal with TSO.
+
+version 2.5.2 200412251814
+	- Update fo 2.6.10
+
+version 2.5.1 200411161622
+	- Update for 2.6.9
+
+version 2.5.0 200408311033
+	- Port to linux 2.6 series.
+
+version 2.4.0 200408171532
+	- IMPORTANT: removed all autotuning code.  Major portions of the
+	  Web100 autotuning code have been pulled in to the Linux mainline.
+	  See the README.web100 for more information.
+	- Fix a socket ref count bug in include/net/web100.h.
+
+version 2.3.8 200405241313
+
+version 2.3.7 200404151744
+	- Update to Linux 2.4.26
+	- Remove the SBufMode and RBufMode, and some depricated autotuning
+	  variables.  (These had no real meaning with the new style of
+	  autotuning.)
+
+version 2.3.5 200403041433
+	- Update to Linux 2.4.25.
+	- Fix typo in net/ipv4/tcp_input.c which #ifdef'd out an autotuning
+	  accounting statmenet.
+
+version 2.3.4 200401051451
+	- Update for Linux 2.4.24.  No other changes.
+
+version 2.3.3 200312091116
+	- Fix botched merge of 2.4.23 which removed netfliter config.
+
+version 2.3.2 200312021603
+	- Update for Linux 2.4.23.  No other changes.
+
+version 2.3.1 200311141508
+	- Add sysctl for Scalable TCP.
+	- Change min rcv_space from 4 mss to 6 mss.
+	- Fixed a bug in limited slow start.
+
+version 2.3 200309121025
+	- Added in the Net100 controls, including Tom Dunigan's new
+	  Scalable TCP implementation.
+	- Added sysctls web100_rcvbuf_emu, web100_sndbuf_emu, which
+	  control whether setsockopt() clamps rwin and cwnd when
+	  autotuning is on.
+
+version 2.2.3 200307291119
+	- Fixed an SMP deadlock bug which appeared in 2.2.2.
+	- Fixed a bug which sometimes caused the contents of /proc/web100
+	  to "disappear."
+	- #if out some (broken) experimental autotuning code which
+	  accidentally made it in to 2.2.2.
+
+version 2.2.2 200306171107
+	- Update to patch against Linux 2.4.21
+	- New window measuring algorithm for receive autotuning
+	
+version 2.2.1 200302141243
+	- Fixed a bad bug (introduced only in 2.2) which causes proc to
+	  fail completely under some circumstances.
+
+version 2.2 200302051041
+	- Changed the versioning policy a little bit:
+	  - No "alpha" string in the version anymore.  Does not indicate
+	    better code quality, but I see no clear progression to
+	    "beta" and "final."  Everyone knows this is experimental code.
+	  - Pre-releases are not tagged as such in the version string.
+	    We may just re-name pre-releases distro files now.
+	- Fix autotuning bug caused by reordering.
+	- Added variables X_OtherReductionsCV and CM.  Breaks down
+	  OtherReductions into Cwnd Validation and Moderation.
+	- Added file permissions, web100 group
+	- Added support for PPC clocks (thanks for Rob Braun for the patch)
+
+version 2.1 alpha 20021029117
+version 2.1-pre2 alpha 200210291117
+	- Bugfix: xport symbol needed by ipv6 module.
+	- Bugfix: clamp rwin so that it cannot exceed max value allowed
+	  by winscale.
+	- Bugfix: CongestionOverCount was being overcounted. :-)
+	- Make X_RcvRTT in units of usecs, not jiffies.
+
+version 2.1-pre1 alpha 200210161712
+	- Added full sender and receiver side "autotuning."
+	- Added config option for Net100 extensions
+	- Removed option for default winscale sysctl.  Always on now.
+	  Changed default value to 7.
+	- Added KIS and sysctl variables WAD_MaxBurst and WAD_IFQ.
+
+version 2.0 alpha 200209261040
+	- Updated documentation
+
+version 2.0-pre alpha 200209061531
+	- Modified the "header" file to contain a length field
+	- Depricated variables now have a leading underscore.
+	- Added IPv6 support
+	- Depricated and renamed many variables.  Kernel now (mostly)
+	  matches the new internet draft.
+	- Fixed init of RetranThresh
+	- Fixed bug where TCP badly misbehaves when Web100 stats are tunred off.
+	- Changed /proc inode allocation
+	- Changed connection lookup table from array to hash table
+	- Open /proc files remain read/writable until closed, even after timeout
+
+version 1.2 alpha 200205031532
+	- Added instruments ThruBytesSent, ThruBytesReceived, and StartTime
+	- Fixed minor bugs in MinSsthresh, SndISS
+	- Removed deprecated instruments starting with _
+	- Fix /proc non-unique-inode bug
+	- version string modified to indicate some critical compilation DEFINES
+
+version 1.1 alpha 200203181400
+	- Improved version management in make-release
+	- Fixed a bug where CID directories in /proc/web100 were not cleaned up
+
+version 1.0 alpha 20020301
+	- Added Tom Dunigan's netlink code under CONFIG_WEB100_NETLINK config option.
+	- Fixed a bug that caused min rtt to always be 0
+	- Fixed Linux bug that incorrectly scaled the receiver window on a SYN
+	- Updated SACK instruments (recorded late)
+
+version 1.0 alpha 20020206
+	Initial public Alpha 1.0 release
+
+This file lists all changes in reverse chronological order.  Each group of
+changes is tagged with the release version string which also appears as the
+first line of /proc/web100/header.  Code which is not yet released should not
+bear a release tag.
+

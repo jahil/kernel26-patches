@@ -1,0 +1,421 @@
+
+These are my patches against Linux kernel 2.6 to implement transparent proxy
+functions.
+
+The author of the transparent proxy patches is me, Balázs Scheidler, you can
+reach me at bazsi at balabit dot hu. The latest version can always be found
+at http://www.balabit.com/products/oss/tproxy
+
+**************************************************************************
+
+  WARNING: The API of TProxy 2.0 has changed since the 1.2 version. As of
+  version 2.0, TProxy is _not_binary_compatible_ with any of the older stable
+  releases, and you have to make some (trivial) changes to your source code to
+  make it compile using TProxy 2.0.
+
+**************************************************************************
+
+
+What does the term 'proxy' mean?
+--------------------------------
+
+   A proxy is a server-like program, receiving requests from clients,
+   forwarding those requests to the real server on behalf of users,
+   and returning the response as it arrives.
+
+   Proxies read and parse the application protocol, and reject invalid
+   traffic. As most attacks violate the application protocol, disallowing
+   protocol violations usually protects against attacks.
+
+What is transparent proxying?
+-----------------------------
+
+   To simplify management tasks of clients sitting behind proxy
+   firewalls, the technique 'transparent proxying' was invented.
+   Transparent proxying means that the presence of the proxy is invisible
+   to the user. Transparent proxying however requires kernel support.
+
+We have a 'REDIRECT' target, isn't that enough?
+----------------------------------------------
+
+   Real transparent proxying requires the following three features from
+   the IP stack of the computer it is running on:
+    1. Redirect sessions destined to the outer network to a local process
+       using a packet filter rule.
+    2. Make it possible for a process to listen to connections on a
+       foreign address.
+    3. Make it possible for a process to initiate a connection with a
+       foreign address as a source.
+
+   Item #1 is usually provided by packet filtering packages like
+   Netfilter/IPTables, IPFilter. (yes, this is the REDIRECT target)
+
+   All three were provided in Linux kernels 2.2.x, but support for this
+   was removed.
+
+How to install it?
+------------------
+
+   Patch your kernel using the patches in the tarball. Not all patches are
+   mandatory, however: the 04-nat_delete.diff is completely optional, you
+   only need that if you are experiencing conntrack entry clashes with a
+   lot of TCP connections. If you think you need it, you're probably wrong.
+   If you somehow decided that you need it, then you _have_to_ apply Jozsef
+   Kadlecsik's TCP window tracking patch as well: 00-tcp_window_tracking.diff.
+   This patch is considered useful anyway, and is included in Linux 2.6.9.
+   To apply all patches except the 04-nat_delete:
+
+      cd /usr/src/linux
+      for i in <pathtocttproxy>/patch_tree/0{1,2,3}*.diff; do cat $i | patch -p1; done
+
+   then enable conntrack, nat and tproxy support in your kernel config. If you
+   enable NAT reservation support you'll have a higher chance of detecting
+   problems with clashing connections at the cost of losing some performance.
+
+   Prior to starting a program using transparent proxy functions the module 
+   iptable_tproxy.o must be loaded. It is _not_ autoloaded by default.
+
+   You'll also have to patch your iptables userspace by using the following
+   command:
+
+      cd /usr/src/iptables-1.3.X
+      cat <pathtocttproxy>/iptables/iptables-1.3-cttproxy.diff | patch -p1
+      chmod +x extensions/.tproxy-test
+      make KERNELDIR=/usr/src/linux
+
+   Of course you might need to change the path in the examples above.
+
+How to start using it?
+----------------------
+
+   This implementation of transparent proxying works by creating implicit
+   NAT rules. This means that redirection, foreign address listen, and
+   foreign address connect (the three features required for transparent
+   proxying) all create a NAT mapping of some sort. 
+
+   NOTE: that this doesn't mean that the 'nat' table will be modified in any
+   way.
+
+   Now let's see what happens when a proxy tries to use the required tproxy
+   features I outlined earlier.
+
+   1. Redirection
+
+     This is easy, as this was already supported by iptables. Redirection is
+     equivalent with the following nat rule:
+
+       iptables -t nat -A PREROUTING -j DNAT --to-dest <localip> --to-port <proxyport>
+
+         <localip>   is one the IP address of the interface where the packet
+                     entered the IP stack
+         <proxyport> is the port where the proxy was bound to
+
+     To indicate that this is not simple NAT rule, a separate table named
+     'tproxy' was created:
+
+       iptables -t tproxy -A PREROUTING -j TPROXY --on-port <proxyport>
+
+     The local IP address is determined automatically, but can be overridden
+     by the --on-ip parameter.
+
+   2. Listening for connections on a foreign address
+
+     There are protocols which use more than a single TCP channel for
+     communication. The best example is FTP which uses a command channel for
+     sending commands, and a data channel to transfer the body of files. The
+     secondary channel can be established in both active and passive mode, 
+     active meaning the server connects back to the client, passive meaning
+     the client connects to the server on another port.
+
+     Let's see the passive case, when the client establishes a connection to
+     the address returned in the response of the PASV FTP command.
+
+     As the presence of the proxy is transparent to the client, the target
+     IP address of the secondary channel (e.g. the address in the PASV
+     response) is the server (and not the firewall) and this connection must
+     also be handled by the proxy. 
+
+     The first solution that comes to mind is to add a a TPROXY rule
+     automatically (e.g. to redirect a connection destined to a given server
+     on a given port to a local process), however it is not feasible, adding
+     rules on the fly should not be required as it would mess the
+     administrator's own rules, the NAT translation should be done
+     implicitly without touching the user rulebase.
+
+     To do this on a Linux 2.2 kernel it was enough to call bind() on a
+     socket with a foreign IP address, and if a new connection to the given
+     foreign IP was routed through the firewall the connection was
+     intercepted. This solution however distracted the core network kernel
+     hackers and removed this feature. This implementation tries to make the
+     transparent proxy features independent from the core network stack,
+     therefore it works a bit differently:
+
+       * the proxy binds to a local address first 
+
+       * the proxy then issues an IP_TPROXY setsockopt, requesting a
+	 TPROXY_ASSIGN operation. TPROXY_ASSIGN registers the local
+	 address the proxy bound to, with the foreign address it is
+	 interested in. This relationship is stored in a hash table within
+	 the iptable_tproxy module.
+
+       * as a final step the proxy instructs the kernel that it wants to 
+	 LISTEN for connections, this is done by calling the IP_TPROXY
+	 setsockopt with TPROXY_FLAGS as the operation and a flags value of
+	 ITP_LISTEN.
+
+     When this setup is complete, the kernel (more exactly a netfilter hook
+     registered at PREROUTING) generates a NAT mapping if there is a
+     registered socket for incoming NEW connections.
+
+   3. Initiating connections with a foreign address as a source
+
+     Similarly to the case outlined above, it is sometimes necessary to be
+     able to initiate a connection with a foreign IP address as a source. 
+     Imagine the active FTP case when the FTP client listens for connections
+     with source address equal to the server. Another example: a webserver
+     in your DMZ which does access control based on client IP address. If
+     the proxy could not initiate connections with foreign IP address, the
+     webserver would see the inner IP address of the firewall itself.
+
+     In Linux 2.2 this was accomplished by bind()-ing to a foreign address
+     prior calling connect(), and it worked. In this tproxy patch it is done
+     somewhat similar to the case 2 outlined above.
+
+       * the proxy binds to a local address first 
+
+       * the proxy then issues an TPROXY_ASSIGN operation. 
+
+          TPROXY_ASSIGN registers the local address the proxy bound to,
+          with the foreign address it wants its source address to be changed
+          to. This relationship is stored in a hash table within the
+          iptable_tproxy module.
+
+       * as a final step the proxy instructs the kernel that it wants to 
+	 initiate a connection, this is done by calling the IP_TPROXY
+	 setsockopt with the TPROXY_FLAGS operation and a flags value of
+	 ITP_CONNECT.
+
+How to use it?
+--------------
+
+   So you now know how this tproxy thing works, and what its aims have been.
+   This section serves as an introduction on how this works out in practice.
+
+   The only proxy firewall which supports the features above is Zorp. Zorp
+   is an application level proxy firewall suite designed with three main
+   goals:
+     * the best application layer protocol analysis (unknown protocol
+       elements are rejected instead of let through, proxies work according
+       to RFCs)
+     * flexibility, decisions are scriptable, requests can be rewritten etc.
+       (imagine a firewall which changes server based on HTTP request,
+       normal HTTP requests go to an Apache, WebDAV requests to another apache,
+       possibly running under a different uid)
+     * modularity, proxies are not individual entities, they can be attached
+       together, embedded part of protocols can be further analyzed.
+       (transport protocols such as SSL/TLS can be decrypted on the fly, and
+       the decypted stream fed into another proxy, so URL filtering within
+       HTTPS is possible)
+
+   That's it about the marketing stuff, Zorp is available at
+     http://www.balabit.hu/en/downloads/zorp-gpl/
+
+   So how to build a ruleset for a real-life proxy firewall? 
+
+   Storing the ruleset
+   -------------------
+
+   Some people like storing their ruleset as a shell script which invokes
+   the necessary iptables commands. As I don't like mixing executable code
+   and data we use the format defined by iptables-save & iptables-restore.
+
+   As raw iptables-restore format has no macro possibility we created a
+   frontend named iptables-utils where a couple of scripts help the creation
+   and maintenance of a packet filter rulesets. Here's an outline of the
+   iptables-utils approach:
+
+     * the following files are used by iptables-utils:
+       - iptables.conf.in: contains our ruleset before processing, this is a
+         user supplied file, we are going to edit this with our favourite
+         editor
+       - iptables.conf.var: contains our macro definitions, it might contain
+         a series of C like #define statements. I say C like because macro
+         substition differs from cpp.
+       - iptables.conf.new: when processing conf.in & conf.var our new
+         ruleset will be generated here
+       - iptables.conf: is our current ruleset, iptables.conf.new is copied
+         here if found to be correct
+     * the ruleset is maintained the following way:
+       - you edit either iptables.conf.in or iptables.conf.var
+       - you process your modifications by the command 'iptables-gen', this
+         will result in a iptables.conf.new to be generated
+       - you test your new ruleset by invoking 'iptables-test', this script
+         loads the new ruleset, waits a couple of seconds and reloads the
+         old ruleset, if you made a mistake you are still not closed out
+         from the system
+       - if the new ruleset is ok, you invoke 'iptables-commit' which
+         overwrites iptables.conf with iptables.conf.new and loads the
+         ruleset
+
+   Using iptables-utils is absolutely beneficial in the long term as the
+   number of system-closeouts dramatically decreased, which is good if you
+   are hundreds of miles of away from the firewall.
+
+   Macro expansion is not simple substition, if a macro contains several
+   words the rule where the macro is referenced is copied, at the end you
+   get a new rule for each word in your macro. For instance:
+
+     iptables.conf.var:
+
+         #define SSH_PERMITTED 1.2.3.4 1.2.3.5
+
+     iptables.conf.in:
+
+         -A INPUT -p tcp -m tcp -s SSH_PERMITTED --dport 22 -j ACCEPT
+
+   You will get two rules the first with 1.2.3.4 substituted, the second
+   with 1.2.3.5 substituted.
+
+   Identifying firewall neighbourhood
+   ----------------------------------
+
+   The aim for the firewall is to be a border between different security
+   zones. A simple firewall has two zones: 'internal network' and 'external
+   network'. A more complex firewall might have more zones, I built
+   firewalls with more than 10 ethernet interfaces myself. The first task is 
+   to name those zones, the name should be short but still identifiable.
+   Let's name the zones this way:
+
+     internal network: 'intra'
+     external network: 'inter'
+     demilitarized zone: 'dmz'
+
+   In our example a single firewall will be used, the DMZ will be one of the
+   zones of our firewall.
+
+   Naming the chains
+   -----------------
+
+   In addition to the standard chains provided by iptables (INPUT, OUTPUT
+   etc) we will create separate chains for each security zone. Each security
+   zone will have two chains:
+
+     * a chain which contains rules for traffic which passes the firewall
+     * a chain which contains rules for traffic destined to the firewall
+
+   The first one will be prefixed by PR which stands for PRoxy rules, the
+   second one will be prefixed by LO which stands for LOcal rules. Proxy
+   rules will be placed into the 'tproxy' table, local rules will be placed
+   into the 'filter' table. If we assume that all traffic goes through
+   proxies we won't need NAT nor mangle rules. (of course we can add further
+   finetuning to our rulebase, like limiting the number of SYNs etc)
+
+   Jumping to our chains
+   ---------------------
+
+   We have two set of chains for each security zone, LOxxx chains are
+   processed in the filter table, INPUT chain. PRxxx chains are processed in
+   the tproxy table, PREROUTING/OUTPUT chain.
+
+   Our filter/INPUT chain will be something like this:
+
+     ...
+     -A INPUT -m tproxy -j ACCEPT
+     -A INPUT -i <intranet iface> -j LOintra
+     -A INPUT -i <internet iface> -j LOinter
+     -A INPUT -i <dmz iface>      -j LOdmz
+     -A INPUT -j DROP
+
+   This means that all permitted traffic must be enabled in their specific
+   chain or will be dropped on the INPUT chain. Of course logging dropped
+   packets would be a good idea. It is important to mention that our
+   FORWARD chain should contain a single DROP rule as we don't forward
+   packets. Each LOxxx chain should look like this:
+
+     -A LOintra -p tcp --dport 22 -j ACCEPT
+     ... permit each service ... 
+     -A LOintra -j DROP
+
+   Of course our LOxxx chains might be different for each zone, as we might
+   permit SSH access from the intranet only.
+
+   Note the '-m tproxy' rule at the front of other rules, it allows all
+   traffic redirected by any TPROXY feature to pass the filter table. (this
+   includes TPROXY redirections, and foreign-bound traffic)
+
+   We took care about local services provided by the firewall, let's
+   make our proxying rules now.
+
+   Our tproxy/PREROUTING chain will be something like this:
+
+     -A PREROUTING -i <intranet iface> -d ! <fw intranet IP> -j PRintra
+     -A PREROUTING -i <internet iface> -d ! <fw internet IP> -j PRinter
+     -A PREROUTING -i <dmz iface>      -d ! <fw dmz IP>      -j PRdmz
+
+   A PRxxx chain should something like this:
+
+     -A PRintra -d 0/0 --dport 80 -j TPROXY --on-port 50080
+     ... repeat the above rule for each service ...
+
+  At the end of a PRxxx chain no DROP should be performed, as unmodified
+  sessions will be stopped when the filter table is evaluated. The port
+  number specified by TPROXY rules should match the port number where the
+  transparent proxy (Zorp in our example) will be bound.
+
+  Zorp configuration
+  ------------------
+
+  The configuration in iptables rules and Zorp must match, a short Zorp
+  policy which is bound to 50080 (matching the example rule above) is below:
+
+    from Zorp.Core import *
+    from Zorp.Http import *
+
+    InetZone('intranet', '192.168.1.0/24',
+        inbound_services=[],
+        outbound_services=["*"])
+
+    InetZone('dmz', '10.0.0.0/24',
+        inbound_services=[],
+        outbound_services=[])
+
+    InetZone('internet', '0.0.0.0/0',
+        inbound_services['*'],
+        outbound_services=[])
+
+    def intra():
+        Service('intra_HTTP', HttpProxy)
+        Listener(SockAddrInet('<fw internal IP>', 50080), 'intra_HTTP')
+
+   The example might be indented, as Python is sensitive to indenting,
+   please unindent it so that lines start on the first column.
+
+How it works?
+-------------
+
+   Within the tproxy module in the kernel there's a table describing the
+   relationship between local sockets and a non-local IP address/port pair. A
+   local socket is referenced by its local IP/port, therefore all sockets to be
+   used for transparent proxy purposes must be bound to a local IP prior
+   anything can be done.
+
+   To connect from, or listen on a foreign address an entry to this table must
+   be added.
+
+   To add a translation table entry, create a socket (bind it to a local
+   interface), and call the setsockopt IP_TPROXY at level SOL_IP with a
+   structure describing the operation TPROXY_ASSIGN and the nonlocal address
+   (struct in_tproxy).
+
+   If this setsockopt succeeds, specify what you want to do with the given
+   socket, by calling TPROXY_FLAGS with the combination of the bits in
+   in_tproxy.h:
+
+   /* bitfields in TPROXY_FLAGS */
+   #define ITP_CONNECT  0x00000001
+   #define ITP_LISTEN   0x00000002
+
+   ITP_CONNECT means you want to initiate a connection, ITP_LISTEN means you
+   want to accept connections on the foreign address specified in
+   TPROXY_ASSIGN.
+

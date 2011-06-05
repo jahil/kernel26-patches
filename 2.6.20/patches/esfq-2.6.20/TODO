@@ -1,0 +1,7 @@
+Short term:
+- Remove direct hashes.
+- make esfq_change work.
+
+Long term:
+- If the userpace patch seems ok, submit it upstream to iproute2.
+- If the iproute2 maintainers accept the patch, try for linux kernel inclusion.

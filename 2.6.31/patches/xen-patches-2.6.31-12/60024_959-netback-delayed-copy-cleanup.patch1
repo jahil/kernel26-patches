@@ -1,0 +1,49 @@
+From: http://xenbits.xensource.com/linux-2.6.18-xen.hg?rev/1a97bd686258
+# HG changeset patch
+# User Keir Fraser <keir.fraser@citrix.com>
+# Date 1260195268 0
+# Node ID 1a97bd686258aabf7f57844dc77a00e0040ddab9
+# Parent  2641f0d17eaa22811883aee22f399db46cbff06f
+Subject: netback: Fixes for delayed copy of tx network packets.
+References: bnc#553175
+Patch-mainline: n/a
+
+ - Should call net_tx_action_dealloc() even when dealloc ring is
+   empty, as there may in any case be work to do on the
+   pending_inuse list.
+ - Should not exit directly from the middle of the tx_action tasklet,
+   as the tx_pending_timer should always be checked and updated at the
+   end of the tasklet.
+
+Signed-off-by: Keir Fraser <keir.fraser@citrix.com>
+Acked-by: jbeulich@novell.com
+
+--- 11.2-2009-12-15.orig/drivers/xen/netback/netback.c	2009-12-15 13:47:53.000000000 +0100
++++ 11.2-2009-12-15/drivers/xen/netback/netback.c	2009-12-15 13:55:51.000000000 +0100
+@@ -1233,8 +1233,7 @@ static void net_tx_action(unsigned long 
+ 	unsigned int data_len;
+ 	int ret, work_to_do;
+ 
+-	if (dealloc_cons != dealloc_prod)
+-		net_tx_action_dealloc();
++	net_tx_action_dealloc();
+ 
+ 	mop = tx_map_ops;
+ 	while (((NR_PENDING_REQS + MAX_SKB_FRAGS) < MAX_PENDING_REQS) &&
+@@ -1388,7 +1387,7 @@ static void net_tx_action(unsigned long 
+ 	}
+ 
+ 	if (mop == tx_map_ops)
+-		return;
++		goto out;
+ 
+ 	ret = HYPERVISOR_grant_table_op(
+ 		GNTTABOP_map_grant_ref, tx_map_ops, mop - tx_map_ops);
+@@ -1455,6 +1454,7 @@ static void net_tx_action(unsigned long 
+ 		netif->dev->last_rx = jiffies;
+ 	}
+ 
++ out:
+ 	if (netbk_copy_skb_mode == NETBK_DELAYED_COPY_SKB &&
+ 	    !list_empty(&pending_inuse_head)) {
+ 		struct netbk_tx_pending_inuse *oldest;

@@ -1,0 +1,31 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: Linux 2.6.34.6
+Patch-mainline: 2.6.34.6
+
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+
+Automatically created from "patches.kernel.org/patch-2.6.34.5-6" by xen-port-patches.py
+
+--- 11.3-2010-09-14.orig/arch/x86/Kconfig	2010-03-25 16:41:03.000000000 +0100
++++ 11.3-2010-09-14/arch/x86/Kconfig	2010-09-14 11:58:18.000000000 +0200
+@@ -256,7 +256,7 @@ config KTIME_SCALAR
+ 
+ config ARCH_CPU_PROBE_RELEASE
+ 	def_bool y
+-	depends on HOTPLUG_CPU
++	depends on HOTPLUG_CPU && !XEN
+ 
+ source "init/Kconfig"
+ source "kernel/Kconfig.freezer"
+--- 11.3-2010-09-14.orig/arch/x86/kernel/apic/io_apic-xen.c	2010-07-06 11:04:24.000000000 +0200
++++ 11.3-2010-09-14/arch/x86/kernel/apic/io_apic-xen.c	2010-09-14 11:58:18.000000000 +0200
+@@ -1819,6 +1819,8 @@ __apicdebuginit(void) print_IO_APIC(void
+ 		struct irq_pin_list *entry;
+ 
+ 		cfg = desc->chip_data;
++		if (!cfg)
++			continue;
+ 		entry = cfg->irq_2_pin;
+ 		if (!entry)
+ 			continue;

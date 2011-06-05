@@ -1,0 +1,71 @@
+/************************************************
+ * File         : ktau/README
+ * Version      : $Id: README,v 1.5.2.2 2008/02/26 03:51:53 anataraj Exp $
+ ***********************************************/
+*******************
+*KTAU Distribution*
+*******************
+	The KTAU distribution is currently ported to and supported on i386, x86_64, ppc 
+	(on Blue Gene/L as part of ZeptoOS)  and mips (on SiCortex) architectures. 
+	Efforts are under way to port it to the Blue Gene/P ZeptoOS distribution, 
+	ppc64 and ia64 as well. Current development is focused on the 2.6.x kernels.
+	For more information about KTAU, its feature-set and sample screen-shots, please 
+	see http://www.cs.uoregon.edu/research/ktau/.
+
+	The source tree is organized as per the following hierarchy:
+
+	ktau/patches/		: Contains patches for various versions of Linux kernel
+	     src/		: Contains extension to Linux kernel which is independent
+				  from version of the kernel.
+             user-src/		: Contains user-space libraries and utilities.
+	     ktau_installation.log : shows a screenshot of installation step. 
+	     LICENCE		: KTAU license file.
+	     COPYRIGHT		: KTAU copy right file.	
+		
+********************
+*Installation Steps*
+********************
+	1. Obtain a KTAU distribution.
+
+ 	2. Obtain a vanilla Linux kernel.
+
+	3. To install the kernel extension, in ktau/src/linux-2.x/, run
+
+		sh INSTALL-kernel.sh <path of kernel source> <KTAU patch name>
+
+	    This script will patch the kernel source with the specified patch name, and
+	    Then install the KTAU extension to Linux kernel.
+
+	4. To install libraries and utilities, in ktau/user-src/src, run 
+	
+		make clean all install KERNEL_SRC=<path to kernel source>
+
+	    This will build and put all the libraries and utilities in ktau/user-src/bin,
+	    which must be included in $PATH variable. 
+
+	5. At kernel source root, run make menuconfig and configure the kernel.
+	   Configure KTAU as discussed the KTAU documentation
+           (http://www.cs.uoregon.edu/research/ktau/) 	
+
+	6. Compile and build the kernel as usual. At kernel root, run
+		make clean dep bzImage modules modules_install 	(for Linux-2.4 - no longer supported)
+	or 	make clean bzImage modules modules_install	(for Linux-2.6)
+
+	7. Install kernel image (bzImage for ix86) and configure the bootloader (i.e. lilo,
+	    grub) to choose the installed kernel image.
+	
+	8. If you have enabled KTAU_BOOTOPT in the kernel config, then these options can 
+	    be passed to kernel cmdline:
+		ktau_syscall		: for system calls
+		ktau_irq		: for hard irqs
+		ktau_bh			: for bottom halves
+		ktau_sched		: for scheduling related
+		ktau_exception		: for exceptions (e.g. page_faults)
+		ktau_socket		: for socket related
+		ktau_tcp		: for tcp
+		ktau_icmp		: for icmp
+		ktau_trace		: for enabling tracing (provided KTAU_TRACING enabled in config).
+
+	9. Also to get the best accuracy wrt timing, use the idle=poll cmdline option where available and
+	    disable cpu-freq scaling. 
+

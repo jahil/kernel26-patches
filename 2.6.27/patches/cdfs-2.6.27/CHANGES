@@ -1,0 +1,9 @@
+cdfs 2.6.10
++ Removing module now remove daemon properly ;
++ NULL code check after kmalloc that was ommited (and cause oops in a
+preemptible kernel) ;
+
+Thibault Mondary, 2005
+
+
+

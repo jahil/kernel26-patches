@@ -1,0 +1,32 @@
+mainmenu_option next_comment
+comment 'KTAU Profiling'
+
+bool 'KTAU Profiling (EXPERIMENTAL)' CONFIG_KTAU 
+if [ "$CONFIG_KTAU" = "y" ]; then
+	bool 'Merging KTAU Profile with TAU (EXPERIMENTAL)' CONFIG_KTAU_MERGE 
+	bool 'KTAU Tracing (EXPERIMENTAL)' CONFIG_KTAU_TRACE
+	int 'Maximum number of KTAU trace entries (in K)' CONFIG_KTAU_TRACE_MAX_IN_K 5 
+	bool 'KTAU Kernel Boot Option (EXPERIMENTAL)' CONFIG_KTAU_BOOTOPT
+	comment 'KTAU INSTRUMENTATIONS ---'
+	bool 'KTAU System Calls Profiling (EXPERIMENTAL)' CONFIG_KTAU_SYSCALL 
+	bool 'KTAU Interrupt Profiling (EXPERIMENTAL)' CONFIG_KTAU_IRQ
+	bool 'KTAU Exception Profiling (EXPERIMENTAL)' CONFIG_KTAU_EXCEPTION 
+	bool 'KTAU Signal Profiling (EXPERIMENTAL)' CONFIG_KTAU_SIGNAL 
+	bool 'KTAU Bottom Halves Profiling (EXPERIMENTAL)' CONFIG_KTAU_BH
+	bool 'KTAU Scheduling Profiling	(EXPERIMENTAL)' CONFIG_KTAU_SCHED
+	bool 'KTAU Socket Profiling (EXPERIMENTAL)' CONFIG_KTAU_SOCKET 
+	bool 'KTAU TCP Profiling (EXPERIMENTAL)' CONFIG_KTAU_TCP 
+	bool 'KTAU ICMP Profiling (EXPERIMENTAL)' CONFIG_KTAU_ICMP 
+
+	comment 'KTAU PERFORMANCE COUNTERS ---'
+	bool 'KTAU Performance Counter (EXPERIMENTAL)' CONFIG_KTAU_PERF_COUNTER
+	if [ "$CONFIG_KTAU_PERF_COUNTER" = "y" ]; then
+		bool 'KTAU PERF0 (EXPERIMENTAL)' CONFIG_KTAU_PERF0
+		bool 'KTAU PERF1 (EXPERIMENTAL)' CONFIG_KTAU_PERF1
+		bool 'KTAU PERF2 (EXPERIMENTAL)' CONFIG_KTAU_PERF2
+		bool 'KTAU PERF3 (EXPERIMENTAL)' CONFIG_KTAU_PERF3
+		bool 'KTAU PERF4 (EXPERIMENTAL)' CONFIG_KTAU_PERF4
+	fi
+fi
+endmenu
+

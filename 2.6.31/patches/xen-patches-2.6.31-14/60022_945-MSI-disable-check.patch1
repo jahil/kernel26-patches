@@ -1,0 +1,99 @@
+From: http://xenbits.xensource.com/linux-2.6.18-xen.hg?rev/7bae5a000157
+# HG changeset patch
+# User Keir Fraser <keir.fraser@citrix.com>
+# Date 1259073919 0
+# Node ID 7bae5a000157a222200337d24eafd5a00f87ca57
+# Parent  1db1bb63824b25f97d127449faeb3a56f1272c97
+Subject: xen: Dont call msi_unmap_pirq() if did not enable msi
+Patch-mainline: n/a
+
+When device driver unload, it may call pci_disable_msi(), if msi did
+not enabled but do msi_unmap_pirq(), then later driver reload and
+without msi, then will failed in request_irq() for irq_desc[irq]->chip
+valie is no_irq_chip. So when did not enable msi during driver
+initializing, then unloaded driver will not try to disable it.
+
+How to reproduce it:
+  At the server with QLogic 25xx, try to reload qla2xxx will hit it.
+
+Signed-off-by: Joe Jin <joe.jin@oracle.com>
+
+From: http://xenbits.xensource.com/linux-2.6.18-xen.hg?rev/7ee9b1483445
+# HG changeset patch
+# User Keir Fraser <keir.fraser@citrix.com>
+# Date 1259577465 0
+# Node ID 7ee9b1483445b05a2bab9466d1632f00f868f3c3
+# Parent  c25b2e4870ca6897ea8754e9c6ba5b1ab11c8f83
+Subject: xen/PCI/MSI-X: Don't disable when it was never enabled
+
+This is the MSI-X counterpart for c/s 945.
+
+Signed-off-by: Jan Beulich <jbeulich@novell.com>
+
+--- 11.2-2009-12-15.orig/drivers/pci/msi-xen.c	2009-12-15 13:47:53.000000000 +0100
++++ 11.2-2009-12-15/drivers/pci/msi-xen.c	2009-12-15 13:55:33.000000000 +0100
+@@ -618,6 +618,7 @@ int pci_enable_msi(struct pci_dev* dev)
+ 			return ret;
+ 
+ 		dev->irq = evtchn_map_pirq(-1, dev->irq);
++		dev->msi_enabled = 1;
+ 		msi_dev_entry->default_irq = temp;
+ 
+ 		return ret;
+@@ -662,9 +663,15 @@ void pci_disable_msi(struct pci_dev* dev
+ 
+ #ifdef CONFIG_XEN_PCIDEV_FRONTEND
+ 	if (!is_initial_xendomain()) {
++		if (!(dev->msi_enabled)) {
++			printk(KERN_INFO "PCI: %s: Device did not enabled MSI.\n",
++			       pci_name(dev));
++			return;
++		}
+ 		evtchn_map_pirq(dev->irq, 0);
+ 		pci_frontend_disable_msi(dev);
+ 		dev->irq = msi_dev_entry->default_irq;
++		dev->msi_enabled = 0;
+ 		return;
+ 	}
+ #endif
+@@ -673,6 +680,12 @@ void pci_disable_msi(struct pci_dev* dev
+ 	if (!pos)
+ 		return;
+ 
++	if (!(dev->msi_enabled)) {
++		printk(KERN_INFO "PCI: %s: Device did not enabled MSI.\n",
++		       pci_name(dev));
++		return;
++	}
++
+ 	pirq = dev->irq;
+ 	/* Restore dev->irq to its default pin-assertion vector */
+ 	dev->irq = msi_dev_entry->default_irq;
+@@ -728,6 +741,7 @@ int pci_enable_msix(struct pci_dev* dev,
+ 			printk("get %x from pci_frontend_enable_msix\n", ret);
+ 			return ret;
+ 		}
++		dev->msix_enabled = 1;
+ 		msi_dev_entry->default_irq = temp;
+ 
+ 		for (i = 0; i < nvec; i++) {
+@@ -805,6 +819,11 @@ void pci_disable_msix(struct pci_dev* de
+ 		return;
+ 	if (!dev)
+ 		return;
++	if (!dev->msix_enabled) {
++		printk(KERN_INFO "PCI: %s: Device did not enabled MSI-X.\n",
++		       pci_name(dev));
++		return;
++	}
+ 
+ #ifdef CONFIG_XEN_PCIDEV_FRONTEND
+ 	if (!is_initial_xendomain()) {
+@@ -822,6 +841,7 @@ void pci_disable_msix(struct pci_dev* de
+ 		}
+ 
+ 		dev->irq = msi_dev_entry->default_irq;
++		dev->msix_enabled = 0;
+ 		return;
+ 	}
+ #endif

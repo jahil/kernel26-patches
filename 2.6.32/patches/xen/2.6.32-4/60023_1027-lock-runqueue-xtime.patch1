@@ -1,0 +1,46 @@
+From: http://xenbits.xensource.com/linux-2.6.18-xen.hg?rev/53705d74a41b
+# HG changeset patch
+# User Keir Fraser <keir.fraser@citrix.com>
+# Date 1281451661 -3600
+# Node ID 53705d74a41b4d86238e6b275893fba95fd13550
+# Parent 566d68f989eec2fa570fd0273a07e79d7702d773
+Subject: xen/x86: eliminate nesting of run-queue locks inside xtime_lock
+Patch-mainline: n/a
+
+From: Zdenek Salvet <salvet@ics.muni.cz>
+
+According to Debian bug 591362 this has been causing problems. While
+no proof was given that the inverse lock order does actually occur
+anywhere (with interrupts enabled), it is plain unnecessary to take
+the risk.
+
+Signed-off-by: Jan Beulich <jbeulich@novell.com>
+Acked-by: Ian Campbell <ian.campbell@citrix.com>
+
+--- sle11sp1-2010-08-06.orig/arch/x86/kernel/time-xen.c	2010-03-01 14:03:37.000000000 +0100
++++ sle11sp1-2010-08-06/arch/x86/kernel/time-xen.c	2010-08-17 10:04:02.000000000 +0200
+@@ -639,6 +639,7 @@ irqreturn_t timer_interrupt(int irq, voi
+ 	s64 delta, delta_cpu, stolen, blocked;
+ 	u64 sched_time;
+ 	unsigned int i, cpu = smp_processor_id();
++	int schedule_clock_was_set_work = 0;
+ 	struct shadow_time_info *shadow = &per_cpu(shadow_time, cpu);
+ 	struct vcpu_runstate_info *runstate = &per_cpu(runstate, cpu);
+ 
+@@ -700,12 +701,14 @@ irqreturn_t timer_interrupt(int irq, voi
+ 
+ 	if (shadow_tv_version != HYPERVISOR_shared_info->wc_version) {
+ 		update_wallclock();
+-		if (keventd_up())
+-			schedule_work(&clock_was_set_work);
++		schedule_clock_was_set_work = 1;
+ 	}
+ 
+ 	write_sequnlock(&xtime_lock);
+ 
++	if (schedule_clock_was_set_work && keventd_up())
++		schedule_work(&clock_was_set_work);
++
+ 	/*
+ 	 * Account stolen ticks.
+ 	 * HACK: Passing NULL to account_steal_time()

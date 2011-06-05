@@ -1,0 +1,344 @@
+From: http://xenbits.xensource.com/linux-2.6.18-xen.hg?rev/3358caa6b3a3
+# HG changeset patch
+# User Keir Fraser <keir.fraser@citrix.com>
+# Date 1263811603 0
+# Node ID 3358caa6b3a3c68845a4e4aa2c8b44e7641cb243
+# Parent  6d6c3dd995c07527b94d5278b0df4f5252888ccd
+Subject: blkfront: fixes for 'xm block-detach ... --force'
+References: bnc#570314
+Patch-mainline: n/a
+
+Prevent prematurely freeing 'struct blkfront_info' instances (when the
+xenbus data structures are gone, but the Linux ones are still needed).
+
+Prevent adding a disk with the same (major, minor) [and hence the same
+name and sysfs entries, which leads to oopses] when the previous
+instance wasn't fully de-allocated yet.
+
+This still doesn't address all issues resulting from forced detach:
+I/O submitted after the detach still blocks forever, likely preventing
+subsequent un-mounting from completing. It's not clear to me (not
+knowing much about the block layer) how this can be avoided.
+
+This also doesn't address issues with duplicate device creation caused
+by re-using the hdXX and sdXX name spaces - this would require
+synchronization with the respective native code.
+
+Signed-off-by: Jan Beulich <jbeulich@novell.com>
+
+From: http://xenbits.xensource.com/linux-2.6.18-xen.hg?rev/86d6c6417cf9
+# HG changeset patch
+# User Keir Fraser <keir.fraser@citrix.com>
+# Date 1265288907 0
+# Node ID 86d6c6417cf96cb018a35f300aa0b1709cf93d5c
+# Parent  26a5e91e827c364950156ac13ad0f4fa859c8584
+xen/blkfront: don't access freed struct xenbus_device
+
+Unfortunately c/s 983 still wasn't quite right - there was a reference
+to freed memory left from blkfront_closing().
+
+Signed-off-by: Jan Beulich <jbeulich@novell.com>
+
+--- 11.2-2010-02-16.orig/drivers/xen/blkfront/blkfront.c	2010-02-16 15:38:44.000000000 +0100
++++ 11.2-2010-02-16/drivers/xen/blkfront/blkfront.c	2010-02-16 15:40:27.000000000 +0100
+@@ -63,7 +63,7 @@
+ #define GRANT_INVALID_REF	0
+ 
+ static void connect(struct blkfront_info *);
+-static void blkfront_closing(struct xenbus_device *);
++static void blkfront_closing(struct blkfront_info *);
+ static int blkfront_remove(struct xenbus_device *);
+ static int talk_to_backend(struct xenbus_device *, struct blkfront_info *);
+ static int setup_blkring(struct xenbus_device *, struct blkfront_info *);
+@@ -298,7 +298,7 @@ static void backend_changed(struct xenbu
+ 			xenbus_dev_error(dev, -EBUSY,
+ 					 "Device in use; refusing to close");
+ 		else
+-			blkfront_closing(dev);
++			blkfront_closing(info);
+ #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,17)
+ 		up(&bd->bd_sem);
+ #else
+@@ -381,12 +381,11 @@ static void connect(struct blkfront_info
+  * the backend.  Once is this done, we can switch to Closed in
+  * acknowledgement.
+  */
+-static void blkfront_closing(struct xenbus_device *dev)
++static void blkfront_closing(struct blkfront_info *info)
+ {
+-	struct blkfront_info *info = dev->dev.driver_data;
+ 	unsigned long flags;
+ 
+-	DPRINTK("blkfront_closing: %s removed\n", dev->nodename);
++	DPRINTK("blkfront_closing: %d removed\n", info->vdevice);
+ 
+ 	if (info->rq == NULL)
+ 		goto out;
+@@ -406,7 +405,8 @@ static void blkfront_closing(struct xenb
+ 	xlvbd_del(info);
+ 
+  out:
+-	xenbus_frontend_closed(dev);
++	if (info->xbdev)
++		xenbus_frontend_closed(info->xbdev);
+ }
+ 
+ 
+@@ -418,7 +418,10 @@ static int blkfront_remove(struct xenbus
+ 
+ 	blkif_free(info, 0);
+ 
+-	kfree(info);
++	if(info->users == 0)
++		kfree(info);
++	else
++		info->xbdev = NULL;
+ 
+ 	return 0;
+ }
+@@ -480,6 +483,9 @@ static void blkif_restart_queue_callback
+ int blkif_open(struct inode *inode, struct file *filep)
+ {
+ 	struct blkfront_info *info = inode->i_bdev->bd_disk->private_data;
++
++	if (!info->xbdev)
++		return -ENODEV;
+ 	info->users++;
+ 	return 0;
+ }
+@@ -494,10 +500,13 @@ int blkif_release(struct inode *inode, s
+ 		   have ignored this request initially, as the device was
+ 		   still mounted. */
+ 		struct xenbus_device * dev = info->xbdev;
+-		enum xenbus_state state = xenbus_read_driver_state(dev->otherend);
+ 
+-		if (state == XenbusStateClosing && info->is_ready)
+-			blkfront_closing(dev);
++		if (!dev) {
++			blkfront_closing(info);
++			kfree(info);
++		} else if (xenbus_read_driver_state(dev->otherend)
++			   == XenbusStateClosing && info->is_ready)
++			blkfront_closing(info);
+ 	}
+ 	return 0;
+ }
+@@ -887,7 +896,7 @@ int blkfront_is_ready(struct xenbus_devi
+ {
+ 	struct blkfront_info *info = dev->dev.driver_data;
+ 
+-	return info->is_ready;
++	return info->is_ready && info->xbdev;
+ }
+ 
+ 
+--- 11.2-2010-02-16.orig/drivers/xen/blkfront/block.h	2010-02-16 15:38:43.000000000 +0100
++++ 11.2-2010-02-16/drivers/xen/blkfront/block.h	2010-02-16 15:40:15.000000000 +0100
+@@ -78,6 +78,7 @@ struct xlbd_major_info
+ 	int index;
+ 	int usage;
+ 	struct xlbd_type_info *type;
++	struct xlbd_minor_state *minors;
+ };
+ 
+ struct blk_shadow {
+--- 11.2-2010-02-16.orig/drivers/xen/blkfront/vbd.c	2010-02-16 15:38:43.000000000 +0100
++++ 11.2-2010-02-16/drivers/xen/blkfront/vbd.c	2010-02-16 15:40:15.000000000 +0100
+@@ -48,6 +48,12 @@
+ #define VDEV_IS_EXTENDED(dev) ((dev)&(EXTENDED))
+ #define BLKIF_MINOR_EXT(dev) ((dev)&(~EXTENDED))
+ 
++struct xlbd_minor_state {
++	unsigned int nr;
++	unsigned long *bitmap;
++	spinlock_t lock;
++};
++
+ /*
+  * For convenience we distinguish between ide, scsi and 'other' (i.e.,
+  * potentially combinations of the two) in the naming scheme and in a few other
+@@ -97,6 +103,8 @@ static struct xlbd_major_info *major_inf
+ #define XLBD_MAJOR_SCSI_RANGE	XLBD_MAJOR_SCSI_START ... XLBD_MAJOR_VBD_START - 1
+ #define XLBD_MAJOR_VBD_RANGE	XLBD_MAJOR_VBD_START ... XLBD_MAJOR_VBD_START + NUM_VBD_MAJORS - 1
+ 
++#define XLBD_MAJOR_VBD_ALT(idx) ((idx) ^ XLBD_MAJOR_VBD_START ^ (XLBD_MAJOR_VBD_START + 1))
++
+ static struct block_device_operations xlvbd_block_fops =
+ {
+ 	.owner = THIS_MODULE,
+@@ -114,6 +122,7 @@ static struct xlbd_major_info *
+ xlbd_alloc_major_info(int major, int minor, int index)
+ {
+ 	struct xlbd_major_info *ptr;
++	struct xlbd_minor_state *minors;
+ 	int do_register;
+ 
+ 	ptr = kzalloc(sizeof(struct xlbd_major_info), GFP_KERNEL);
+@@ -121,6 +130,22 @@ xlbd_alloc_major_info(int major, int min
+ 		return NULL;
+ 
+ 	ptr->major = major;
++	minors = kmalloc(sizeof(*minors), GFP_KERNEL);
++	if (minors == NULL) {
++		kfree(ptr);
++		return NULL;
++	}
++
++	minors->bitmap = kzalloc(BITS_TO_LONGS(256) * sizeof(*minors->bitmap),
++				 GFP_KERNEL);
++	if (minors->bitmap == NULL) {
++		kfree(minors);
++		kfree(ptr);
++		return NULL;
++	}
++
++	spin_lock_init(&minors->lock);
++	minors->nr = 256;
+ 	do_register = 1;
+ 
+ 	switch (index) {
+@@ -143,13 +168,19 @@ xlbd_alloc_major_info(int major, int min
+ 		 * if someone already registered block major 202,
+ 		 * don't try to register it again
+ 		 */
+-		if (major_info[XLBD_MAJOR_VBD_START] != NULL)
++		if (major_info[XLBD_MAJOR_VBD_ALT(index)] != NULL) {
++			kfree(minors->bitmap);
++			kfree(minors);
++			minors = major_info[XLBD_MAJOR_VBD_ALT(index)]->minors;
+ 			do_register = 0;
++		}
+ 		break;
+ 	}
+ 
+ 	if (do_register) {
+ 		if (register_blkdev(ptr->major, ptr->type->devname)) {
++			kfree(minors->bitmap);
++			kfree(minors);
+ 			kfree(ptr);
+ 			return NULL;
+ 		}
+@@ -157,6 +188,7 @@ xlbd_alloc_major_info(int major, int min
+ 		printk("xen-vbd: registered block device major %i\n", ptr->major);
+ 	}
+ 
++	ptr->minors = minors;
+ 	major_info[index] = ptr;
+ 	return ptr;
+ }
+@@ -209,6 +241,61 @@ xlbd_put_major_info(struct xlbd_major_in
+ }
+ 
+ static int
++xlbd_reserve_minors(struct xlbd_major_info *mi, unsigned int minor,
++		    unsigned int nr_minors)
++{
++	struct xlbd_minor_state *ms = mi->minors;
++	unsigned int end = minor + nr_minors;
++	int rc;
++
++	if (end > ms->nr) {
++		unsigned long *bitmap, *old;
++
++		bitmap = kzalloc(BITS_TO_LONGS(end) * sizeof(*bitmap),
++				 GFP_KERNEL);
++		if (bitmap == NULL)
++			return -ENOMEM;
++
++		spin_lock(&ms->lock);
++		if (end > ms->nr) {
++			old = ms->bitmap;
++			memcpy(bitmap, ms->bitmap,
++			       BITS_TO_LONGS(ms->nr) * sizeof(*bitmap));
++			ms->bitmap = bitmap;
++			ms->nr = BITS_TO_LONGS(end) * BITS_PER_LONG;
++		} else
++			old = bitmap;
++		spin_unlock(&ms->lock);
++		kfree(old);
++	}
++
++	spin_lock(&ms->lock);
++	if (find_next_bit(ms->bitmap, end, minor) >= end) {
++		for (; minor < end; ++minor)
++			__set_bit(minor, ms->bitmap);
++		rc = 0;
++	} else
++		rc = -EBUSY;
++	spin_unlock(&ms->lock);
++
++	return rc;
++}
++
++static void
++xlbd_release_minors(struct xlbd_major_info *mi, unsigned int minor,
++		    unsigned int nr_minors)
++{
++	struct xlbd_minor_state *ms = mi->minors;
++	unsigned int end = minor + nr_minors;
++
++	BUG_ON(end > ms->nr);
++	spin_lock(&ms->lock);
++	for (; minor < end; ++minor)
++		__clear_bit(minor, ms->bitmap);
++	spin_unlock(&ms->lock);
++}
++
++static int
+ xlvbd_init_blk_queue(struct gendisk *gd, u16 sector_size)
+ {
+ 	request_queue_t *rq;
+@@ -269,9 +356,14 @@ xlvbd_alloc_gendisk(int major, int minor
+ 	if ((minor & ((1 << mi->type->partn_shift) - 1)) == 0)
+ 		nr_minors = 1 << mi->type->partn_shift;
+ 
++	err = xlbd_reserve_minors(mi, minor, nr_minors);
++	if (err)
++		goto out;
++	err = -ENODEV;
++
+ 	gd = alloc_disk(nr_minors);
+ 	if (gd == NULL)
+-		goto out;
++		goto release;
+ 
+ 	offset =  mi->index * mi->type->disks_per_major +
+ 			(minor >> mi->type->partn_shift);
+@@ -310,7 +402,7 @@ xlvbd_alloc_gendisk(int major, int minor
+ 
+ 	if (xlvbd_init_blk_queue(gd, sector_size)) {
+ 		del_gendisk(gd);
+-		goto out;
++		goto release;
+ 	}
+ 
+ 	info->rq = gd->queue;
+@@ -330,6 +422,8 @@ xlvbd_alloc_gendisk(int major, int minor
+ 
+ 	return 0;
+ 
++ release:
++	xlbd_release_minors(mi, minor, nr_minors);
+  out:
+ 	if (mi)
+ 		xlbd_put_major_info(mi);
+@@ -375,14 +469,19 @@ xlvbd_add(blkif_sector_t capacity, int v
+ void
+ xlvbd_del(struct blkfront_info *info)
+ {
++	unsigned int minor, nr_minors;
++
+ 	if (info->mi == NULL)
+ 		return;
+ 
+ 	BUG_ON(info->gd == NULL);
++	minor = info->gd->first_minor;
++	nr_minors = info->gd->minors;
+ 	del_gendisk(info->gd);
+ 	put_disk(info->gd);
+ 	info->gd = NULL;
+ 
++	xlbd_release_minors(info->mi, minor, nr_minors);
+ 	xlbd_put_major_info(info->mi);
+ 	info->mi = NULL;
+ 

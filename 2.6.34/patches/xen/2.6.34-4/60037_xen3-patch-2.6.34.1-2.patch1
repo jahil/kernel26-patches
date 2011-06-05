@@ -1,0 +1,97 @@
+From: Greg Kroah-Hartman <gregkh@suse.de>
+Subject: Linux 2.6.34.2
+Patch-mainline: 2.6.34.2
+
+
+Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+
+
+Automatically created from "patches.kernel.org/patch-2.6.34.1-2" by xen-port-patches.py
+
+---
+ arch/x86/include/mach-xen/asm/system.h       |    2 +-
+ arch/x86/kernel/acpi/processor_extcntl_xen.c |    2 +-
+ arch/x86/kernel/acpi/sleep-xen.c             |    2 --
+ arch/x86/kernel/traps-xen.c                  |   11 ++++++++++-
+ include/acpi/processor.h                     |    2 ++
+ 5 files changed, 14 insertions(+), 5 deletions(-)
+
+--- a/arch/x86/include/mach-xen/asm/system.h
++++ b/arch/x86/include/mach-xen/asm/system.h
+@@ -433,7 +433,7 @@ void stop_this_cpu(void *dummy);
+  *
+  * (Could use an alternative three way for this if there was one.)
+  */
+-static inline void rdtsc_barrier(void)
++static __always_inline void rdtsc_barrier(void)
+ {
+ 	alternative(ASM_NOP3, "mfence", X86_FEATURE_MFENCE_RDTSC);
+ 	alternative(ASM_NOP3, "lfence", X86_FEATURE_LFENCE_RDTSC);
+--- a/arch/x86/kernel/acpi/processor_extcntl_xen.c
++++ b/arch/x86/kernel/acpi/processor_extcntl_xen.c
+@@ -63,7 +63,7 @@ static int xen_cx_notifier(struct acpi_p
+ 		data->reg.space_id = cx->reg.space_id;
+ 		data->reg.bit_width = cx->reg.bit_width;
+ 		data->reg.bit_offset = cx->reg.bit_offset;
+-		data->reg.access_size = cx->reg.reserved;
++		data->reg.access_size = cx->reg.access_size;
+ 		data->reg.address = cx->reg.address;
+ 
+ 		/* Get dependency relationships */
+--- a/arch/x86/kernel/acpi/sleep-xen.c
++++ b/arch/x86/kernel/acpi/sleep-xen.c
+@@ -169,8 +169,6 @@ static int __init acpi_sleep_setup(char
+ #endif
+ 		if (strncmp(str, "old_ordering", 12) == 0)
+ 			acpi_old_suspend_ordering();
+-		if (strncmp(str, "sci_force_enable", 16) == 0)
+-			acpi_set_sci_en_on_resume();
+ 		str = strchr(str, ',');
+ 		if (str != NULL)
+ 			str += strspn(str, ", \t");
+--- a/arch/x86/kernel/traps-xen.c
++++ b/arch/x86/kernel/traps-xen.c
+@@ -522,6 +522,7 @@ asmlinkage __kprobes struct pt_regs *syn
+ dotraplinkage void __kprobes do_debug(struct pt_regs *regs, long error_code)
+ {
+ 	struct task_struct *tsk = current;
++	int user_icebp = 0;
+ 	unsigned long dr6;
+ 	int si_code;
+ 
+@@ -530,6 +531,14 @@ dotraplinkage void __kprobes do_debug(st
+ 	/* Filter out all the reserved bits which are preset to 1 */
+ 	dr6 &= ~DR6_RESERVED;
+ 
++	/*
++	 * If dr6 has no reason to give us about the origin of this trap,
++	 * then it's very likely the result of an icebp/int01 trap.
++	 * User wants a sigtrap for that.
++	 */
++	if (!dr6 && user_mode(regs))
++		user_icebp = 1;
++
+ 	/* Catch kmemcheck conditions first of all! */
+ 	if ((dr6 & DR_STEP) && kmemcheck_trap(regs))
+ 		return;
+@@ -571,7 +580,7 @@ dotraplinkage void __kprobes do_debug(st
+ 		regs->flags &= ~X86_EFLAGS_TF;
+ 	}
+ 	si_code = get_si_code(tsk->thread.debugreg6);
+-	if (tsk->thread.debugreg6 & (DR_STEP | DR_TRAP_BITS))
++	if (tsk->thread.debugreg6 & (DR_STEP | DR_TRAP_BITS) || user_icebp)
+ 		send_sigtrap(tsk, regs, error_code, si_code);
+ 	preempt_conditional_cli(regs);
+ 
+--- a/include/acpi/processor.h
++++ b/include/acpi/processor.h
+@@ -100,7 +100,9 @@ struct acpi_processor_cx {
+ 	u32 csd_count;
+ 	struct acpi_csd_package *domain_info;
+ #endif
++#ifndef CONFIG_PROCESSOR_EXTERNAL_CONTROL
+ 	u8 bm_sts_skip;
++#endif
+	struct acpi_processor_cx_policy promotion;
+	struct acpi_processor_cx_policy demotion;
+	char desc[ACPI_CX_DESC_LEN];

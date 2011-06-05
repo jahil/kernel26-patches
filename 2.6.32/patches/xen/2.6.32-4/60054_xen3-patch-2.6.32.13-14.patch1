@@ -1,0 +1,29 @@
+From: Greg Kroah-Hartman <gregkh@suse.de>
+Subject: Linux 2.6.32.14
+Patch-mainline: 2.6.32.14
+
+Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+
+Automatically created from "patches.kernel.org/patch-2.6.32.13-14" by xen-port-patches.py
+
+--- sle11sp1-2010-08-06.orig/arch/x86/kernel/process-xen.c	2010-04-12 14:52:38.000000000 +0200
++++ sle11sp1-2010-08-06/arch/x86/kernel/process-xen.c	2010-08-06 17:06:45.000000000 +0200
+@@ -443,11 +443,13 @@ static int __cpuinit check_c1e_idle(cons
+ 		 * check OSVW bit for CPUs that are not affected
+ 		 * by erratum #400
+ 		 */
+-		rdmsrl(MSR_AMD64_OSVW_ID_LENGTH, val);
+-		if (val >= 2) {
+-			rdmsrl(MSR_AMD64_OSVW_STATUS, val);
+-			if (!(val & BIT(1)))
+-				goto no_c1e_idle;
++		if (cpu_has(c, X86_FEATURE_OSVW)) {
++			rdmsrl(MSR_AMD64_OSVW_ID_LENGTH, val);
++			if (val >= 2) {
++				rdmsrl(MSR_AMD64_OSVW_STATUS, val);
++				if (!(val & BIT(1)))
++					goto no_c1e_idle;
++			}
+ 		}
+ 		return 1;
+ 	}

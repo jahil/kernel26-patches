@@ -1,0 +1,72 @@
+From: http://xenbits.xensource.com/linux-2.6.18-xen.hg?rev/669c133aef53
+# HG changeset patch
+# User Keir Fraser <keir.fraser@citrix.com>
+# Date 1284396048 -3600
+# Node ID 669c133aef5317183c013c368f36e4c77fb60231
+# Parent  0051d294bb60fc096849df586d56a389e32650d4
+Subject: xen: netback: save interrupt state in add_to_net_schedule_list_tail
+Patch-mainline: n/a
+
+add_to_net_schedule_list_tail is called from both hard interrupt
+context (add_to_net_schedule_list_tail) and soft interrupt/process
+context (netif_schedule_work) so use the interrupt state saving
+spinlock variants.
+
+Fixes:
+        ------------[ cut here ]------------
+        WARNING: at kernel/lockdep.c:2323
+        trace_hardirqs_on_caller+0xef/0x1a0()
+        Hardware name: PowerEdge 860
+        Modules linked in: rtc_cmos rtc_core rtc_lib
+        Pid: 16, comm: xenwatch Not tainted
+        2.6.32.18-x86_32p-xen0-00850-ge6b9b2c #98
+        Call Trace:
+         [<c103951c>] warn_slowpath_common+0x6c/0xc0
+         [<c1039585>] warn_slowpath_null+0x15/0x20
+         [<c105f60f>] trace_hardirqs_on_caller+0xef/0x1a0
+         [<c105f6cb>] trace_hardirqs_on+0xb/0x10
+         [<c136cc72>] _spin_unlock_irq+0x22/0x40
+         [<c11ab9ef>] add_to_net_schedule_list_tail+0x5f/0xb0
+         [<c11aba6b>] netif_be_int+0x2b/0x120
+         [<c106dd8e>] handle_IRQ_event+0x2e/0xe0
+         [<c106f98e>] handle_level_irq+0x6e/0xf0
+         [<c1197cdf>] __xen_evtchn_do_upcall+0x16f/0x190
+         [<c11981b8>] xen_evtchn_do_upcall+0x28/0x40
+         [<c100b487>] xen_do_upcall+0x7/0xc
+         [<c119bcf9>] xs_talkv+0x59/0x1a0
+         [<c119bf6a>] xs_single+0x3a/0x50
+         [<c119c6f9>] xenbus_read+0x39/0x60
+         [<c11adf77>] frontend_changed+0x3e7/0x6a0
+         [<c119d35a>] xenbus_otherend_changed+0x8a/0xa0
+         [<c119d572>] frontend_changed+0x12/0x20
+         [<c119b9dc>] xenwatch_thread+0x7c/0x140
+         [<c104ea74>] kthread+0x74/0x80
+         [<c100b433>] kernel_thread_helper+0x7/0x10
+        ---[ end trace 48d73949a8e0909a ]---
+
+Signed-off-by: Ian Campbell <ian.campbell@citrix.com>
+Signed-off-by: Jan Beulich <jbeulich@novell.com>
+
+--- sle11sp1-2010-09-22.orig/drivers/xen/netback/netback.c	2010-01-04 11:56:34.000000000 +0100
++++ sle11sp1-2010-09-22/drivers/xen/netback/netback.c	2010-09-22 10:55:13.000000000 +0200
+@@ -821,16 +821,18 @@ static void remove_from_net_schedule_lis
+ 
+ static void add_to_net_schedule_list_tail(netif_t *netif)
+ {
++	unsigned long flags;
++
+ 	if (__on_net_schedule_list(netif))
+ 		return;
+ 
+-	spin_lock_irq(&net_schedule_list_lock);
++	spin_lock_irqsave(&net_schedule_list_lock, flags);
+ 	if (!__on_net_schedule_list(netif) &&
+ 	    likely(netif_schedulable(netif))) {
+ 		list_add_tail(&netif->list, &net_schedule_list);
+ 		netif_get(netif);
+ 	}
+-	spin_unlock_irq(&net_schedule_list_lock);
++	spin_unlock_irqrestore(&net_schedule_list_lock, flags);
+ }
+ 
+ /*

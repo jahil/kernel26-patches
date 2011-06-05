@@ -1,0 +1,11 @@
+- The is_local_address check should really be implemented by trying
+  to bind to the given address (like in determine_source_address),
+  and then checking if the source address that would be used to
+  connect to this destination is the same address as the destination
+  itself.
+                                                                                
+- Implement a way of preventing connections for being transproxied.
+  This would for example be useful if you have hosts on an internal
+  (e.g. 10.0.0.0/8) network that want to connect to the outside
+  world -- in such a case, not doing transproxying is akin to using
+  MASQUERADE.

@@ -1,0 +1,116 @@
+From: Greg Kroah-Hartman <gregkh@suse.de>
+Subject: Linux 2.6.32.11
+Patch-mainline: 2.6.32.11
+
+Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+
+Automatically created from "patches.kernel.org/patch-2.6.32.10-11" by xen-port-patches.py
+
+--- sle11sp1-2010-04-12.orig/arch/x86/include/mach-xen/asm/fixmap.h	2009-11-06 10:52:22.000000000 +0100
++++ sle11sp1-2010-04-12/arch/x86/include/mach-xen/asm/fixmap.h	2010-04-12 14:52:38.000000000 +0200
+@@ -82,6 +82,9 @@ enum fixed_addresses {
+ #endif
+ 	FIX_DBGP_BASE,
+ 	FIX_EARLYCON_MEM_BASE,
++#ifdef CONFIG_PROVIDE_OHCI1394_DMA_INIT
++	FIX_OHCI1394_BASE,
++#endif
+ #ifdef CONFIG_X86_LOCAL_APIC
+ 	FIX_APIC_BASE,	/* local (CPU) APIC) -- required for SMP or not */
+ #endif
+@@ -133,9 +136,6 @@ enum fixed_addresses {
+ 	FIX_BTMAP_END = __end_of_permanent_fixed_addresses + 256 -
+ 			(__end_of_permanent_fixed_addresses & 255),
+ 	FIX_BTMAP_BEGIN = FIX_BTMAP_END + NR_FIX_BTMAPS*FIX_BTMAPS_SLOTS - 1,
+-#ifdef CONFIG_PROVIDE_OHCI1394_DMA_INIT
+-	FIX_OHCI1394_BASE,
+-#endif
+ #ifdef CONFIG_X86_32
+ 	FIX_WP_TEST,
+ #endif
+--- sle11sp1-2010-04-12.orig/arch/x86/kernel/cpu/intel.c	2010-04-12 14:34:37.000000000 +0200
++++ sle11sp1-2010-04-12/arch/x86/kernel/cpu/intel.c	2010-04-12 14:52:38.000000000 +0200
+@@ -70,7 +70,9 @@ static void __cpuinit early_init_intel(s
+ 	if (c->x86_power & (1 << 8)) {
+ 		set_cpu_cap(c, X86_FEATURE_CONSTANT_TSC);
+ 		set_cpu_cap(c, X86_FEATURE_NONSTOP_TSC);
++#ifndef CONFIG_XEN
+ 		if (!check_tsc_unstable())
++#endif
+ 			sched_clock_stable = 1;
+ 	}
+ 
+--- sle11sp1-2010-04-12.orig/arch/x86/kernel/mpparse-xen.c	2009-11-06 10:52:22.000000000 +0100
++++ sle11sp1-2010-04-12/arch/x86/kernel/mpparse-xen.c	2010-04-12 14:52:38.000000000 +0200
+@@ -371,13 +371,6 @@ static int __init smp_read_mpc(struct mp
+ 		x86_init.mpparse.mpc_record(1);
+ 	}
+ 
+-#ifdef CONFIG_X86_BIGSMP
+-	generic_bigsmp_probe();
+-#endif
+-
+-	if (apic->setup_apic_routing)
+-		apic->setup_apic_routing();
+-
+ 	if (!num_processors)
+ 		printk(KERN_ERR "MPTABLE: no processors registered!\n");
+ 	return num_processors;
+--- sle11sp1-2010-04-12.orig/arch/x86/kernel/process-xen.c	2010-02-09 17:12:56.000000000 +0100
++++ sle11sp1-2010-04-12/arch/x86/kernel/process-xen.c	2010-04-12 14:52:38.000000000 +0200
+@@ -423,21 +423,37 @@ static int __cpuinit mwait_usable(const 
+ }
+ 
+ /*
+- * Check for AMD CPUs, which have potentially C1E support
++ * Check for AMD CPUs, where APIC timer interrupt does not wake up CPU from C1e.
++ * For more information see
++ * - Erratum #400 for NPT family 0xf and family 0x10 CPUs
++ * - Erratum #365 for family 0x11 (not affected because C1e not in use)
+  */
+ static int __cpuinit check_c1e_idle(const struct cpuinfo_x86 *c)
+ {
++	u64 val;
+ 	if (c->x86_vendor != X86_VENDOR_AMD)
+-		return 0;
+-
+-	if (c->x86 < 0x0F)
+-		return 0;
++		goto no_c1e_idle;
+ 
+ 	/* Family 0x0f models < rev F do not have C1E */
+-	if (c->x86 == 0x0f && c->x86_model < 0x40)
+-		return 0;
++	if (c->x86 == 0x0F && c->x86_model >= 0x40)
++		return 1;
++
++	if (c->x86 == 0x10) {
++		/*
++		 * check OSVW bit for CPUs that are not affected
++		 * by erratum #400
++		 */
++		rdmsrl(MSR_AMD64_OSVW_ID_LENGTH, val);
++		if (val >= 2) {
++			rdmsrl(MSR_AMD64_OSVW_STATUS, val);
++			if (!(val & BIT(1)))
++				goto no_c1e_idle;
++		}
++		return 1;
++	}
+ 
+-	return 1;
++no_c1e_idle:
++	return 0;
+ }
+ 
+ static cpumask_var_t c1e_mask;
+--- sle11sp1-2010-04-12.orig/arch/x86/kernel/process_64-xen.c	2010-03-17 14:38:41.000000000 +0100
++++ sle11sp1-2010-04-12/arch/x86/kernel/process_64-xen.c	2010-04-12 14:52:38.000000000 +0200
+@@ -621,6 +621,7 @@ void set_personality_ia32(void)
+ 
+ 	/* Make sure to be in 32bit mode */
+ 	set_thread_flag(TIF_IA32);
++	current->personality |= force_personality32;
+ 
+ 	/* Prepare the first "return" to user space */
+ 	current_thread_info()->status |= TS_COMPAT;

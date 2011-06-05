@@ -1,0 +1,106 @@
+***************************************************************************
+* KTAU User-space Utilities 						  *
+* File         	: user-src/src/README					  *
+* Version      	: $Id: README,v 1.5 2006/11/12 00:26:30 anataraj Exp $
+***************************************************************************
+
+FILES:
+	Makefile 			- Makefile 
+	funcMap.cpp 			- Function Mapping Tools 
+	ktau_proc_interface.c		- KTAU /proc interface library
+	ktaud/ 				- KTAUD subtree
+	runktau/ 			- timeKtau utility
+	oldstuff/			- Old utilities	
+---------------------------------------------------------------------------
+
+INSTALLATION:
+	1. Run "make clean all install KERNEL_SRC=<Path to kernel source>"
+	2. Specify "ktau/user-src/bin" in the $PATH variable.
+---------------------------------------------------------------------------
+
+UTILITIES:
+
+1. KTAUD
+
+	Introduction:
+	A user-space daemon which accesses KTAU profiles or traces
+	periodically and output profiles or traces data to a file or 
+	directories.
+
+	Usage:
+	KTAUD takes configuration file (recommended) or command line option 
+	as inputs.
+
+	-f <configuration file>
+		A format of configuration file is shown in  
+		"ktau/user-src/src/ktaud/ktaud.conf". In general this file
+		should be put in "/etc/ktaud.conf", and the daemon can 
+		be controlled by the script "ktaud.sh".  Note that this 
+		option cannot be used with others.
+	
+	-h
+		Print out usages
+	
+	-t <sample period>
+		Specify sample period in seconds.
+
+	-d <output directory>
+		Specify output directory. Default is "/tmp/ktau_trace"
+
+	-p "<PID list>"
+		Specify a list of PIDs seperated by space.	
+		
+	-m [ self | all | pid ]
+		Specify mode of operation
+			self:	tracing/profiling KTAUD
+			all :	trace/profile all process in the system
+			pid :	trace/profile the specified PIDs. This mode
+				is used together with -p.
+	-P 
+		Specify profiling mode.
+	
+	-T 
+		Specify tracing mode.
+
+2. funcMap
+
+	Introduction:
+	This utility maps the memory address of each kernel routine in the
+	output file from KTAUD to the corresponding name as in the mapping
+	file (System.map or /proc/kallsyms)
+
+	Usage:
+	funcMap takes command line option with two arguements.
+	
+		funcMap <-t | -p> <Mapping File> <Input File>		
+	
+	-t 
+		Indicate the target file is a trace.
+
+	-p
+		Indicate the target file is a profile.
+	
+	User must specify either -t or -p to indicate type of input file. 
+	"Mapping file" is a mapping of kernel symbol table which maps
+	memory address to function name. This can be either "System.map"
+	which is outputted after kernel compilation, or "/proc/kallsyms".
+
+	"Input File" is the output file from KTAUD which contains 
+	tracing/profiling information.
+
+NOTE: 
+	Please see "example.txt" for a demo of how to use ktaud and funcMap.
+
+3. timeKtau
+
+	Introduction:
+	timeKtau behaves like the `time` command, but in place of reporting just the 
+	total user and system times, it also provides complete kernel-level performance
+	state for the program run just run. It can provide both profiles or traces and 
+	can do so either just for the program run or for all processes in the system
+	while the program runs.
+
+	Usage:
+	Just execute timeKtau without any parameters to get help information.
+
+---------------------------------------------------------------------------

@@ -1,0 +1,430 @@
+diff -Nru linux-2.6.12/drivers/char/Kconfig linux-2.6.12-new/drivers/char/Kconfig
+--- linux-2.6.12/drivers/char/Kconfig	2005-06-20 22:29:17.000000000 +0200
++++ linux-2.6.12-new/drivers/char/Kconfig	2005-06-20 22:57:57.614500000 +0200
+@@ -57,6 +57,187 @@
+ 
+ 	  If unsure, say Y.
+ 
++config VT_CKO
++	bool "Colored Kernel Output"
++	depends on VT_CONSOLE
++	default n
++	---help---
++	  This option will give you ability to change color of
++	  kernel messages.
++
++	  Note that if you say Y to options CONFIG_FB_VGA16 and
++	  CONFIG_FRAMEBUFFER_CONSOLE, you will be able to chose
++	  between 16 instead of 8 colors.
++
++	  CONFIG_FB_VGA16 and CONFIG_FRAMEBUFFER_CONSOLE depends
++	  on CONFIG_FB (Support for frame buffer devices).
++
++	  If unsure, say N.
++
++choice
++	bool "Change foreground color of kernel output"
++	depends on VT_CKO
++	default VT_CKO_FG_COLOR_6
++
++config VT_CKO_FG_COLOR_0
++	bool "black"
++config VT_CKO_FG_COLOR_1
++	bool "blue"
++config VT_CKO_FG_COLOR_2
++	bool "green"
++config VT_CKO_FG_COLOR_3
++	bool "cyan"
++config VT_CKO_FG_COLOR_4
++	bool "red"
++config VT_CKO_FG_COLOR_5
++	bool "purple"
++config VT_CKO_FG_COLOR_6
++	bool "yellow"
++config VT_CKO_FG_COLOR_7
++	bool "white"
++config VT_CKO_FG_COLOR_8
++	bool "grey"
++	depends on FB_VGA16=y && FRAMEBUFFER_CONSOLE=y
++config VT_CKO_FG_COLOR_9
++	bool "bright blue"
++	depends on FB_VGA16=y && FRAMEBUFFER_CONSOLE=y
++config VT_CKO_FG_COLOR_A
++	bool "bright green"
++	depends on FB_VGA16=y && FRAMEBUFFER_CONSOLE=y
++config VT_CKO_FG_COLOR_B
++	bool "bright cyan"
++	depends on FB_VGA16=y && FRAMEBUFFER_CONSOLE=y
++config VT_CKO_FG_COLOR_C
++	bool "bright red"
++	depends on FB_VGA16=y && FRAMEBUFFER_CONSOLE=y
++config VT_CKO_FG_COLOR_D
++	bool "bright purple"
++	depends on FB_VGA16=y && FRAMEBUFFER_CONSOLE=y
++config VT_CKO_FG_COLOR_E
++	bool "bright yellow"
++	depends on FB_VGA16=y && FRAMEBUFFER_CONSOLE=y
++config VT_CKO_FG_COLOR_F
++	bool "bright white"
++	depends on FB_VGA16=y && FRAMEBUFFER_CONSOLE=y
++endchoice
++
++config VT_CKO_FG_COLOR
++	hex
++	depends on VT_CKO
++	range 0x00 0x0f
++	default 0x00 if VT_CKO_FG_COLOR_0
++	default 0x01 if VT_CKO_FG_COLOR_1
++	default 0x02 if VT_CKO_FG_COLOR_2
++	default 0x03 if VT_CKO_FG_COLOR_3
++	default 0x04 if VT_CKO_FG_COLOR_4
++	default 0x05 if VT_CKO_FG_COLOR_5
++	default 0x06 if VT_CKO_FG_COLOR_6
++	default 0x07 if VT_CKO_FG_COLOR_7
++	default 0x08 if VT_CKO_FG_COLOR_8
++	default 0x09 if VT_CKO_FG_COLOR_9
++	default 0x0a if VT_CKO_FG_COLOR_A
++	default 0x0b if VT_CKO_FG_COLOR_B
++	default 0x0c if VT_CKO_FG_COLOR_C
++	default 0x0d if VT_CKO_FG_COLOR_D
++	default 0x0e if VT_CKO_FG_COLOR_E
++	default 0x0f if VT_CKO_FG_COLOR_F
++
++choice
++	bool "Change background color of kernel output"
++	depends on VT_CKO
++	default VT_CKO_BG_COLOR_0
++
++config VT_CKO_BG_COLOR_0
++	bool "black"
++config VT_CKO_BG_COLOR_1
++	bool "blue"
++config VT_CKO_BG_COLOR_2
++	bool "green"
++config VT_CKO_BG_COLOR_3
++	bool "cyan"
++config VT_CKO_BG_COLOR_4
++	bool "red"
++config VT_CKO_BG_COLOR_5
++	bool "purple"
++config VT_CKO_BG_COLOR_6
++	bool "yellow"
++config VT_CKO_BG_COLOR_7
++	bool "white"
++config VT_CKO_BG_COLOR_8
++	bool "grey"
++	depends on FB_VGA16=y && FRAMEBUFFER_CONSOLE=y
++config VT_CKO_BG_COLOR_9
++	bool "bright blue"
++	depends on FB_VGA16=y && FRAMEBUFFER_CONSOLE=y
++config VT_CKO_BG_COLOR_A
++	bool "bright green"
++	depends on FB_VGA16=y && FRAMEBUFFER_CONSOLE=y
++config VT_CKO_BG_COLOR_B
++	bool "bright cyan"
++	depends on FB_VGA16=y && FRAMEBUFFER_CONSOLE=y
++config VT_CKO_BG_COLOR_C
++	bool "bright red"
++	depends on FB_VGA16=y && FRAMEBUFFER_CONSOLE=y
++config VT_CKO_BG_COLOR_D
++	bool "bright purple"
++	depends on FB_VGA16=y && FRAMEBUFFER_CONSOLE=y
++config VT_CKO_BG_COLOR_E
++	bool "bright yellow"
++	depends on FB_VGA16=y && FRAMEBUFFER_CONSOLE=y
++config VT_CKO_BG_COLOR_F
++	bool "bright white"
++	depends on FB_VGA16=y && FRAMEBUFFER_CONSOLE=y
++endchoice
++
++config VT_CKO_BG_COLOR
++	hex
++	depends on VT_CKO
++	range 0x00 0xf0
++	default 0x00 if VT_CKO_BG_COLOR_0
++	default 0x10 if VT_CKO_BG_COLOR_1
++	default 0x20 if VT_CKO_BG_COLOR_2
++	default 0x30 if VT_CKO_BG_COLOR_3
++	default 0x40 if VT_CKO_BG_COLOR_4
++	default 0x50 if VT_CKO_BG_COLOR_5
++	default 0x60 if VT_CKO_BG_COLOR_6
++	default 0x70 if VT_CKO_BG_COLOR_7
++	default 0x80 if VT_CKO_BG_COLOR_8
++	default 0x90 if VT_CKO_BG_COLOR_9
++	default 0xa0 if VT_CKO_BG_COLOR_A
++	default 0xb0 if VT_CKO_BG_COLOR_B
++	default 0xc0 if VT_CKO_BG_COLOR_C
++	default 0xd0 if VT_CKO_BG_COLOR_D
++	default 0xe0 if VT_CKO_BG_COLOR_E
++	default 0xf0 if VT_CKO_BG_COLOR_F
++
++config VT_CKO_PROCFS
++	bool "Procfs support"
++	depends on VT_CKO
++	default y
++	---help---
++	  This option will add procfs support in CKO patch.
++	  This will let you to change foreground and background color
++	  without recompiling the kernel or reboot.
++
++	  This option will create vt_cko directory under your proc tree
++	  and three files under this directory:
++	  fg_color - for reading and changing current foreground color
++	  bg_color - for reading and changing current background color
++	  verbose  - for turning on/off CKO verbosity
++
++	  If unsure, say Y.
++
++config VT_CKO_VERBOSE
++	bool "Verbosity"
++	depends on VT_CKO && VT_CKO_PROCFS
++	default y
++	---help---
++	  This option will make CKO more verbose.
++	  Every time color changes it will print a note. It can be helpful
++	  for experimenting with colors.
++
++	  If unsure, say Y.
++
+ config HW_CONSOLE
+ 	bool
+ 	depends on VT && !S390 && !UML
+diff -Nru linux-2.6.12/drivers/char/vt.c linux-2.6.12-new/drivers/char/vt.c
+--- linux-2.6.12/drivers/char/vt.c	2005-06-20 22:29:17.000000000 +0200
++++ linux-2.6.12-new/drivers/char/vt.c	2005-06-20 23:43:43.595047000 +0200
+@@ -93,6 +93,7 @@
+ #include <linux/pm.h>
+ #include <linux/font.h>
+ #include <linux/bitops.h>
++#include <linux/proc_fs.h>
+ 
+ #include <asm/io.h>
+ #include <asm/system.h>
+@@ -221,6 +222,156 @@
+ #define DO_UPDATE(vc)	CON_IS_VISIBLE(vc)
+ #endif
+ 
++
++#ifdef CONFIG_VT_CKO
++/* VT_CKO declarations */
++static int vt_cko_fg_color = CONFIG_VT_CKO_FG_COLOR;
++static int vt_cko_bg_color = CONFIG_VT_CKO_BG_COLOR;
++#ifdef CONFIG_VT_CKO_PROCFS
++static int vt_cko_verbose;
++struct proc_dir_entry *vt_cko_proc_parent;
++struct proc_dir_entry *vt_cko_proc_fg_color;
++struct proc_dir_entry *vt_cko_proc_bg_color;
++struct proc_dir_entry *vt_cko_proc_verbose;
++struct vt_cko_data_t { char name[8 + 1]; };
++struct vt_cko_data_t vt_cko_fg_color_data, vt_cko_bg_color_data, vt_cko_verbose_data;
++
++/* VT_CKO read_proc function */
++static int vt_cko_read_proc (char *page, char **start, off_t off, int count,
++				int *eof, void *data)
++{
++	char *ptr = page;
++	size_t len;
++	struct vt_cko_data_t *vt_cko_data = (struct vt_cko_data_t *)data;
++
++	if (strcmp (vt_cko_data->name, vt_cko_proc_fg_color->name) == 0)
++			ptr += sprintf(ptr, "%d\n", vt_cko_fg_color);
++	else
++		if (strcmp (vt_cko_data->name, vt_cko_proc_bg_color->name) == 0)
++			{
++			if (vt_cko_bg_color > 0)
++				ptr += sprintf(ptr, "%d\n", (vt_cko_bg_color/16));
++			else
++				ptr += sprintf(ptr, "%d\n", 0);
++			}
++		else
++			ptr += sprintf(ptr, "%d\n", vt_cko_verbose);
++
++	len = strlen(page);
++	*start = NULL;
++
++	if (off+count >= len)
++		*eof = 1;
++	else
++		*eof = 0;
++
++	return len;
++}
++
++/* VT_CKO write_proc function */
++static int vt_cko_write_proc (struct file *file, const char *buffer,
++				unsigned long count, void *data)
++{
++	int gtmp;
++	char kbuf[3];
++	struct vt_cko_data_t *vt_cko_data = (struct vt_cko_data_t *)data;
++
++	if (count > 3)
++		return -EINVAL;
++
++	if (copy_from_user (kbuf, buffer, count))
++		return -EFAULT;
++
++	gtmp = (int) simple_strtol(kbuf, NULL, 10);
++
++#if defined(CONFIG_FB_VGA16) && defined(CONFIG_FRAMEBUFFER_CONSOLE)
++#define NCOLORS 15
++#else
++#define NCOLORS 7
++#endif
++
++	if (gtmp > NCOLORS || gtmp < 0)
++		return -EINVAL;
++
++	if (strcmp (vt_cko_data->name, vt_cko_proc_fg_color->name) == 0)
++		{
++		vt_cko_fg_color = gtmp;
++		if (vt_cko_verbose == 1)
++		printk ("CKO has just changed foreground color\n");
++		}
++	else
++		{
++		if (strcmp (vt_cko_data->name, vt_cko_proc_bg_color->name) == 0)
++			{
++			vt_cko_bg_color = (gtmp * 16);
++
++			if (vt_cko_verbose == 1)
++				printk ("CKO has just changed background color\n");
++			}
++		else
++			{
++			if (gtmp < 0 || gtmp > 1)
++				return -EINVAL;
++
++			vt_cko_verbose = gtmp;
++			if (vt_cko_verbose == 1)
++				printk ("CKO has just became verbose\n");
++			else
++				printk ("CKO has just became quiet\n");
++			}
++		}
++
++	return count;
++}
++
++/* VT_CKO init_proc function */
++void vt_cko_init_proc (void)
++{
++#ifdef CONFIG_VT_CKO_VERBOSE
++	vt_cko_verbose = 1;
++#else
++	vt_cko_verbose = 0;
++#endif
++
++	if ((vt_cko_proc_parent = proc_mkdir ("vt_cko", NULL)) == NULL)
++		printk ("Unable to create vt_cko entry in /proc\n");
++	else
++		{
++		if ((vt_cko_proc_fg_color = create_proc_entry ("fg_color", 0644, vt_cko_proc_parent)) == NULL)
++			printk ("Unable to create fg_color entry in /proc/vt_cko\n");
++		else
++			{
++			vt_cko_proc_fg_color->read_proc = vt_cko_read_proc;
++			vt_cko_proc_fg_color->write_proc = vt_cko_write_proc;
++			strcpy(vt_cko_fg_color_data.name, vt_cko_proc_fg_color->name);
++			vt_cko_proc_fg_color->data = &vt_cko_fg_color_data;
++			}
++
++		if ((vt_cko_proc_bg_color = create_proc_entry ("bg_color", 0644, vt_cko_proc_parent)) == NULL)
++			printk ("Unable to create bg_color entry in /proc/vt_cko\n");
++		else
++			{
++			vt_cko_proc_bg_color->read_proc = vt_cko_read_proc;
++			vt_cko_proc_bg_color->write_proc = vt_cko_write_proc;
++			strcpy(vt_cko_bg_color_data.name, vt_cko_proc_bg_color->name);
++			vt_cko_proc_bg_color->data = &vt_cko_bg_color_data;
++			}
++
++		if ((vt_cko_proc_verbose = create_proc_entry ("verbose", 0644, vt_cko_proc_parent)) == NULL)
++			printk ("Unable to create verbose entry in /proc/vt_cko\n");
++		else
++			{
++			vt_cko_proc_verbose->read_proc = vt_cko_read_proc;
++			vt_cko_proc_verbose->write_proc = vt_cko_write_proc;
++			strcpy(vt_cko_verbose_data.name, vt_cko_proc_verbose->name);
++			vt_cko_proc_verbose->data = &vt_cko_verbose_data;
++			}
++		}
++}
++#endif /* CONFIG_VT_CKO_PROCFS */
++#endif /* CONFIG_VT_CKO */
++
++
+ static inline unsigned short *screenpos(struct vc_data *vc, int offset, int viewed)
+ {
+ 	unsigned short *p;
+@@ -2165,11 +2316,21 @@
+ 
+ 	start = (ushort *)vc->vc_pos;
+ 
++#ifdef CONFIG_VT_CKO
++	/* Kernel will write colored messages in *BSD style. */
++	vc->vc_color = (vt_cko_fg_color | vt_cko_bg_color);
++	update_attr(vc);
++#endif
++
+ 	/* Contrived structure to try to emulate original need_wrap behaviour
+ 	 * Problems caused when we have need_wrap set on '\n' character */
+ 	while (count--) {
+ 		c = *b++;
+ 		if (c == 10 || c == 13 || c == 8 || vc->vc_need_wrap) {
++#ifdef CONFIG_VT_CKO
++			vc->vc_color = vc->vc_def_color;
++			update_attr(vc);
++#endif
+ 			if (cnt > 0) {
+ 				if (CON_IS_VISIBLE(vc))
+ 					vc->vc_sw->con_putcs(vc, start, cnt, vc->vc_y, vc->vc_x);
+@@ -2182,6 +2343,10 @@
+ 				bs(vc);
+ 				start = (ushort *)vc->vc_pos;
+ 				myx = vc->vc_x;
++#ifdef CONFIG_VT_CKO
++				vc->vc_color = (vt_cko_fg_color | vt_cko_bg_color);
++				update_attr(vc);
++#endif
+ 				continue;
+ 			}
+ 			if (c != 13)
+@@ -2189,6 +2354,10 @@
+ 			cr(vc);
+ 			start = (ushort *)vc->vc_pos;
+ 			myx = vc->vc_x;
++#ifdef CONFIG_VT_CKO
++			vc->vc_color = (vt_cko_fg_color | vt_cko_bg_color);
++			update_attr(vc);
++#endif
+ 			if (c == 10 || c == 13)
+ 				continue;
+ 		}
+@@ -2210,6 +2379,13 @@
+ 			vc->vc_need_wrap = 1;
+ 		}
+ 	}
++
++#ifdef CONFIG_VT_CKO
++	/* Kernel will set color to it's previous state. */
++	vc->vc_color = vc->vc_def_color;
++	update_attr(vc);
++#endif
++
+ 	set_cursor(vc);
+ 
+ quit:
+@@ -2613,6 +2789,12 @@
+ #ifdef CONFIG_MDA_CONSOLE
+ 	mda_console_init();
+ #endif
++
++#ifdef CONFIG_VT_CKO_PROCFS
++	/* VT_CKO proc entry initialization. */
++	vt_cko_init_proc();
++#endif
++
+ 	return 0;
+ }
+ 

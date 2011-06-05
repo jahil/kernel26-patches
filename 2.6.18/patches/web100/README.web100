@@ -1,0 +1,183 @@
+WEB100 release notes
+Matt Mathis
+Aug 2004
+
+This is the 2.5.12 release of web100 software for Linux 2.6.* kernels.
+
+-------------------------------------------------------------------------
+WARNING: Please note that if security permissions are not configured
+         correctly (see Notes under CONFIGURING THE KERNEL in
+         Install.web100), then potentially any user on the system will
+         be able to affect the attributes of any TCP connection on the
+         system.
+-------------------------------------------------------------------------
+
+Supported Linux versions
+
+    This release supports only Linux kernel version 2.6.18.  It may apply
+    cleanly or with small fix-ups to similar versions, or it may not.
+    
+    PLEASE FOLLOW THE INSTRUCTIONS in Install.web100 and download a kernel
+    from kernel.org, unless you are sure you wish to do otherwise.  We will
+    not be able to help you with problems you have in patching other
+    versions, such as "vendor" kernels that come from various Linux
+    distributors.
+     
+
+================================================================
+Software and Documentation Map
+
+    README.web100  - This file
+
+    CHANGES.web100 - Document containing the changes/revision information
+
+    web100-*.patch - Patch file for the kernel
+
+    Install.web100 - Instructions for building and installing the kernel.
+
+    tcp-kis.txt    - TCP Kernel Instrument Set document.  This document
+                     describes the instrumentation in the TCP/IP stack in
+                     the kernel and is the basis of all the tools and
+                     instruments in this release.
+
+    ietf-*-XX.txt  - MIB document submitted to IETF
+
+    PLEASE NOTE: This distribution contains only the kernel related software
+    patches and documents.  User level software and documentation
+    is distributed separately as "userland" distribution.  In
+    general, this distribution should be used in conjunction with
+    the userland distribution.
+
+    In addition to the documents mentioned above, application and
+    tool developers should view the following documents that will
+    become available after installing the kernel:
+
+    Kernel Documents (in the patched kernel source tree):
+
+    - Documentation/web100/sysctl.txt:
+      Describes the sysctl variables controlling Web100 functionality.
+    
+    - Documentation/web100/proc_interface.txt:
+      This document provides a description of the current kernel
+      implementation of web100 and the implementation of API
+      through /proc.
+
+    - Documentation/web100/locking.txt:
+      Provides brief documentation on locking issues
+
+    In addition to the documents that are included in the kernel
+    distribution, application and tool developers should find the
+    developer's guide and user's guide that are provided with userland
+    distribution very helpful.
+
+================================================================
+NEW: Autotuning changes
+
+    Major parts of the Web100 autotuning code have been pulled in to the
+    mainline Linux kernel.  As of Web100 2.4.0 (for Linux 2.4.27) the
+    Web100 patch will no longer have any autotuning code.
+    
+    As of this time, the tuning code in the Linux kernel will not run
+    "out of the box" as previously web100-patched kernels would.  In order
+    to obtain proper performance, the following sysctl settings are
+    recommended (in /etc/sysctl.conf format):
+    
+      net.core.wmem_max = 8388608
+      net.core.rmem_max = 8388608
+      net.ipv4.tcp_wmem = 4096 65536 8388608
+      net.ipv4.tcp_rmem = 4096 87380 8388608
+      net.ipv4.tcp_default_win_scale = 7
+      net.ipv4.tcp_moderate_rcvbuf = 1
+    
+    We are currently working with the Linux developers to try to get the
+    stock kernel to be able to use similar settings by default.
+
+
+================================================================
+Community Support
+
+    We have established email lists and web pages as the principal means
+    for supporting the web100 community.
+
+    Please use "discussion@web100.org" to communicate with other web100
+    testers like yourself and our support staff.  This is the best address
+    for general advice and discussion about web100, since your messages are
+    likely to stimulate ideas in others.  Please visit:
+    http://internal.web100.org/mailman/listinfo/discussion to add yourself
+    to the discussion mailing list, to view archives or to manage your
+    subscription(s).
+
+    Please use "support@web100.org" if you wish to communicate with just
+    the support staff.  This is the best address for conversations that
+    could be distracting to other testers.
+
+    Please visit internal.web100.org to get updates, news, archives, track
+    bug reports and more.  In the future this site will be the primary
+    location to obtain updated documentation and new releases.  Please
+    register a user ID.
+
+    For information on known bugs please see
+    https://internal.web100.org/bugs/?group_id=3
+
+    Please send us you suggestions!
+
+================================================================
+Copyrights
+
+    All documentation and programs in this release is copyright (c)
+    Carnegie Mellon University, The Board of Trustees of the University of
+    Illinois, and University Corporation for Atmospheric Research, 2001.
+    This software comes with NO WARRANTY.
+
+    The kernel changes and additions are also covered by the GPL version 2.
+
+    Since our code is currently under active development we prefer
+    that everyone gets it directly from us.  This will permit us
+    to collaborate with all users.  So for the time being, please
+    refer potential users to us instead of redistributing web100.
+
+================================================================
+Requested feedback from user of web100:
+
+    We are very much interested in your feedback.  Please do not hesitate to
+    drop us a note with comments and/or suggestions (support@web100.org).
+
+    Please let us know about your experiences on the installation process. 
+    We have only tested the process on a limited number of hardware and
+    software configurations, and may have unintended interactions with some
+    NICs, other network options or higher layer protocols or services that
+    we may not have tested.  In these situations, it will be very helpful if
+    you include the details of your hardware and software configurations as
+    suggested in the Install.web100 document.
+    
+    We are looking for evidence of possible negative impact to the Internet
+    from well tuned TCP flows.  We have already observed a small number of
+    situations where a single well tuned web100 TCP flow adversely affected
+    other network users.  This is expected because the measures outlined in
+    RFC2309 ("Recommendations on Queue Management and Congestion Control in
+    the Internet", http://www.ietf.org/rfc/rfc2309.txt) have not been widely
+    deployed.  That paper also predicts a number of symptoms including
+    "lock-out" and "full queues" both of which have been observed in some
+    context with web100.
+
+    We are looking for some way to gage the extent of these problems.  As a
+    first step we ask that all alpha testers monitor for any potential
+    negative impact caused by web100.  If you observe any negative impact,
+    please document and report it to us.  We would like to be able to
+    reconstruct some of the circumstances.
+
+    In addition to the request for feedback on the kernel implementation, we
+    would like you to provide feedback on the tools and applications
+    distributed as userland release.  Please see feedback section in that
+    distribution for more specific information on the type of feedback we
+    would like you to provide.
+
+================================================================
+ACKNOWLEDGMENT:
+
+    This material is based in whole or in part on work supported by
+    the National Science Foundation under Grant No. 0083285. Any
+    opinions, findings and conclusions or recommendations expressed in
+    this material are those of the author(s) and do not necessarily
+    reflect the views of the National Science Foundation (NSF).
+

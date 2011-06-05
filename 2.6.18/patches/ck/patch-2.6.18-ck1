@@ -1,0 +1,4353 @@
+Index: linux-2.6.18-ck1/fs/proc/array.c
+===================================================================
+--- linux-2.6.18-ck1.orig/fs/proc/array.c	2006-09-21 19:54:55.000000000 +1000
++++ linux-2.6.18-ck1/fs/proc/array.c	2006-09-21 20:00:33.000000000 +1000
+@@ -165,7 +165,7 @@ static inline char * task_state(struct t
+ 	read_lock(&tasklist_lock);
+ 	buffer += sprintf(buffer,
+ 		"State:\t%s\n"
+-		"SleepAVG:\t%lu%%\n"
++		"Bonus:\t%d\n"
+ 		"Tgid:\t%d\n"
+ 		"Pid:\t%d\n"
+ 		"PPid:\t%d\n"
+@@ -173,7 +173,7 @@ static inline char * task_state(struct t
+ 		"Uid:\t%d\t%d\t%d\t%d\n"
+ 		"Gid:\t%d\t%d\t%d\t%d\n",
+ 		get_task_state(p),
+-		(p->sleep_avg/1024)*100/(1020000000/1024),
++		p->bonus,
+ 	       	p->tgid,
+ 		p->pid, pid_alive(p) ? p->group_leader->real_parent->tgid : 0,
+ 		pid_alive(p) && p->ptrace ? p->parent->pid : 0,
+Index: linux-2.6.18-ck1/kernel/exit.c
+===================================================================
+--- linux-2.6.18-ck1.orig/kernel/exit.c	2006-09-21 19:55:00.000000000 +1000
++++ linux-2.6.18-ck1/kernel/exit.c	2006-09-21 20:00:33.000000000 +1000
+@@ -166,7 +166,6 @@ repeat:
+ 		zap_leader = (leader->exit_signal == -1);
+ 	}
+ 
+-	sched_exit(p);
+ 	write_unlock_irq(&tasklist_lock);
+ 	proc_flush_task(p);
+ 	release_thread(p);
+Index: linux-2.6.18-ck1/include/linux/sched.h
+===================================================================
+--- linux-2.6.18-ck1.orig/include/linux/sched.h	2006-09-21 19:54:58.000000000 +1000
++++ linux-2.6.18-ck1/include/linux/sched.h	2006-09-21 20:05:32.000000000 +1000
+@@ -32,9 +32,16 @@
+ #define SCHED_FIFO		1
+ #define SCHED_RR		2
+ #define SCHED_BATCH		3
++#define SCHED_ISO		4
++#define SCHED_IDLEPRIO		5
+ 
+ #ifdef __KERNEL__
+ 
++#define SCHED_MAX		SCHED_IDLEPRIO
++#define SCHED_RANGE(policy)	((policy) <= SCHED_MAX)
++#define SCHED_RT(policy)	((policy) == SCHED_FIFO || \
++					(policy) == SCHED_RR)
++
+ struct sched_param {
+ 	int sched_priority;
+ };
+@@ -204,6 +211,7 @@ extern void show_stack(struct task_struc
+ 
+ void io_schedule(void);
+ long io_schedule_timeout(long timeout);
++extern int sched_interactive, sched_compute, sched_iso_cpu;
+ 
+ extern void cpu_init (void);
+ extern void trap_init(void);
+@@ -498,14 +506,18 @@ struct signal_struct {
+ 
+ #define MAX_USER_RT_PRIO	100
+ #define MAX_RT_PRIO		MAX_USER_RT_PRIO
++#define ISO_PRIO		(MAX_RT_PRIO - 1)
+ 
+-#define MAX_PRIO		(MAX_RT_PRIO + 40)
++#define MAX_PRIO		(MAX_RT_PRIO + 41)
++#define MIN_USER_PRIO		(MAX_PRIO - 2)
++#define IDLEPRIO_PRIO		(MAX_PRIO - 1)
+ 
+ #define rt_prio(prio)		unlikely((prio) < MAX_RT_PRIO)
+ #define rt_task(p)		rt_prio((p)->prio)
+ #define batch_task(p)		(unlikely((p)->policy == SCHED_BATCH))
+-#define has_rt_policy(p) \
+-	unlikely((p)->policy != SCHED_NORMAL && (p)->policy != SCHED_BATCH)
++#define has_rt_policy(p) 	unlikely(SCHED_RT((p)->policy))
++#define iso_task(p)		(unlikely((p)->policy == SCHED_ISO))
++#define idleprio_task(p)	(unlikely((p)->policy == SCHED_IDLEPRIO))
+ 
+ /*
+  * Some day this will be a full-fledged user tracking system..
+@@ -707,6 +719,22 @@ extern unsigned int max_cache_size;
+ 
+ #endif	/* CONFIG_SMP */
+ 
++/*
++ * A runqueue laden with a single nice 0 task scores a weighted_cpuload of
++ * SCHED_LOAD_SCALE. This function returns 1 if any cpu is laden with a
++ * task of nice 0 or enough lower priority tasks to bring up the
++ * weighted_cpuload
++ */
++static inline int above_background_load(void)
++{
++	unsigned long cpu;
++
++	for_each_online_cpu(cpu) {
++		if (weighted_cpuload(cpu) >= SCHED_LOAD_SCALE)
++			return 1;
++	}
++	return 0;
++}
+ 
+ struct io_context;			/* See blkdev.h */
+ void exit_io_context(void);
+@@ -755,15 +783,6 @@ struct audit_context;		/* See audit.c */
+ struct mempolicy;
+ struct pipe_inode_info;
+ 
+-enum sleep_type {
+-	SLEEP_NORMAL,
+-	SLEEP_NONINTERACTIVE,
+-	SLEEP_INTERACTIVE,
+-	SLEEP_INTERRUPTED,
+-};
+-
+-struct prio_array;
+-
+ struct task_struct {
+ 	volatile long state;	/* -1 unrunnable, 0 runnable, >0 stopped */
+ 	struct thread_info *thread_info;
+@@ -781,19 +800,18 @@ struct task_struct {
+ 	int load_weight;	/* for niceness load balancing purposes */
+ 	int prio, static_prio, normal_prio;
+ 	struct list_head run_list;
+-	struct prio_array *array;
+ 
+ 	unsigned short ioprio;
+ 	unsigned int btrace_seq;
+ 
+-	unsigned long sleep_avg;
+-	unsigned long long timestamp, last_ran;
++	unsigned long long timestamp;
++	unsigned long runtime, totalrun, ns_debit, systime;
++	unsigned int bonus;
++	unsigned int slice, time_slice;
+ 	unsigned long long sched_time; /* sched_clock time spent running */
+-	enum sleep_type sleep_type;
+ 
+ 	unsigned long policy;
+ 	cpumask_t cpus_allowed;
+-	unsigned int time_slice, first_time_slice;
+ 
+ #if defined(CONFIG_SCHEDSTATS) || defined(CONFIG_TASK_DELAY_ACCT)
+ 	struct sched_info sched_info;
+@@ -942,6 +960,7 @@ struct task_struct {
+ 	struct held_lock held_locks[MAX_LOCK_DEPTH];
+ 	unsigned int lockdep_recursion;
+ #endif
++	unsigned long mutexes_held;
+ 
+ /* journalling filesystem info */
+ 	void *journal_info;
+@@ -1054,8 +1073,11 @@ static inline void put_task_struct(struc
+ #define PF_SWAPWRITE	0x00800000	/* Allowed to write to swap */
+ #define PF_SPREAD_PAGE	0x01000000	/* Spread page cache over cpuset */
+ #define PF_SPREAD_SLAB	0x02000000	/* Spread some slab caches over cpuset */
++#define PF_ISOREF	0x04000000	/* SCHED_ISO task has used up quota */
+ #define PF_MEMPOLICY	0x10000000	/* Non-default NUMA mempolicy */
+ #define PF_MUTEX_TESTER	0x20000000	/* Thread belongs to the rt mutex tester */
++#define PF_NONSLEEP	0x40000000	/* Waiting on in kernel activity */
++#define PF_FORKED	0x80000000	/* Task just forked another process */
+ 
+ /*
+  * Only the _current_ task can read/write to tsk->flags, but other
+@@ -1191,7 +1213,6 @@ extern void FASTCALL(wake_up_new_task(st
+  static inline void kick_process(struct task_struct *tsk) { }
+ #endif
+ extern void FASTCALL(sched_fork(struct task_struct * p, int clone_flags));
+-extern void FASTCALL(sched_exit(struct task_struct * p));
+ 
+ extern int in_group_p(gid_t);
+ extern int in_egroup_p(gid_t);
+Index: linux-2.6.18-ck1/kernel/sched.c
+===================================================================
+--- linux-2.6.18-ck1.orig/kernel/sched.c	2006-09-21 19:55:00.000000000 +1000
++++ linux-2.6.18-ck1/kernel/sched.c	2006-09-21 20:05:30.000000000 +1000
+@@ -16,6 +16,10 @@
+  *		by Davide Libenzi, preemptible kernel bits by Robert Love.
+  *  2003-09-03	Interactivity tuning by Con Kolivas.
+  *  2004-04-02	Scheduler domains code by Nick Piggin
++ *  2006-09-21	Staircase scheduling policy by Con Kolivas with help
++ *		from William Lee Irwin III, Zwane Mwaikambo, Peter Williams
++ *		and Andreas Mohr.
++ *		Staircase v16.2
+  */
+ 
+ #include <linux/mm.h>
+@@ -57,6 +61,25 @@
+ #include <asm/unistd.h>
+ 
+ /*
++ * sched_interactive - sysctl which allows interactive tasks to have bonus
++ * raise its priority.
++ * sched_compute - sysctl which enables long timeslices and delayed preemption
++ * for compute server usage.
++ * sched_iso_cpu - sysctl which determines the cpu percentage SCHED_ISO tasks
++ * are allowed to run (over ISO_PERIOD seconds) as real time tasks.
++ */
++int sched_interactive __read_mostly = 1;
++int sched_compute __read_mostly;
++int sched_iso_cpu __read_mostly = 80;
++
++#define ISO_PERIOD		(5 * HZ)
++/*
++ * CACHE_DELAY is the time preemption is delayed in sched_compute mode
++ * and is set to a nominal 10ms.
++ */
++#define CACHE_DELAY	(10 * (HZ) / 1001 + 1)
++
++/*
+  * Convert user-nice values [ -20 ... 0 ... 19 ]
+  * to static priority [ MAX_RT_PRIO..MAX_PRIO-1 ],
+  * and back.
+@@ -77,124 +100,26 @@
+ /*
+  * Some helpers for converting nanosecond timing to jiffy resolution
+  */
+-#define NS_TO_JIFFIES(TIME)	((TIME) / (1000000000 / HZ))
+-#define JIFFIES_TO_NS(TIME)	((TIME) * (1000000000 / HZ))
+-
+-/*
+- * These are the 'tuning knobs' of the scheduler:
+- *
+- * Minimum timeslice is 5 msecs (or 1 jiffy, whichever is larger),
+- * default timeslice is 100 msecs, maximum timeslice is 800 msecs.
+- * Timeslices get refilled after they expire.
+- */
+-#define MIN_TIMESLICE		max(5 * HZ / 1000, 1)
+-#define DEF_TIMESLICE		(100 * HZ / 1000)
+-#define ON_RUNQUEUE_WEIGHT	 30
+-#define CHILD_PENALTY		 95
+-#define PARENT_PENALTY		100
+-#define EXIT_WEIGHT		  3
+-#define PRIO_BONUS_RATIO	 25
+-#define MAX_BONUS		(MAX_USER_PRIO * PRIO_BONUS_RATIO / 100)
+-#define INTERACTIVE_DELTA	  2
+-#define MAX_SLEEP_AVG		(DEF_TIMESLICE * MAX_BONUS)
+-#define STARVATION_LIMIT	(MAX_SLEEP_AVG)
+-#define NS_MAX_SLEEP_AVG	(JIFFIES_TO_NS(MAX_SLEEP_AVG))
+-
+-/*
+- * If a task is 'interactive' then we reinsert it in the active
+- * array after it has expired its current timeslice. (it will not
+- * continue to run immediately, it will still roundrobin with
+- * other interactive tasks.)
+- *
+- * This part scales the interactivity limit depending on niceness.
+- *
+- * We scale it linearly, offset by the INTERACTIVE_DELTA delta.
+- * Here are a few examples of different nice levels:
+- *
+- *  TASK_INTERACTIVE(-20): [1,1,1,1,1,1,1,1,1,0,0]
+- *  TASK_INTERACTIVE(-10): [1,1,1,1,1,1,1,0,0,0,0]
+- *  TASK_INTERACTIVE(  0): [1,1,1,1,0,0,0,0,0,0,0]
+- *  TASK_INTERACTIVE( 10): [1,1,0,0,0,0,0,0,0,0,0]
+- *  TASK_INTERACTIVE( 19): [0,0,0,0,0,0,0,0,0,0,0]
+- *
+- * (the X axis represents the possible -5 ... 0 ... +5 dynamic
+- *  priority range a task can explore, a value of '1' means the
+- *  task is rated interactive.)
+- *
+- * Ie. nice +19 tasks can never get 'interactive' enough to be
+- * reinserted into the active array. And only heavily CPU-hog nice -20
+- * tasks will be expired. Default nice 0 tasks are somewhere between,
+- * it takes some effort for them to get interactive, but it's not
+- * too hard.
+- */
+-
+-#define CURRENT_BONUS(p) \
+-	(NS_TO_JIFFIES((p)->sleep_avg) * MAX_BONUS / \
+-		MAX_SLEEP_AVG)
+-
+-#define GRANULARITY	(10 * HZ / 1000 ? : 1)
+-
+-#ifdef CONFIG_SMP
+-#define TIMESLICE_GRANULARITY(p)	(GRANULARITY * \
+-		(1 << (((MAX_BONUS - CURRENT_BONUS(p)) ? : 1) - 1)) * \
+-			num_online_cpus())
+-#else
+-#define TIMESLICE_GRANULARITY(p)	(GRANULARITY * \
+-		(1 << (((MAX_BONUS - CURRENT_BONUS(p)) ? : 1) - 1)))
+-#endif
+-
+-#define SCALE(v1,v1_max,v2_max) \
+-	(v1) * (v2_max) / (v1_max)
+-
+-#define DELTA(p) \
+-	(SCALE(TASK_NICE(p) + 20, 40, MAX_BONUS) - 20 * MAX_BONUS / 40 + \
+-		INTERACTIVE_DELTA)
+-
+-#define TASK_INTERACTIVE(p) \
+-	((p)->prio <= (p)->static_prio - DELTA(p))
+-
+-#define INTERACTIVE_SLEEP(p) \
+-	(JIFFIES_TO_NS(MAX_SLEEP_AVG * \
+-		(MAX_BONUS / 2 + DELTA((p)) + 1) / MAX_BONUS - 1))
++#define NSJIFFY			(1000000000 / HZ)	/* One jiffy in ns */
++#define NS_TO_JIFFIES(TIME)	((TIME) / NSJIFFY)
++#define JIFFIES_TO_NS(TIME)	((TIME) * NSJIFFY)
+ 
+ #define TASK_PREEMPTS_CURR(p, rq) \
+ 	((p)->prio < (rq)->curr->prio)
+ 
+ /*
+- * task_timeslice() scales user-nice values [ -20 ... 0 ... 19 ]
+- * to time slice values: [800ms ... 100ms ... 5ms]
+- *
+- * The higher a thread's priority, the bigger timeslices
+- * it gets during one round of execution. But even the lowest
+- * priority thread gets MIN_TIMESLICE worth of execution time.
++ * This is the time all tasks within the same priority round robin.
++ * Set to a minimum of 6ms. It is 10 times longer in compute mode.
+  */
++#define _RR_INTERVAL		((6 * HZ / 1001) + 1)
++#define RR_INTERVAL		(_RR_INTERVAL * (1 + 9 * sched_compute))
++#define DEF_TIMESLICE		(RR_INTERVAL * 19)
+ 
+-#define SCALE_PRIO(x, prio) \
+-	max(x * (MAX_PRIO - prio) / (MAX_USER_PRIO / 2), MIN_TIMESLICE)
+-
+-static unsigned int static_prio_timeslice(int static_prio)
+-{
+-	if (static_prio < NICE_TO_PRIO(0))
+-		return SCALE_PRIO(DEF_TIMESLICE * 4, static_prio);
+-	else
+-		return SCALE_PRIO(DEF_TIMESLICE, static_prio);
+-}
+-
+-static inline unsigned int task_timeslice(struct task_struct *p)
+-{
+-	return static_prio_timeslice(p->static_prio);
+-}
+ 
+ /*
+  * These are the runqueue data structures:
+  */
+ 
+-struct prio_array {
+-	unsigned int nr_active;
+-	DECLARE_BITMAP(bitmap, MAX_PRIO+1); /* include 1 bit for delimiter */
+-	struct list_head queue[MAX_PRIO];
+-};
+-
+ /*
+  * This is the main, per-CPU runqueue data structure.
+  *
+@@ -224,12 +149,14 @@ struct rq {
+ 	 */
+ 	unsigned long nr_uninterruptible;
+ 
+-	unsigned long expired_timestamp;
+ 	unsigned long long timestamp_last_tick;
++	unsigned short cache_ticks, preempted;
++	unsigned long iso_ticks;
++	unsigned short iso_refractory;
+ 	struct task_struct *curr, *idle;
+ 	struct mm_struct *prev_mm;
+-	struct prio_array *active, *expired, arrays[2];
+-	int best_expired_prio;
++	unsigned long bitmap[BITS_TO_LONGS(MAX_PRIO + 1)];
++	struct list_head queue[MAX_PRIO];
+ 	atomic_t nr_iowait;
+ 
+ #ifdef CONFIG_SMP
+@@ -553,13 +480,7 @@ static inline struct rq *this_rq_lock(vo
+ 
+ #if defined(CONFIG_SCHEDSTATS) || defined(CONFIG_TASK_DELAY_ACCT)
+ /*
+- * Called when a process is dequeued from the active array and given
+- * the cpu.  We should note that with the exception of interactive
+- * tasks, the expired queue will become the active queue after the active
+- * queue is empty, without explicitly dequeuing and requeuing tasks in the
+- * expired queue.  (Interactive tasks may be requeued directly to the
+- * active queue, thus delaying tasks in the expired queue from running;
+- * see scheduler_tick()).
++ * Called when a process is dequeued and given the cpu.
+  *
+  * This function is only called from sched_info_arrive(), rather than
+  * dequeue_task(). Even though a task may be queued and dequeued multiple
+@@ -592,13 +513,11 @@ static void sched_info_arrive(struct tas
+ }
+ 
+ /*
+- * Called when a process is queued into either the active or expired
+- * array.  The time is noted and later used to determine how long we
+- * had to wait for us to reach the cpu.  Since the expired queue will
+- * become the active queue after active queue is empty, without dequeuing
+- * and requeuing any tasks, we are interested in queuing to either. It
+- * is unusual but not impossible for tasks to be dequeued and immediately
+- * requeued in the same or another array: this can happen in sched_yield(),
++ * Called when a process is queued.
++ * The time is noted and later used to determine how long we had to wait for
++ * us to reach the cpu.
++ * It is unusual but not impossible for tasks to be dequeued and immediately
++ * requeued: this can happen in sched_yield(),
+  * set_user_nice(), and even load_balance() as it moves tasks from runqueue
+  * to runqueue.
+  *
+@@ -657,73 +576,81 @@ sched_info_switch(struct task_struct *pr
+ #define sched_info_switch(t, next)	do { } while (0)
+ #endif /* CONFIG_SCHEDSTATS || CONFIG_TASK_DELAY_ACCT */
+ 
+-/*
+- * Adding/removing a task to/from a priority array:
+- */
+-static void dequeue_task(struct task_struct *p, struct prio_array *array)
++#if BITS_PER_LONG < 64
++static inline void longlimit(unsigned long long *longlong)
++{
++	if (*longlong > (1 << 31))
++		*longlong = 1 << 31;
++}
++#else
++static inline void longlimit(unsigned long long *__unused)
++{
++}
++#endif
++
++/* Get nanosecond clock difference without overflowing unsigned long. */
++static unsigned long ns_diff(unsigned long long v1, unsigned long long v2)
+ {
+-	array->nr_active--;
+-	list_del(&p->run_list);
+-	if (list_empty(array->queue + p->prio))
+-		__clear_bit(p->prio, array->bitmap);
++	unsigned long long vdiff;
++	if (likely(v1 >= v2)) {
++		vdiff = v1 - v2;
++		longlimit(&vdiff);
++	} else {
++		/*
++		 * Rarely the clock appears to go backwards. There should
++		 * always be a positive difference so return 1.
++		 */
++		vdiff = 1;
++	}
++	return (unsigned long)vdiff;
+ }
+ 
+-static void enqueue_task(struct task_struct *p, struct prio_array *array)
++static inline int task_queued(struct task_struct *task)
+ {
+-	sched_info_queued(p);
+-	list_add_tail(&p->run_list, array->queue + p->prio);
+-	__set_bit(p->prio, array->bitmap);
+-	array->nr_active++;
+-	p->array = array;
++	return !list_empty(&task->run_list);
+ }
+ 
+ /*
+- * Put task to the end of the run list without the overhead of dequeue
+- * followed by enqueue.
++ * Adding/removing a task to/from a runqueue:
+  */
+-static void requeue_task(struct task_struct *p, struct prio_array *array)
++static void dequeue_task(struct task_struct *p, struct rq *rq)
+ {
+-	list_move_tail(&p->run_list, array->queue + p->prio);
++	list_del_init(&p->run_list);
++	if (list_empty(rq->queue + p->prio))
++		__clear_bit(p->prio, rq->bitmap);
++	p->ns_debit = 0;
+ }
+ 
+-static inline void
+-enqueue_task_head(struct task_struct *p, struct prio_array *array)
++static void enqueue_task(struct task_struct *p, struct rq *rq)
+ {
+-	list_add(&p->run_list, array->queue + p->prio);
+-	__set_bit(p->prio, array->bitmap);
+-	array->nr_active++;
+-	p->array = array;
++	list_add_tail(&p->run_list, rq->queue + p->prio);
++	__set_bit(p->prio, rq->bitmap);
+ }
+ 
+ /*
+- * __normal_prio - return the priority that is based on the static
+- * priority but is modified by bonuses/penalties.
+- *
+- * We scale the actual sleep average [0 .... MAX_SLEEP_AVG]
+- * into the -5 ... 0 ... +5 bonus/penalty range.
+- *
+- * We use 25% of the full 0...39 priority range so that:
+- *
+- * 1) nice +19 interactive tasks do not preempt nice 0 CPU hogs.
+- * 2) nice -20 CPU hogs do not get preempted by nice 0 tasks.
+- *
+- * Both properties are important to certain workloads.
++ * Put task to the end of the run list without the overhead of dequeue
++ * followed by enqueue.
+  */
+-
+-static inline int __normal_prio(struct task_struct *p)
++static void requeue_task(struct task_struct *p, struct rq *rq, const int prio)
+ {
+-	int bonus, prio;
+-
+-	bonus = CURRENT_BONUS(p) - MAX_BONUS / 2;
++	list_move_tail(&p->run_list, rq->queue + prio);
++	if (p->prio != prio) {
++		if (list_empty(rq->queue + p->prio))
++			__clear_bit(p->prio, rq->bitmap);
++		p->prio = prio;
++		__set_bit(prio, rq->bitmap);
++	}
++	p->ns_debit = 0;
++}
+ 
+-	prio = p->static_prio - bonus;
+-	if (prio < MAX_RT_PRIO)
+-		prio = MAX_RT_PRIO;
+-	if (prio > MAX_PRIO-1)
+-		prio = MAX_PRIO-1;
+-	return prio;
++static inline void enqueue_task_head(struct task_struct *p, struct rq *rq)
++{
++	list_add(&p->run_list, rq->queue + p->prio);
++	__set_bit(p->prio, rq->bitmap);
+ }
+ 
++static unsigned int slice(const struct task_struct *p);
++
+ /*
+  * To aid in avoiding the subversion of "niceness" due to uneven distribution
+  * of tasks with abnormal "nice" values across CPUs the contribution that
+@@ -741,10 +668,9 @@ static inline int __normal_prio(struct t
+ #define TIME_SLICE_NICE_ZERO DEF_TIMESLICE
+ #define LOAD_WEIGHT(lp) \
+ 	(((lp) * SCHED_LOAD_SCALE) / TIME_SLICE_NICE_ZERO)
+-#define PRIO_TO_LOAD_WEIGHT(prio) \
+-	LOAD_WEIGHT(static_prio_timeslice(prio))
+-#define RTPRIO_TO_LOAD_WEIGHT(rp) \
+-	(PRIO_TO_LOAD_WEIGHT(MAX_RT_PRIO) + LOAD_WEIGHT(rp))
++#define TASK_LOAD_WEIGHT(p)	LOAD_WEIGHT(slice(p))
++#define RTPRIO_TO_LOAD_WEIGHT(rp)	\
++	(LOAD_WEIGHT((RR_INTERVAL + 20 + (rp))))
+ 
+ static void set_load_weight(struct task_struct *p)
+ {
+@@ -760,8 +686,14 @@ static void set_load_weight(struct task_
+ 		else
+ #endif
+ 			p->load_weight = RTPRIO_TO_LOAD_WEIGHT(p->rt_priority);
++	} else if (idleprio_task(p)) {
++		/*
++		 * We want idleprio_tasks to have a presence on weighting but
++		 * as small as possible
++		 */
++		p->load_weight = 1;
+ 	} else
+-		p->load_weight = PRIO_TO_LOAD_WEIGHT(p->static_prio);
++		p->load_weight = TASK_LOAD_WEIGHT(p);
+ }
+ 
+ static inline void
+@@ -789,146 +721,263 @@ static inline void dec_nr_running(struct
+ }
+ 
+ /*
+- * Calculate the expected normal priority: i.e. priority
+- * without taking RT-inheritance into account. Might be
+- * boosted by interactivity modifiers. Changes upon fork,
+- * setprio syscalls, and whenever the interactivity
+- * estimator recalculates.
++ * __activate_task - move a task to the runqueue.
+  */
+-static inline int normal_prio(struct task_struct *p)
++static inline void __activate_task(struct task_struct *p, struct rq *rq)
+ {
+-	int prio;
++	enqueue_task(p, rq);
++	inc_nr_running(p, rq);
++}
+ 
+-	if (has_rt_policy(p))
+-		prio = MAX_RT_PRIO-1 - p->rt_priority;
+-	else
+-		prio = __normal_prio(p);
+-	return prio;
++/*
++ * __activate_idle_task - move idle task to the _front_ of runqueue.
++ */
++static inline void __activate_idle_task(struct task_struct *p, struct rq *rq)
++{
++	enqueue_task_head(p, rq);
++	inc_nr_running(p, rq);
+ }
+ 
+ /*
+- * Calculate the current priority, i.e. the priority
+- * taken into account by the scheduler. This value might
+- * be boosted by RT tasks, or might be boosted by
+- * interactivity modifiers. Will be RT if the task got
+- * RT-boosted. If not then it returns p->normal_prio.
++ * Bonus - How much higher than its base priority an interactive task can run.
+  */
+-static int effective_prio(struct task_struct *p)
++static inline unsigned int bonus(const struct task_struct *p)
+ {
+-	p->normal_prio = normal_prio(p);
+-	/*
+-	 * If we are RT tasks or we were boosted to RT priority,
+-	 * keep the priority unchanged. Otherwise, update priority
+-	 * to the normal priority:
+-	 */
+-	if (!rt_prio(p->prio))
+-		return p->normal_prio;
+-	return p->prio;
++	return TASK_USER_PRIO(p);
++}
++
++static unsigned int rr_interval(const struct task_struct *p)
++{
++	int nice = TASK_NICE(p);
++
++	if (nice < 0 && !rt_task(p))
++		return RR_INTERVAL * (20 - nice) / 20;
++	return RR_INTERVAL;
+ }
+ 
+ /*
+- * __activate_task - move a task to the runqueue.
++ * slice - the duration a task runs before getting requeued at its best
++ * priority and has its bonus decremented.
+  */
+-static void __activate_task(struct task_struct *p, struct rq *rq)
++static unsigned int slice(const struct task_struct *p)
+ {
+-	struct prio_array *target = rq->active;
++	unsigned int slice, rr;
+ 
+-	if (batch_task(p))
+-		target = rq->expired;
+-	enqueue_task(p, target);
+-	inc_nr_running(p, rq);
++	slice = rr = rr_interval(p);
++	if (likely(!rt_task(p)))
++		slice += (39 - TASK_USER_PRIO(p)) * rr;
++	return slice;
+ }
+ 
+ /*
+- * __activate_idle_task - move idle task to the _front_ of runqueue.
++ * We increase our bonus by sleeping more than the time we ran.
++ * The ratio of sleep to run gives us the cpu% that we last ran and determines
++ * the maximum bonus we can acquire.
+  */
+-static inline void __activate_idle_task(struct task_struct *p, struct rq *rq)
++static void inc_bonus(struct task_struct *p, unsigned long totalrun, unsigned long sleep)
+ {
+-	enqueue_task_head(p, rq->active);
+-	inc_nr_running(p, rq);
++	unsigned int best_bonus = sleep / (totalrun + 1);
++
++	if (p->bonus >= best_bonus)
++		return;
++	best_bonus = bonus(p);
++	if (p->bonus < best_bonus)
++		p->bonus++;
++}
++
++static inline void dec_bonus(struct task_struct *p)
++{
++	if (p->bonus)
++		p->bonus--;
++}
++
++static inline void slice_overrun(struct task_struct *p)
++{
++	unsigned long ns_slice = JIFFIES_TO_NS(p->slice);
++
++	do {
++		p->totalrun -= ns_slice;
++		dec_bonus(p);
++	} while (unlikely(p->totalrun > ns_slice));
++}
++
++static inline void continue_slice(struct task_struct *p)
++{
++	unsigned long total_run = NS_TO_JIFFIES(p->totalrun);
++
++	if (unlikely(total_run >= p->slice))
++		slice_overrun(p);
++	else {
++		unsigned long remainder;
++
++		p->slice -= total_run;
++		remainder = p->slice % rr_interval(p);
++		if (remainder)
++			p->time_slice = remainder;
++	}
+ }
+ 
+ /*
+- * Recalculate p->normal_prio and p->prio after having slept,
+- * updating the sleep-average too:
++ * recalc_task_prio - this checks for tasks that have run less than a full
++ * slice and have woken up again soon after, or have just forked a
++ * thread/process and make them continue their old slice instead of starting
++ * a new one at high priority.
+  */
+-static int recalc_task_prio(struct task_struct *p, unsigned long long now)
++static inline void recalc_task_prio(struct task_struct *p, const unsigned long long now)
+ {
+-	/* Caller must always ensure 'now >= p->timestamp' */
+-	unsigned long sleep_time = now - p->timestamp;
++	unsigned long sleep_time;
+ 
+-	if (batch_task(p))
+-		sleep_time = 0;
++	/*
++	 * If this task has managed to run to its lowest priority then
++	 * decrease its bonus and requeue it now at best priority instead
++	 * of possibly flagging around lowest priority. Save up any systime
++	 * that may affect priority on the next reschedule.
++	 */
++	if (p->slice > p->time_slice &&
++	    p->slice - NS_TO_JIFFIES(p->totalrun) < p->time_slice) {
++		dec_bonus(p);
++		p->totalrun = 0;
++		return;
++	}
++
++	/*
++	 * Add the total for this last scheduled run (p->runtime) and system
++	 * time (p->systime) done on behalf of p to the running total so far
++	 * used (p->totalrun).
++	 */
++	p->totalrun += p->runtime + p->systime;
++	sleep_time = ns_diff(now, p->timestamp);
+ 
+-	if (likely(sleep_time > 0)) {
++	if (p->systime > sleep_time || p->flags & PF_FORKED)
++		sleep_time = 0;
++	else {
++		sleep_time -= p->systime;
+ 		/*
+-		 * This ceiling is set to the lowest priority that would allow
+-		 * a task to be reinserted into the active array on timeslice
+-		 * completion.
++		 * We elevate priority by the amount of time we slept. If we
++		 * sleep longer than our running total and have not set the
++		 * PF_NONSLEEP flag we gain a bonus.
+ 		 */
+-		unsigned long ceiling = INTERACTIVE_SLEEP(p);
++		if (sleep_time >= p->totalrun) {
++			if (!(p->flags & PF_NONSLEEP))
++				inc_bonus(p, p->totalrun, sleep_time);
++			p->totalrun = 0;
++			return;
++		}
++		p->totalrun -= sleep_time;
++	}
++	continue_slice(p);
++}
+ 
+-		if (p->mm && sleep_time > ceiling && p->sleep_avg < ceiling) {
+-			/*
+-			 * Prevents user tasks from achieving best priority
+-			 * with one single large enough sleep.
+-			 */
+-			p->sleep_avg = ceiling;
+-			/*
+-			 * Using INTERACTIVE_SLEEP() as a ceiling places a
+-			 * nice(0) task 1ms sleep away from promotion, and
+-			 * gives it 700ms to round-robin with no chance of
+-			 * being demoted.  This is more than generous, so
+-			 * mark this sleep as non-interactive to prevent the
+-			 * on-runqueue bonus logic from intervening should
+-			 * this task not receive cpu immediately.
+-			 */
+-			p->sleep_type = SLEEP_NONINTERACTIVE;
+-		} else {
++static inline int idleprio_suitable(const struct task_struct *p)
++{
++	return (!p->mutexes_held &&
++		!(p->flags & (PF_FREEZE | PF_NONSLEEP | PF_EXITING)));
++}
++
++static inline int idleprio(const struct task_struct *p)
++{
++	return (p->prio == IDLEPRIO_PRIO);
++}
++
++/*
++ * __normal_prio - dynamic priority dependent on bonus.
++ * The priority normally decreases by one each RR_INTERVAL.
++ * As the bonus increases the initial priority starts at a higher "stair" or
++ * priority for longer.
++ */
++static inline int __normal_prio(struct task_struct *p)
++{
++	int prio;
++	unsigned int full_slice, used_slice = 0;
++	unsigned int best_bonus, rr;
++
++	if (iso_task(p)) {
++		if (likely(!(p->flags & PF_ISOREF)))
+ 			/*
+-			 * Tasks waking from uninterruptible sleep are
+-			 * limited in their sleep_avg rise as they
+-			 * are likely to be waiting on I/O
++			 * If SCHED_ISO tasks have not used up their real time
++			 * quota they have run just better than highest
++			 * SCHED_NORMAL priority. Otherwise they run as
++			 * SCHED_NORMAL.
+ 			 */
+-			if (p->sleep_type == SLEEP_NONINTERACTIVE && p->mm) {
+-				if (p->sleep_avg >= ceiling)
+-					sleep_time = 0;
+-				else if (p->sleep_avg + sleep_time >=
+-					 ceiling) {
+-						p->sleep_avg = ceiling;
+-						sleep_time = 0;
+-				}
+-			}
++			return ISO_PRIO;
++	}
+ 
++	if (idleprio_task(p)) {
++		if (unlikely(!idleprio_suitable(p))) {
+ 			/*
+-			 * This code gives a bonus to interactive tasks.
+-			 *
+-			 * The boost works by updating the 'average sleep time'
+-			 * value here, based on ->timestamp. The more time a
+-			 * task spends sleeping, the higher the average gets -
+-			 * and the higher the priority boost gets as well.
++			 * If idleprio tasks are holding a semaphore, mutex,
++			 * or being frozen, schedule at a normal priority.
+ 			 */
+-			p->sleep_avg += sleep_time;
+-
++			p->time_slice = p->slice % RR_INTERVAL ? : RR_INTERVAL;
++			return MIN_USER_PRIO;
+ 		}
+-		if (p->sleep_avg > NS_MAX_SLEEP_AVG)
+-			p->sleep_avg = NS_MAX_SLEEP_AVG;
++		return IDLEPRIO_PRIO;
+ 	}
+ 
+-	return effective_prio(p);
++	full_slice = slice(p);
++	if (full_slice > p->slice)
++		used_slice = full_slice - p->slice;
++
++	best_bonus = bonus(p);
++	prio = MAX_RT_PRIO + best_bonus;
++	if (sched_interactive && !sched_compute && !batch_task(p))
++		prio -= p->bonus;
++
++	rr = rr_interval(p);
++	prio += used_slice / rr;
++	if (prio > MIN_USER_PRIO)
++		prio = MIN_USER_PRIO;
++	return prio;
++}
++
++/*
++ * Calculate the expected normal priority: i.e. priority
++ * without taking RT-inheritance into account. Might be
++ * boosted by interactivity modifiers. Changes upon fork,
++ * setprio syscalls, and whenever the interactivity
++ * estimator recalculates.
++ */
++static inline int normal_prio(struct task_struct *p)
++{
++	int prio;
++
++	if (has_rt_policy(p))
++		prio = MAX_RT_PRIO-1 - p->rt_priority;
++	else
++		prio = __normal_prio(p);
++	return prio;
++}
++
++/*
++ * Calculate the current priority, i.e. the priority
++ * taken into account by the scheduler. This value might
++ * be boosted by RT tasks, or might be boosted by
++ * interactivity modifiers. Will be RT if the task got
++ * RT-boosted. If not then it returns p->normal_prio.
++ */
++static int effective_prio(struct task_struct *p)
++{
++	p->normal_prio = normal_prio(p);
++	/*
++	 * If we are RT tasks or we were boosted to RT priority,
++	 * keep the priority unchanged. Otherwise, update priority
++	 * to the normal priority:
++	 */
++	if (!rt_prio(p->prio))
++		return p->normal_prio;
++	return p->prio;
+ }
+ 
+ /*
+  * activate_task - move a task to the runqueue and do priority recalculation
+  *
+- * Update all the scheduling statistics stuff. (sleep average
+- * calculation, priority modifiers, etc.)
++ * Update all the scheduling statistics stuff. (priority modifiers, etc.)
+  */
+ static void activate_task(struct task_struct *p, struct rq *rq, int local)
+ {
+-	unsigned long long now;
++	unsigned long long now = sched_clock();
++	unsigned long rr = rr_interval(p);
+ 
+-	now = sched_clock();
+ #ifdef CONFIG_SMP
+ 	if (!local) {
+ 		/* Compensate for drifting sched_clock */
+@@ -937,34 +986,15 @@ static void activate_task(struct task_st
+ 			+ rq->timestamp_last_tick;
+ 	}
+ #endif
+-
+-	if (!rt_task(p))
+-		p->prio = recalc_task_prio(p, now);
+-
+-	/*
+-	 * This checks to make sure it's not an uninterruptible task
+-	 * that is now waking up.
+-	 */
+-	if (p->sleep_type == SLEEP_NORMAL) {
+-		/*
+-		 * Tasks which were woken up by interrupts (ie. hw events)
+-		 * are most likely of interactive nature. So we give them
+-		 * the credit of extending their sleep time to the period
+-		 * of time they spend on the runqueue, waiting for execution
+-		 * on a CPU, first time around:
+-		 */
+-		if (in_interrupt())
+-			p->sleep_type = SLEEP_INTERRUPTED;
+-		else {
+-			/*
+-			 * Normal first-time wakeups get a credit too for
+-			 * on-runqueue time, but it will be weighted down:
+-			 */
+-			p->sleep_type = SLEEP_INTERACTIVE;
+-		}
++	p->slice = slice(p);
++	p->time_slice = p->slice % rr ? : rr;
++	if (!rt_task(p)) {
++		recalc_task_prio(p, now);
++		p->prio = effective_prio(p);
++		p->systime = 0;
++		p->flags &= ~(PF_FORKED | PF_NONSLEEP);
+ 	}
+ 	p->timestamp = now;
+-
+ 	__activate_task(p, rq);
+ }
+ 
+@@ -974,8 +1004,7 @@ static void activate_task(struct task_st
+ static void deactivate_task(struct task_struct *p, struct rq *rq)
+ {
+ 	dec_nr_running(p, rq);
+-	dequeue_task(p, p->array);
+-	p->array = NULL;
++	dequeue_task(p, rq);
+ }
+ 
+ /*
+@@ -1057,7 +1086,7 @@ migrate_task(struct task_struct *p, int 
+ 	 * If the task is not on a runqueue (and not running), then
+ 	 * it is sufficient to simply update the task's cpu field.
+ 	 */
+-	if (!p->array && !task_running(rq, p)) {
++	if (!task_queued(p) && !task_running(rq, p)) {
+ 		set_task_cpu(p, dest_cpu);
+ 		return 0;
+ 	}
+@@ -1088,7 +1117,7 @@ void wait_task_inactive(struct task_stru
+ repeat:
+ 	rq = task_rq_lock(p, &flags);
+ 	/* Must be off runqueue entirely, not preempted. */
+-	if (unlikely(p->array || task_running(rq, p))) {
++	if (unlikely(task_queued(p) || task_running(rq, p))) {
+ 		/* If it's preempted, we yield.  It could be a while. */
+ 		preempted = !task_running(rq, p);
+ 		task_rq_unlock(rq, &flags);
+@@ -1345,6 +1374,24 @@ static inline int wake_idle(int cpu, str
+ }
+ #endif
+ 
++/*
++ * Check to see if p preempts rq->curr and resched if it does. In compute
++ * mode we do not preempt for at least CACHE_DELAY and set rq->preempted.
++ */
++static void fastcall preempt(const struct task_struct *p, struct rq *rq)
++{
++	struct task_struct *curr = rq->curr;
++
++	if (p->prio >= curr->prio)
++		return;
++	if (!sched_compute || rq->cache_ticks >= CACHE_DELAY || !p->mm ||
++	    rt_task(p) || curr == rq->idle) {
++		resched_task(curr);
++		return;
++	}
++	rq->preempted = 1;
++}
++
+ /***
+  * try_to_wake_up - wake up a thread
+  * @p: the to-be-woken-up thread
+@@ -1376,7 +1423,7 @@ static int try_to_wake_up(struct task_st
+ 	if (!(old_state & state))
+ 		goto out;
+ 
+-	if (p->array)
++	if (task_queued(p))
+ 		goto out_running;
+ 
+ 	cpu = task_cpu(p);
+@@ -1467,7 +1514,7 @@ out_set_cpu:
+ 		old_state = p->state;
+ 		if (!(old_state & state))
+ 			goto out;
+-		if (p->array)
++		if (task_queued(p))
+ 			goto out_running;
+ 
+ 		this_cpu = smp_processor_id();
+@@ -1476,25 +1523,9 @@ out_set_cpu:
+ 
+ out_activate:
+ #endif /* CONFIG_SMP */
+-	if (old_state == TASK_UNINTERRUPTIBLE) {
++	if (old_state == TASK_UNINTERRUPTIBLE)
+ 		rq->nr_uninterruptible--;
+-		/*
+-		 * Tasks on involuntary sleep don't earn
+-		 * sleep_avg beyond just interactive state.
+-		 */
+-		p->sleep_type = SLEEP_NONINTERACTIVE;
+-	} else
+-
+-	/*
+-	 * Tasks that have marked their sleep as noninteractive get
+-	 * woken up with their sleep average not weighted in an
+-	 * interactive way.
+-	 */
+-		if (old_state & TASK_NONINTERACTIVE)
+-			p->sleep_type = SLEEP_NONINTERACTIVE;
+-
+ 
+-	activate_task(p, rq, cpu == this_cpu);
+ 	/*
+ 	 * Sync wakeups (i.e. those types of wakeups where the waker
+ 	 * has indicated that it will leave the CPU in short order)
+@@ -1503,15 +1534,16 @@ out_activate:
+ 	 * the waker guarantees that the freshly woken up task is going
+ 	 * to be considered on this CPU.)
+ 	 */
+-	if (!sync || cpu != this_cpu) {
+-		if (TASK_PREEMPTS_CURR(p, rq))
+-			resched_task(rq->curr);
+-	}
++	activate_task(p, rq, cpu == this_cpu);
++	if (!sync || cpu != this_cpu)
++		preempt(p, rq);
+ 	success = 1;
+ 
+ out_running:
+ 	p->state = TASK_RUNNING;
+ out:
++	if (idleprio_task(p) && (p->flags & PF_FREEZE) && idleprio(p))
++		requeue_task(p, rq, effective_prio(p));
+ 	task_rq_unlock(rq, &flags);
+ 
+ 	return success;
+@@ -1556,7 +1588,6 @@ void fastcall sched_fork(struct task_str
+ 	p->prio = current->normal_prio;
+ 
+ 	INIT_LIST_HEAD(&p->run_list);
+-	p->array = NULL;
+ #if defined(CONFIG_SCHEDSTATS) || defined(CONFIG_TASK_DELAY_ACCT)
+ 	if (unlikely(sched_info_on()))
+ 		memset(&p->sched_info, 0, sizeof(p->sched_info));
+@@ -1568,30 +1599,6 @@ void fastcall sched_fork(struct task_str
+ 	/* Want to start with kernel preemption disabled. */
+ 	task_thread_info(p)->preempt_count = 1;
+ #endif
+-	/*
+-	 * Share the timeslice between parent and child, thus the
+-	 * total amount of pending timeslices in the system doesn't change,
+-	 * resulting in more scheduling fairness.
+-	 */
+-	local_irq_disable();
+-	p->time_slice = (current->time_slice + 1) >> 1;
+-	/*
+-	 * The remainder of the first timeslice might be recovered by
+-	 * the parent if the child exits early enough.
+-	 */
+-	p->first_time_slice = 1;
+-	current->time_slice >>= 1;
+-	p->timestamp = sched_clock();
+-	if (unlikely(!current->time_slice)) {
+-		/*
+-		 * This case is rare, it happens when the parent has only
+-		 * a single jiffy left from its timeslice. Taking the
+-		 * runqueue lock is not a problem.
+-		 */
+-		current->time_slice = 1;
+-		scheduler_tick();
+-	}
+-	local_irq_enable();
+ 	put_cpu();
+ }
+ 
+@@ -1604,47 +1611,29 @@ void fastcall sched_fork(struct task_str
+  */
+ void fastcall wake_up_new_task(struct task_struct *p, unsigned long clone_flags)
+ {
+-	struct rq *rq, *this_rq;
+ 	unsigned long flags;
+ 	int this_cpu, cpu;
++	struct rq *rq, *this_rq;
+ 
+ 	rq = task_rq_lock(p, &flags);
+ 	BUG_ON(p->state != TASK_RUNNING);
+ 	this_cpu = smp_processor_id();
+ 	cpu = task_cpu(p);
+ 
+-	/*
+-	 * We decrease the sleep average of forking parents
+-	 * and children as well, to keep max-interactive tasks
+-	 * from forking tasks that are max-interactive. The parent
+-	 * (current) is done further down, under its lock.
+-	 */
+-	p->sleep_avg = JIFFIES_TO_NS(CURRENT_BONUS(p) *
+-		CHILD_PENALTY / 100 * MAX_SLEEP_AVG / MAX_BONUS);
+-
+-	p->prio = effective_prio(p);
++	/* Forked process gets no bonus to prevent fork bombs. */
++	p->bonus = 0;
++	current->flags |= PF_FORKED;
+ 
+ 	if (likely(cpu == this_cpu)) {
++		activate_task(p, rq, 1);
+ 		if (!(clone_flags & CLONE_VM)) {
+ 			/*
+ 			 * The VM isn't cloned, so we're in a good position to
+ 			 * do child-runs-first in anticipation of an exec. This
+ 			 * usually avoids a lot of COW overhead.
+ 			 */
+-			if (unlikely(!current->array))
+-				__activate_task(p, rq);
+-			else {
+-				p->prio = current->prio;
+-				p->normal_prio = current->normal_prio;
+-				list_add_tail(&p->run_list, &current->run_list);
+-				p->array = current->array;
+-				p->array->nr_active++;
+-				inc_nr_running(p, rq);
+-			}
+ 			set_need_resched();
+-		} else
+-			/* Run child last */
+-			__activate_task(p, rq);
++		}
+ 		/*
+ 		 * We skip the following code due to cpu == this_cpu
+ 	 	 *
+@@ -1661,53 +1650,19 @@ void fastcall wake_up_new_task(struct ta
+ 		 */
+ 		p->timestamp = (p->timestamp - this_rq->timestamp_last_tick)
+ 					+ rq->timestamp_last_tick;
+-		__activate_task(p, rq);
+-		if (TASK_PREEMPTS_CURR(p, rq))
+-			resched_task(rq->curr);
++		activate_task(p, rq, 0);
++		preempt(p, rq);
+ 
+ 		/*
+ 		 * Parent and child are on different CPUs, now get the
+-		 * parent runqueue to update the parent's ->sleep_avg:
++		 * parent runqueue to update the parent's ->flags:
+ 		 */
+ 		task_rq_unlock(rq, &flags);
+ 		this_rq = task_rq_lock(current, &flags);
+ 	}
+-	current->sleep_avg = JIFFIES_TO_NS(CURRENT_BONUS(current) *
+-		PARENT_PENALTY / 100 * MAX_SLEEP_AVG / MAX_BONUS);
+ 	task_rq_unlock(this_rq, &flags);
+ }
+ 
+-/*
+- * Potentially available exiting-child timeslices are
+- * retrieved here - this way the parent does not get
+- * penalized for creating too many threads.
+- *
+- * (this cannot be used to 'generate' timeslices
+- * artificially, because any timeslice recovered here
+- * was given away by the parent in the first place.)
+- */
+-void fastcall sched_exit(struct task_struct *p)
+-{
+-	unsigned long flags;
+-	struct rq *rq;
+-
+-	/*
+-	 * If the child was a (relative-) CPU hog then decrease
+-	 * the sleep_avg of the parent as well.
+-	 */
+-	rq = task_rq_lock(p->parent, &flags);
+-	if (p->first_time_slice && task_cpu(p) == task_cpu(p->parent)) {
+-		p->parent->time_slice += p->time_slice;
+-		if (unlikely(p->parent->time_slice > task_timeslice(p)))
+-			p->parent->time_slice = task_timeslice(p);
+-	}
+-	if (p->sleep_avg < p->parent->sleep_avg)
+-		p->parent->sleep_avg = p->parent->sleep_avg /
+-		(EXIT_WEIGHT + 1) * EXIT_WEIGHT + p->sleep_avg /
+-		(EXIT_WEIGHT + 1);
+-	task_rq_unlock(rq, &flags);
+-}
+-
+ /**
+  * prepare_task_switch - prepare to switch tasks
+  * @rq: the runqueue preparing to switch
+@@ -1910,7 +1865,7 @@ unsigned long nr_active(void)
+ static inline int
+ task_hot(struct task_struct *p, unsigned long long now, struct sched_domain *sd)
+ {
+-	return (long long)(now - p->last_ran) < (long long)sd->cache_hot_time;
++	return (long long)(now - p->timestamp) < (long long)sd->cache_hot_time;
+ }
+ 
+ /*
+@@ -2023,23 +1978,21 @@ void sched_exec(void)
+  * pull_task - move a task from a remote runqueue to the local runqueue.
+  * Both runqueues must be locked.
+  */
+-static void pull_task(struct rq *src_rq, struct prio_array *src_array,
+-		      struct task_struct *p, struct rq *this_rq,
+-		      struct prio_array *this_array, int this_cpu)
++static void pull_task(struct rq *src_rq, struct task_struct *p,
++		      struct rq *this_rq, int this_cpu)
+ {
+-	dequeue_task(p, src_array);
++	dequeue_task(p, src_rq);
+ 	dec_nr_running(p, src_rq);
+ 	set_task_cpu(p, this_cpu);
+ 	inc_nr_running(p, this_rq);
+-	enqueue_task(p, this_array);
++	enqueue_task(p, this_rq);
+ 	p->timestamp = (p->timestamp - src_rq->timestamp_last_tick)
+ 				+ this_rq->timestamp_last_tick;
+ 	/*
+ 	 * Note that idle threads have a prio of MAX_PRIO, for this test
+ 	 * to be always true for them.
+ 	 */
+-	if (TASK_PREEMPTS_CURR(p, this_rq))
+-		resched_task(this_rq->curr);
++	preempt(p, this_rq);
+ }
+ 
+ /*
+@@ -2077,8 +2030,6 @@ int can_migrate_task(struct task_struct 
+ 	return 1;
+ }
+ 
+-#define rq_best_prio(rq) min((rq)->curr->prio, (rq)->best_expired_prio)
+-
+ /*
+  * move_tasks tries to move up to max_nr_move tasks and max_load_move weighted
+  * load from busiest to this_rq, as part of a balancing operation within
+@@ -2093,7 +2044,6 @@ static int move_tasks(struct rq *this_rq
+ {
+ 	int idx, pulled = 0, pinned = 0, this_best_prio, best_prio,
+ 	    best_prio_seen, skip_for_load;
+-	struct prio_array *array, *dst_array;
+ 	struct list_head *head, *curr;
+ 	struct task_struct *tmp;
+ 	long rem_load_move;
+@@ -2103,8 +2053,8 @@ static int move_tasks(struct rq *this_rq
+ 
+ 	rem_load_move = max_load_move;
+ 	pinned = 1;
+-	this_best_prio = rq_best_prio(this_rq);
+-	best_prio = rq_best_prio(busiest);
++	this_best_prio = this_rq->curr->prio;
++	best_prio = busiest->curr->prio;
+ 	/*
+ 	 * Enable handling of the case where there is more than one task
+ 	 * with the best priority.   If the current running task is one
+@@ -2114,38 +2064,17 @@ static int move_tasks(struct rq *this_rq
+ 	 */
+ 	best_prio_seen = best_prio == busiest->curr->prio;
+ 
+-	/*
+-	 * We first consider expired tasks. Those will likely not be
+-	 * executed in the near future, and they are most likely to
+-	 * be cache-cold, thus switching CPUs has the least effect
+-	 * on them.
+-	 */
+-	if (busiest->expired->nr_active) {
+-		array = busiest->expired;
+-		dst_array = this_rq->expired;
+-	} else {
+-		array = busiest->active;
+-		dst_array = this_rq->active;
+-	}
+-
+-new_array:
+ 	/* Start searching at priority 0: */
+ 	idx = 0;
+ skip_bitmap:
+ 	if (!idx)
+-		idx = sched_find_first_bit(array->bitmap);
++		idx = sched_find_first_bit(busiest->bitmap);
+ 	else
+-		idx = find_next_bit(array->bitmap, MAX_PRIO, idx);
+-	if (idx >= MAX_PRIO) {
+-		if (array == busiest->expired && busiest->active->nr_active) {
+-			array = busiest->active;
+-			dst_array = this_rq->active;
+-			goto new_array;
+-		}
++		idx = find_next_bit(busiest->bitmap, MAX_PRIO, idx);
++	if (idx >= MAX_PRIO)
+ 		goto out;
+-	}
+ 
+-	head = array->queue + idx;
++	head = busiest->queue + idx;
+ 	curr = head->prev;
+ skip_queue:
+ 	tmp = list_entry(curr, struct task_struct, run_list);
+@@ -2175,7 +2104,7 @@ skip_queue:
+ 		schedstat_inc(sd, lb_hot_gained[idle]);
+ #endif
+ 
+-	pull_task(busiest, array, tmp, this_rq, dst_array, this_cpu);
++	pull_task(busiest, tmp, this_rq, this_cpu);
+ 	pulled++;
+ 	rem_load_move -= tmp->load_weight;
+ 
+@@ -2885,27 +2814,6 @@ unsigned long long current_sched_time(co
+ }
+ 
+ /*
+- * We place interactive tasks back into the active array, if possible.
+- *
+- * To guarantee that this does not starve expired tasks we ignore the
+- * interactivity of a task if the first expired task had to wait more
+- * than a 'reasonable' amount of time. This deadline timeout is
+- * load-dependent, as the frequency of array switched decreases with
+- * increasing number of running tasks. We also ignore the interactivity
+- * if a better static_prio task has expired:
+- */
+-static inline int expired_starving(struct rq *rq)
+-{
+-	if (rq->curr->static_prio > rq->best_expired_prio)
+-		return 1;
+-	if (!STARVATION_LIMIT || !rq->expired_timestamp)
+-		return 0;
+-	if (jiffies - rq->expired_timestamp > STARVATION_LIMIT * rq->nr_running)
+-		return 1;
+-	return 0;
+-}
+-
+-/*
+  * Account user cpu time to a process.
+  * @p: the process that the cpu time gets accounted to
+  * @hardirq_offset: the offset to subtract from hardirq_count()
+@@ -2920,7 +2828,7 @@ void account_user_time(struct task_struc
+ 
+ 	/* Add user time to cpustat. */
+ 	tmp = cputime_to_cputime64(cputime);
+-	if (TASK_NICE(p) > 0)
++	if (TASK_NICE(p) > 0 || idleprio_task(p))
+ 		cpustat->nice = cputime64_add(cpustat->nice, tmp);
+ 	else
+ 		cpustat->user = cputime64_add(cpustat->user, tmp);
+@@ -2953,6 +2861,7 @@ void account_system_time(struct task_str
+ 		cpustat->iowait = cputime64_add(cpustat->iowait, tmp);
+ 	else
+ 		cpustat->idle = cputime64_add(cpustat->idle, tmp);
++	p->systime += NSJIFFY;
+ 	/* Account for system time used */
+ 	acct_update_integrals(p);
+ }
+@@ -2978,12 +2887,32 @@ void account_steal_time(struct task_stru
+ 		cpustat->steal = cputime64_add(cpustat->steal, tmp);
+ }
+ 
++static void time_slice_expired(struct task_struct *p, struct rq *rq)
++{
++	set_tsk_need_resched(p);
++	p->time_slice = rr_interval(p);
++	requeue_task(p, rq, effective_prio(p));
++}
++
++/*
++ * Test if SCHED_ISO tasks have run longer than their alloted period as RT
++ * tasks and set the refractory flag if necessary. There is 10% hysteresis
++ * for unsetting the flag.
++ */
++static inline unsigned int test_ret_isorefractory(struct rq *rq)
++{
++	if (likely(!rq->iso_refractory)) {
++		if (rq->iso_ticks / ISO_PERIOD > sched_iso_cpu)
++			rq->iso_refractory = 1;
++	} else
++		if (rq->iso_ticks / ISO_PERIOD < (sched_iso_cpu * 90 / 100))
++			rq->iso_refractory = 0;
++	return rq->iso_refractory;
++}
++
+ /*
+  * This function gets called by the timer code, with HZ frequency.
+  * We call it with interrupts disabled.
+- *
+- * It also gets called by the fork code, when changing the parent's
+- * timeslices.
+  */
+ void scheduler_tick(void)
+ {
+@@ -2991,6 +2920,7 @@ void scheduler_tick(void)
+ 	struct task_struct *p = current;
+ 	int cpu = smp_processor_id();
+ 	struct rq *rq = cpu_rq(cpu);
++	unsigned long debit;
+ 
+ 	update_cpu_clock(p, rq, now);
+ 
+@@ -3004,74 +2934,62 @@ void scheduler_tick(void)
+ 	}
+ 
+ 	/* Task might have expired already, but not scheduled off yet */
+-	if (p->array != rq->active) {
++	if (unlikely(!task_queued(p))) {
+ 		set_tsk_need_resched(p);
+ 		goto out;
+ 	}
++
+ 	spin_lock(&rq->lock);
+-	/*
+-	 * The task was running during this tick - update the
+-	 * time slice counter. Note: we do not update a thread's
+-	 * priority until it either goes to sleep or uses up its
+-	 * timeslice. This makes it possible for interactive tasks
+-	 * to use up their timeslices at their highest priority levels.
+-	 */
+-	if (rt_task(p)) {
+-		/*
+-		 * RR tasks need a special form of timeslice management.
+-		 * FIFO tasks have no timeslices.
+-		 */
+-		if ((p->policy == SCHED_RR) && !--p->time_slice) {
+-			p->time_slice = task_timeslice(p);
+-			p->first_time_slice = 0;
++	if (unlikely((rt_task(p) || (iso_task(p) && !rq->iso_refractory)) &&
++	    p->mm)) {
++			if (rq->iso_ticks <= (ISO_PERIOD * 100) - 100)
++				rq->iso_ticks += 100;
++	} else
++		rq->iso_ticks = rq->iso_ticks * (ISO_PERIOD - 1) / ISO_PERIOD;
++
++	if (iso_task(p)) {
++		if (unlikely(test_ret_isorefractory(rq))) {
++			if (!(p->flags & PF_ISOREF)) {
++				set_tsk_need_resched(p);
++				p->flags |= PF_ISOREF;
++			}
++		} else
++			p->flags &= ~PF_ISOREF;
++	} else {
++		if (idleprio_task(p) && !idleprio(p) && idleprio_suitable(p))
+ 			set_tsk_need_resched(p);
++		else
++			/* SCHED_FIFO tasks never run out of timeslice. */
++			if (unlikely(p->policy == SCHED_FIFO))
++				goto out_unlock;
++	}
+ 
+-			/* put it at the end of the queue: */
+-			requeue_task(p, rq->active);
+-		}
++	debit = ns_diff(rq->timestamp_last_tick, p->timestamp);
++	p->ns_debit += debit;
++	if (p->ns_debit < NSJIFFY)
++		goto out_unlock;
++	p->ns_debit %= NSJIFFY;
++	/*
++	 * Tasks lose bonus each time they use up a full slice().
++	 */
++	if (!--p->slice) {
++		dec_bonus(p);
++		p->totalrun = 0;
++		p->slice = slice(p);
++		time_slice_expired(p, rq);
+ 		goto out_unlock;
+ 	}
++	/*
++	 * Tasks that run out of time_slice but still have slice left get
++	 * requeued with a lower priority && RR_INTERVAL time_slice.
++	 */
+ 	if (!--p->time_slice) {
+-		dequeue_task(p, rq->active);
+-		set_tsk_need_resched(p);
+-		p->prio = effective_prio(p);
+-		p->time_slice = task_timeslice(p);
+-		p->first_time_slice = 0;
+-
+-		if (!rq->expired_timestamp)
+-			rq->expired_timestamp = jiffies;
+-		if (!TASK_INTERACTIVE(p) || expired_starving(rq)) {
+-			enqueue_task(p, rq->expired);
+-			if (p->static_prio < rq->best_expired_prio)
+-				rq->best_expired_prio = p->static_prio;
+-		} else
+-			enqueue_task(p, rq->active);
+-	} else {
+-		/*
+-		 * Prevent a too long timeslice allowing a task to monopolize
+-		 * the CPU. We do this by splitting up the timeslice into
+-		 * smaller pieces.
+-		 *
+-		 * Note: this does not mean the task's timeslices expire or
+-		 * get lost in any way, they just might be preempted by
+-		 * another task of equal priority. (one with higher
+-		 * priority would have preempted this task already.) We
+-		 * requeue this task to the end of the list on this priority
+-		 * level, which is in essence a round-robin of tasks with
+-		 * equal priority.
+-		 *
+-		 * This only applies to tasks in the interactive
+-		 * delta range with at least TIMESLICE_GRANULARITY to requeue.
+-		 */
+-		if (TASK_INTERACTIVE(p) && !((task_timeslice(p) -
+-			p->time_slice) % TIMESLICE_GRANULARITY(p)) &&
+-			(p->time_slice >= TIMESLICE_GRANULARITY(p)) &&
+-			(p->array == rq->active)) {
+-
+-			requeue_task(p, rq->active);
+-			set_tsk_need_resched(p);
+-		}
++		time_slice_expired(p, rq);
++		goto out_unlock;
+ 	}
++	rq->cache_ticks++;
++	if (rq->preempted && rq->cache_ticks >= CACHE_DELAY)
++		set_tsk_need_resched(p);
+ out_unlock:
+ 	spin_unlock(&rq->lock);
+ out:
+@@ -3119,13 +3037,13 @@ static void wake_sleeping_dependent(int 
+ 
+ /*
+  * number of 'lost' timeslices this task wont be able to fully
+- * utilize, if another task runs on a sibling. This models the
++ * utilise, if another task runs on a sibling. This models the
+  * slowdown effect of other tasks running on siblings:
+  */
+ static inline unsigned long
+ smt_slice(struct task_struct *p, struct sched_domain *sd)
+ {
+-	return p->time_slice * (100 - sd->per_cpu_gain) / 100;
++	return p->slice * (100 - sd->per_cpu_gain) / 100;
+ }
+ 
+ /*
+@@ -3141,7 +3059,7 @@ dependent_sleeper(int this_cpu, struct r
+ 	int ret = 0, i;
+ 
+ 	/* kernel/rt threads do not participate in dependent sleeping */
+-	if (!p->mm || rt_task(p))
++	if (!p->mm || rt_task(p) || iso_task(p))
+ 		return 0;
+ 
+ 	for_each_domain(this_cpu, tmp) {
+@@ -3178,7 +3096,7 @@ dependent_sleeper(int this_cpu, struct r
+ 		 * task from using an unfair proportion of the
+ 		 * physical cpu's resources. -ck
+ 		 */
+-		if (rt_task(smt_curr)) {
++		if (rt_task(smt_curr) || iso_task(smt_curr)) {
+ 			/*
+ 			 * With real time tasks we run non-rt tasks only
+ 			 * per_cpu_gain% of the time.
+@@ -3186,11 +3104,23 @@ dependent_sleeper(int this_cpu, struct r
+ 			if ((jiffies % DEF_TIMESLICE) >
+ 				(sd->per_cpu_gain * DEF_TIMESLICE / 100))
+ 					ret = 1;
++			else if (idleprio(p))
++				ret = 1;
+ 		} else {
+ 			if (smt_curr->static_prio < p->static_prio &&
+ 				!TASK_PREEMPTS_CURR(p, smt_rq) &&
+-				smt_slice(smt_curr, sd) > task_timeslice(p))
++				smt_slice(smt_curr, sd) > slice(p))
+ 					ret = 1;
++			else if (idleprio(p) && !idleprio_task(smt_curr) &&
++				smt_curr->slice * sd->per_cpu_gain >
++				slice(smt_curr)) {
++				/*
++				 * With idleprio tasks they run just the last
++				 * per_cpu_gain percent of the smt task's
++				 * slice.
++				 */
++				ret = 1;
++			}
+ 		}
+ unlock:
+ 		spin_unlock(&smt_rq->lock);
+@@ -3245,25 +3175,18 @@ EXPORT_SYMBOL(sub_preempt_count);
+ 
+ #endif
+ 
+-static inline int interactive_sleep(enum sleep_type sleep_type)
+-{
+-	return (sleep_type == SLEEP_INTERACTIVE ||
+-		sleep_type == SLEEP_INTERRUPTED);
+-}
+-
+ /*
+  * schedule() is the main scheduler function.
+  */
+ asmlinkage void __sched schedule(void)
+ {
+ 	struct task_struct *prev, *next;
+-	struct prio_array *array;
+ 	struct list_head *queue;
+ 	unsigned long long now;
+-	unsigned long run_time;
+-	int cpu, idx, new_prio;
+ 	long *switch_count;
++	unsigned long debit;
+ 	struct rq *rq;
++	int cpu, idx;
+ 
+ 	/*
+ 	 * Test if we are atomic.  Since do_exit() needs to call into
+@@ -3296,20 +3219,11 @@ need_resched_nonpreemptible:
+ 
+ 	schedstat_inc(rq, sched_cnt);
+ 	now = sched_clock();
+-	if (likely((long long)(now - prev->timestamp) < NS_MAX_SLEEP_AVG)) {
+-		run_time = now - prev->timestamp;
+-		if (unlikely((long long)(now - prev->timestamp) < 0))
+-			run_time = 0;
+-	} else
+-		run_time = NS_MAX_SLEEP_AVG;
+-
+-	/*
+-	 * Tasks charged proportionately less run_time at high sleep_avg to
+-	 * delay them losing their interactive status
+-	 */
+-	run_time /= (CURRENT_BONUS(prev) ? : 1);
+ 
+ 	spin_lock_irq(&rq->lock);
++	prev->runtime = ns_diff(now, prev->timestamp);
++	debit = ns_diff(now, rq->timestamp_last_tick) % NSJIFFY;
++	prev->ns_debit += debit;
+ 
+ 	if (unlikely(prev->flags & PF_DEAD))
+ 		prev->state = EXIT_DEAD;
+@@ -3321,8 +3235,10 @@ need_resched_nonpreemptible:
+ 				unlikely(signal_pending(prev))))
+ 			prev->state = TASK_RUNNING;
+ 		else {
+-			if (prev->state == TASK_UNINTERRUPTIBLE)
++			if (prev->state == TASK_UNINTERRUPTIBLE) {
++				prev->flags |= PF_NONSLEEP;
+ 				rq->nr_uninterruptible++;
++			}
+ 			deactivate_task(prev, rq);
+ 		}
+ 	}
+@@ -3332,66 +3248,33 @@ need_resched_nonpreemptible:
+ 		idle_balance(cpu, rq);
+ 		if (!rq->nr_running) {
+ 			next = rq->idle;
+-			rq->expired_timestamp = 0;
+ 			wake_sleeping_dependent(cpu);
+ 			goto switch_tasks;
+ 		}
+ 	}
+ 
+-	array = rq->active;
+-	if (unlikely(!array->nr_active)) {
+-		/*
+-		 * Switch the active and expired arrays.
+-		 */
+-		schedstat_inc(rq, sched_switch);
+-		rq->active = rq->expired;
+-		rq->expired = array;
+-		array = rq->active;
+-		rq->expired_timestamp = 0;
+-		rq->best_expired_prio = MAX_PRIO;
+-	}
+-
+-	idx = sched_find_first_bit(array->bitmap);
+-	queue = array->queue + idx;
++	idx = sched_find_first_bit(rq->bitmap);
++	queue = rq->queue + idx;
+ 	next = list_entry(queue->next, struct task_struct, run_list);
+ 
+-	if (!rt_task(next) && interactive_sleep(next->sleep_type)) {
+-		unsigned long long delta = now - next->timestamp;
+-		if (unlikely((long long)(now - next->timestamp) < 0))
+-			delta = 0;
+-
+-		if (next->sleep_type == SLEEP_INTERACTIVE)
+-			delta = delta * (ON_RUNQUEUE_WEIGHT * 128 / 100) / 128;
+-
+-		array = next->array;
+-		new_prio = recalc_task_prio(next, next->timestamp + delta);
+-
+-		if (unlikely(next->prio != new_prio)) {
+-			dequeue_task(next, array);
+-			next->prio = new_prio;
+-			enqueue_task(next, array);
+-		}
+-	}
+-	next->sleep_type = SLEEP_NORMAL;
+ 	if (dependent_sleeper(cpu, rq, next))
+ 		next = rq->idle;
++	else {
++		prefetch(next);
++		prefetch_stack(next);
++	}
+ switch_tasks:
+ 	if (next == rq->idle)
+ 		schedstat_inc(rq, sched_goidle);
+-	prefetch(next);
+-	prefetch_stack(next);
++	prev->timestamp = now;
+ 	clear_tsk_need_resched(prev);
+ 	rcu_qsctr_inc(task_cpu(prev));
+ 
+ 	update_cpu_clock(prev, rq, now);
+ 
+-	prev->sleep_avg -= run_time;
+-	if ((long)prev->sleep_avg <= 0)
+-		prev->sleep_avg = 0;
+-	prev->timestamp = prev->last_ran = now;
+-
+ 	sched_info_switch(prev, next);
+ 	if (likely(prev != next)) {
++		rq->preempted = rq->cache_ticks = 0;
+ 		next->timestamp = now;
+ 		rq->nr_switches++;
+ 		rq->curr = next;
+@@ -3823,29 +3706,21 @@ EXPORT_SYMBOL(sleep_on_timeout);
+  */
+ void rt_mutex_setprio(struct task_struct *p, int prio)
+ {
+-	struct prio_array *array;
+ 	unsigned long flags;
++	int queued, oldprio;
+ 	struct rq *rq;
+-	int oldprio;
+ 
+ 	BUG_ON(prio < 0 || prio > MAX_PRIO);
+ 
+ 	rq = task_rq_lock(p, &flags);
+ 
+ 	oldprio = p->prio;
+-	array = p->array;
+-	if (array)
+-		dequeue_task(p, array);
++	if ((queued = task_queued(p)))
++		dequeue_task(p, rq);
+ 	p->prio = prio;
+ 
+-	if (array) {
+-		/*
+-		 * If changing to an RT priority then queue it
+-		 * in the active array!
+-		 */
+-		if (rt_task(p))
+-			array = rq->active;
+-		enqueue_task(p, array);
++	if (queued) {
++		enqueue_task(p, rq);
+ 		/*
+ 		 * Reschedule if we are currently running on this runqueue and
+ 		 * our priority decreased, or if we are not currently running on
+@@ -3854,8 +3729,8 @@ void rt_mutex_setprio(struct task_struct
+ 		if (task_running(rq, p)) {
+ 			if (p->prio > oldprio)
+ 				resched_task(rq->curr);
+-		} else if (TASK_PREEMPTS_CURR(p, rq))
+-			resched_task(rq->curr);
++		} else
++			preempt(p, rq);
+ 	}
+ 	task_rq_unlock(rq, &flags);
+ }
+@@ -3864,8 +3739,7 @@ void rt_mutex_setprio(struct task_struct
+ 
+ void set_user_nice(struct task_struct *p, long nice)
+ {
+-	struct prio_array *array;
+-	int old_prio, delta;
++	int queued, old_prio,delta;
+ 	unsigned long flags;
+ 	struct rq *rq;
+ 
+@@ -3886,27 +3760,29 @@ void set_user_nice(struct task_struct *p
+ 		p->static_prio = NICE_TO_PRIO(nice);
+ 		goto out_unlock;
+ 	}
+-	array = p->array;
+-	if (array) {
+-		dequeue_task(p, array);
++	if ((queued = task_queued(p))) {
++		dequeue_task(p, rq);
+ 		dec_raw_weighted_load(rq, p);
+ 	}
+ 
+ 	p->static_prio = NICE_TO_PRIO(nice);
+ 	set_load_weight(p);
+ 	old_prio = p->prio;
++	if (p->bonus > bonus(p))
++		p->bonus= bonus(p);
+ 	p->prio = effective_prio(p);
+ 	delta = p->prio - old_prio;
+ 
+-	if (array) {
+-		enqueue_task(p, array);
++	if (queued) {
++		enqueue_task(p, rq);
+ 		inc_raw_weighted_load(rq, p);
+ 		/*
+ 		 * If the task increased its priority or is running and
+ 		 * lowered its priority, then reschedule its CPU:
+ 		 */
+-		if (delta < 0 || (delta > 0 && task_running(rq, p)))
+-			resched_task(rq->curr);
++		if (delta < 0 || ((delta > 0 || idleprio_task(p)) &&
++			task_running(rq, p)))
++				resched_task(rq->curr);
+ 	}
+ out_unlock:
+ 	task_rq_unlock(rq, &flags);
+@@ -4022,18 +3898,13 @@ static inline struct task_struct *find_p
+ /* Actually do priority change: must hold rq lock. */
+ static void __setscheduler(struct task_struct *p, int policy, int prio)
+ {
+-	BUG_ON(p->array);
++	BUG_ON(task_queued(p));
+ 
+ 	p->policy = policy;
+ 	p->rt_priority = prio;
+ 	p->normal_prio = normal_prio(p);
+ 	/* we are holding p->pi_lock already */
+ 	p->prio = rt_mutex_getprio(p);
+-	/*
+-	 * SCHED_BATCH tasks are treated as perpetual CPU hogs:
+-	 */
+-	if (policy == SCHED_BATCH)
+-		p->sleep_avg = 0;
+ 	set_load_weight(p);
+ }
+ 
+@@ -4047,19 +3918,27 @@ static void __setscheduler(struct task_s
+ int sched_setscheduler(struct task_struct *p, int policy,
+ 		       struct sched_param *param)
+ {
+-	int retval, oldprio, oldpolicy = -1;
+-	struct prio_array *array;
++	struct sched_param zero_param = { .sched_priority = 0 };
++	int queued, retval, oldprio, oldpolicy = -1;
+ 	unsigned long flags;
+ 	struct rq *rq;
+ 
+ 	/* may grab non-irq protected spin_locks */
+ 	BUG_ON(in_interrupt());
++	if (SCHED_RT(policy) && !capable(CAP_SYS_NICE)) {
++		/*
++		 * If the caller requested an RT policy without having the
++		 * necessary rights, we downgrade the policy to SCHED_ISO.
++		 * We also set the parameter to zero to pass the checks.
++		 */
++		policy = SCHED_ISO;
++		param = &zero_param;
++	}
+ recheck:
+ 	/* double check policy once rq lock held */
+ 	if (policy < 0)
+ 		policy = oldpolicy = p->policy;
+-	else if (policy != SCHED_FIFO && policy != SCHED_RR &&
+-			policy != SCHED_NORMAL && policy != SCHED_BATCH)
++	else if (!SCHED_RANGE(policy))
+ 		return -EINVAL;
+ 	/*
+ 	 * Valid priorities for SCHED_FIFO and SCHED_RR are
+@@ -4070,34 +3949,62 @@ recheck:
+ 	    (p->mm && param->sched_priority > MAX_USER_RT_PRIO-1) ||
+ 	    (!p->mm && param->sched_priority > MAX_RT_PRIO-1))
+ 		return -EINVAL;
+-	if ((policy == SCHED_NORMAL || policy == SCHED_BATCH)
+-					!= (param->sched_priority == 0))
++	if ((!SCHED_RT(policy)) != (param->sched_priority == 0))
+ 		return -EINVAL;
+ 
+ 	/*
+ 	 * Allow unprivileged RT tasks to decrease priority:
+ 	 */
+ 	if (!capable(CAP_SYS_NICE)) {
+-		/*
+-		 * can't change policy, except between SCHED_NORMAL
+-		 * and SCHED_BATCH:
+-		 */
+-		if (((policy != SCHED_NORMAL && p->policy != SCHED_BATCH) &&
+-			(policy != SCHED_BATCH && p->policy != SCHED_NORMAL)) &&
+-				!p->signal->rlim[RLIMIT_RTPRIO].rlim_cur)
+-			return -EPERM;
+-		/* can't increase priority */
+-		if ((policy != SCHED_NORMAL && policy != SCHED_BATCH) &&
+-		    param->sched_priority > p->rt_priority &&
+-		    param->sched_priority >
+-				p->signal->rlim[RLIMIT_RTPRIO].rlim_cur)
+-			return -EPERM;
++		if (SCHED_RT(policy)) {
++			/*
++			 * can't change policy to a realtime policy
++			 */
++			if (policy != p->policy &&
++			    !p->signal->rlim[RLIMIT_RTPRIO].rlim_cur)
++				return -EPERM;
++			/* can't increase priority */
++			if (param->sched_priority > p->rt_priority &&
++			    param->sched_priority >
++			    p->signal->rlim[RLIMIT_RTPRIO].rlim_cur)
++				return -EPERM;
++		} else {
++			switch (p->policy) {
++				/*
++				 * Can only downgrade policies but not back to
++				 * SCHED_NORMAL
++				 */
++				case SCHED_ISO:
++					if (policy == SCHED_ISO)
++						goto out;
++					if (policy == SCHED_NORMAL)
++						return -EPERM;
++					break;
++				case SCHED_BATCH:
++					if (policy == SCHED_BATCH)
++						goto out;
++					if (policy != SCHED_IDLEPRIO)
++					    	return -EPERM;
++					break;
++				case SCHED_IDLEPRIO:
++					if (policy == SCHED_IDLEPRIO)
++						goto out;
++					return -EPERM;
++				default:
++					break;
++			}
++		}
+ 		/* can't change other user's priorities */
+ 		if ((current->euid != p->euid) &&
+ 		    (current->euid != p->uid))
+ 			return -EPERM;
+ 	}
+ 
++	if (!(p->mm) && policy == SCHED_IDLEPRIO) {
++		/* Don't allow kernel threads to be SCHED_IDLEPRIO. */
++		return -EINVAL;
++	}
++
+ 	retval = security_task_setscheduler(p, policy, param);
+ 	if (retval)
+ 		return retval;
+@@ -4118,12 +4025,11 @@ recheck:
+ 		spin_unlock_irqrestore(&p->pi_lock, flags);
+ 		goto recheck;
+ 	}
+-	array = p->array;
+-	if (array)
++	if ((queued = task_queued(p)))
+ 		deactivate_task(p, rq);
+ 	oldprio = p->prio;
+ 	__setscheduler(p, policy, param->sched_priority);
+-	if (array) {
++	if (queued) {
+ 		__activate_task(p, rq);
+ 		/*
+ 		 * Reschedule if we are currently running on this runqueue and
+@@ -4133,14 +4039,15 @@ recheck:
+ 		if (task_running(rq, p)) {
+ 			if (p->prio > oldprio)
+ 				resched_task(rq->curr);
+-		} else if (TASK_PREEMPTS_CURR(p, rq))
+-			resched_task(rq->curr);
++		} else
++			preempt(p, rq);
+ 	}
+ 	__task_rq_unlock(rq);
+ 	spin_unlock_irqrestore(&p->pi_lock, flags);
+ 
+ 	rt_mutex_adjust_pi(p);
+ 
++out:
+ 	return 0;
+ }
+ EXPORT_SYMBOL_GPL(sched_setscheduler);
+@@ -4404,41 +4311,24 @@ asmlinkage long sys_sched_getaffinity(pi
+ /**
+  * sys_sched_yield - yield the current processor to other threads.
+  *
+- * this function yields the current CPU by moving the calling thread
+- * to the expired array. If there are no other threads running on this
+- * CPU then this function will return.
++ * This function yields the current CPU by dropping the priority of current
++ * to the lowest priority.
+  */
+ asmlinkage long sys_sched_yield(void)
+ {
+ 	struct rq *rq = this_rq_lock();
+-	struct prio_array *array = current->array, *target = rq->expired;
++	int newprio = current->prio;
+ 
+ 	schedstat_inc(rq, yld_cnt);
+-	/*
+-	 * We implement yielding by moving the task into the expired
+-	 * queue.
+-	 *
+-	 * (special rule: RT tasks will just roundrobin in the active
+-	 *  array.)
+-	 */
+-	if (rt_task(current))
+-		target = rq->active;
+ 
+-	if (array->nr_active == 1) {
+-		schedstat_inc(rq, yld_act_empty);
+-		if (!rq->expired->nr_active)
+-			schedstat_inc(rq, yld_both_empty);
+-	} else if (!rq->expired->nr_active)
+-		schedstat_inc(rq, yld_exp_empty);
+-
+-	if (array != target) {
+-		dequeue_task(current, array);
+-		enqueue_task(current, target);
+-	} else
+-		/*
+-		 * requeue_task is cheaper so perform that if possible.
+-		 */
+-		requeue_task(current, array);
++	newprio = current->prio;
++	schedstat_inc(rq, yld_cnt);
++	current->slice = slice(current);
++	current->time_slice = rr_interval(current);
++	if (likely(!rt_task(current) && !idleprio(current)))
++		newprio = MIN_USER_PRIO;
++
++	requeue_task(current, rq, newprio);
+ 
+ 	/*
+ 	 * Since we are going to call schedule() anyway, there's
+@@ -4599,6 +4489,8 @@ asmlinkage long sys_sched_get_priority_m
+ 		break;
+ 	case SCHED_NORMAL:
+ 	case SCHED_BATCH:
++	case SCHED_ISO:
++	case SCHED_IDLEPRIO:
+ 		ret = 0;
+ 		break;
+ 	}
+@@ -4623,6 +4515,8 @@ asmlinkage long sys_sched_get_priority_m
+ 		break;
+ 	case SCHED_NORMAL:
+ 	case SCHED_BATCH:
++	case SCHED_ISO:
++	case SCHED_IDLEPRIO:
+ 		ret = 0;
+ 	}
+ 	return ret;
+@@ -4657,7 +4551,7 @@ long sys_sched_rr_get_interval(pid_t pid
+ 		goto out_unlock;
+ 
+ 	jiffies_to_timespec(p->policy == SCHED_FIFO ?
+-				0 : task_timeslice(p), &t);
++				0 : slice(p), &t);
+ 	read_unlock(&tasklist_lock);
+ 	retval = copy_to_user(interval, &t, sizeof(t)) ? -EFAULT : 0;
+ out_nounlock:
+@@ -4781,8 +4675,6 @@ void __devinit init_idle(struct task_str
+ 	unsigned long flags;
+ 
+ 	idle->timestamp = sched_clock();
+-	idle->sleep_avg = 0;
+-	idle->array = NULL;
+ 	idle->prio = idle->normal_prio = MAX_PRIO;
+ 	idle->state = TASK_RUNNING;
+ 	idle->cpus_allowed = cpumask_of_cpu(cpu);
+@@ -4902,7 +4794,7 @@ static int __migrate_task(struct task_st
+ 		goto out;
+ 
+ 	set_task_cpu(p, dest_cpu);
+-	if (p->array) {
++	if (task_queued(p)) {
+ 		/*
+ 		 * Sync timestamp with rq_dest's before activating.
+ 		 * The same thing could be achieved by doing this step
+@@ -4913,8 +4805,7 @@ static int __migrate_task(struct task_st
+ 				+ rq_dest->timestamp_last_tick;
+ 		deactivate_task(p, rq_src);
+ 		__activate_task(p, rq_dest);
+-		if (TASK_PREEMPTS_CURR(p, rq_dest))
+-			resched_task(rq_dest->curr);
++		preempt(p, rq_dest);
+ 	}
+ 	ret = 1;
+ out:
+@@ -5138,7 +5029,7 @@ static void migrate_dead_tasks(unsigned 
+ 
+ 	for (arr = 0; arr < 2; arr++) {
+ 		for (i = 0; i < MAX_PRIO; i++) {
+-			struct list_head *list = &rq->arrays[arr].queue[i];
++			struct list_head *list = &rq->queue[i];
+ 
+ 			while (!list_empty(list))
+ 				migrate_dead(dead_cpu, list_entry(list->next,
+@@ -6457,14 +6348,14 @@ static int build_sched_domains(const cpu
+  			 	 * for each core we will add once
+  				 * to the group in physical domain
+  			 	 */
+-  	 			if (j != first_cpu(sd1->groups->cpumask))
++	 			if (j != first_cpu(sd1->groups->cpumask))
+  					continue;
+ 
+  				if (sched_smt_power_savings)
+-   					sd->groups->cpu_power += sd1->groups->cpu_power;
++ 					sd->groups->cpu_power += sd1->groups->cpu_power;
+  				else
+-   					sd->groups->cpu_power += SCHED_LOAD_SCALE;
+-   			}
++ 					sd->groups->cpu_power += SCHED_LOAD_SCALE;
++ 			}
+  		} else
+  			/*
+  			 * This has to be < 2 * SCHED_LOAD_SCALE
+@@ -6727,19 +6618,17 @@ int in_sched_functions(unsigned long add
+ 
+ void __init sched_init(void)
+ {
+-	int i, j, k;
++	int i;
+ 
+ 	for_each_possible_cpu(i) {
+-		struct prio_array *array;
+ 		struct rq *rq;
++		int j;
+ 
+ 		rq = cpu_rq(i);
+ 		spin_lock_init(&rq->lock);
+ 		lockdep_set_class(&rq->lock, &rq->rq_lock_key);
+-		rq->nr_running = 0;
+-		rq->active = rq->arrays;
+-		rq->expired = rq->arrays + 1;
+-		rq->best_expired_prio = MAX_PRIO;
++		rq->nr_running = rq->cache_ticks = rq->preempted =
++			rq->iso_ticks = 0;
+ 
+ #ifdef CONFIG_SMP
+ 		rq->sd = NULL;
+@@ -6752,15 +6641,11 @@ void __init sched_init(void)
+ #endif
+ 		atomic_set(&rq->nr_iowait, 0);
+ 
+-		for (j = 0; j < 2; j++) {
+-			array = rq->arrays + j;
+-			for (k = 0; k < MAX_PRIO; k++) {
+-				INIT_LIST_HEAD(array->queue + k);
+-				__clear_bit(k, array->bitmap);
+-			}
+-			// delimiter for bitsearch
+-			__set_bit(MAX_PRIO, array->bitmap);
+-		}
++		for (j = 0; j < MAX_PRIO; j++)
++			INIT_LIST_HEAD(&rq->queue[j]);
++		memset(rq->bitmap, 0, BITS_TO_LONGS(MAX_PRIO)*sizeof(long));
++		/* delimiter for bitsearch */
++		__set_bit(MAX_PRIO, rq->bitmap);
+ 	}
+ 
+ 	set_load_weight(&init_task);
+@@ -6809,10 +6694,10 @@ EXPORT_SYMBOL(__might_sleep);
+ #ifdef CONFIG_MAGIC_SYSRQ
+ void normalize_rt_tasks(void)
+ {
+-	struct prio_array *array;
+ 	struct task_struct *p;
+ 	unsigned long flags;
+ 	struct rq *rq;
++	int queued;
+ 
+ 	read_lock_irq(&tasklist_lock);
+ 	for_each_process(p) {
+@@ -6822,11 +6707,10 @@ void normalize_rt_tasks(void)
+ 		spin_lock_irqsave(&p->pi_lock, flags);
+ 		rq = __task_rq_lock(p);
+ 
+-		array = p->array;
+-		if (array)
++		if ((queued = task_queued(p)))
+ 			deactivate_task(p, task_rq(p));
+ 		__setscheduler(p, SCHED_NORMAL, 0);
+-		if (array) {
++		if (queued) {
+ 			__activate_task(p, task_rq(p));
+ 			resched_task(rq->curr);
+ 		}
+Index: linux-2.6.18-ck1/include/linux/sysctl.h
+===================================================================
+--- linux-2.6.18-ck1.orig/include/linux/sysctl.h	2006-09-21 20:03:59.000000000 +1000
++++ linux-2.6.18-ck1/include/linux/sysctl.h	2006-09-21 20:05:38.000000000 +1000
+@@ -150,6 +150,9 @@ enum
+ 	KERN_IA64_UNALIGNED=72, /* int: ia64 unaligned userland trap enable */
+ 	KERN_COMPAT_LOG=73,	/* int: print compat layer  messages */
+ 	KERN_MAX_LOCK_DEPTH=74,
++	KERN_INTERACTIVE=75,	/* interactive tasks can have cpu bursts */
++	KERN_COMPUTE=76,	/* adjust timeslices for a compute server */
++	KERN_ISO_CPU=77,	/* percent cpu SCHED_ISO tasks run SCHED_RR */
+ };
+ 
+ 
+@@ -175,7 +178,7 @@ enum
+ 	VM_OVERCOMMIT_RATIO=16, /* percent of RAM to allow overcommit in */
+ 	VM_PAGEBUF=17,		/* struct: Control pagebuf parameters */
+ 	VM_HUGETLB_PAGES=18,	/* int: Number of available Huge Pages */
+-	VM_SWAPPINESS=19,	/* Tendency to steal mapped memory */
++	VM_MAPPED=19,		/* percent mapped min while evicting cache */
+ 	VM_LOWMEM_RESERVE_RATIO=20,/* reservation ratio for lower memory zones */
+ 	VM_MIN_FREE_KBYTES=21,	/* Minimum free kilobytes to maintain */
+ 	VM_MAX_MAP_COUNT=22,	/* int: Maximum number of mmaps/address-space */
+@@ -191,6 +194,9 @@ enum
+ 	VM_MIN_UNMAPPED=32,	/* Set min percent of unmapped pages */
+ 	VM_PANIC_ON_OOM=33,	/* panic at out-of-memory */
+ 	VM_VDSO_ENABLED=34,	/* map VDSO into new processes? */
++	VM_SWAP_PREFETCH=35,	/* swap prefetch */
++	VM_HARDMAPLIMIT=36,	/* Make mapped a hard limit */
++	VM_TAIL_LARGEFILES=37,	/* Read large files to lru tail */
+ };
+ 
+ 
+Index: linux-2.6.18-ck1/kernel/sysctl.c
+===================================================================
+--- linux-2.6.18-ck1.orig/kernel/sysctl.c	2006-09-21 20:03:59.000000000 +1000
++++ linux-2.6.18-ck1/kernel/sysctl.c	2006-09-21 20:05:38.000000000 +1000
+@@ -22,6 +22,7 @@
+ #include <linux/mm.h>
+ #include <linux/swap.h>
+ #include <linux/slab.h>
++#include <linux/swap-prefetch.h>
+ #include <linux/sysctl.h>
+ #include <linux/proc_fs.h>
+ #include <linux/capability.h>
+@@ -73,6 +74,7 @@ extern int pid_max_min, pid_max_max;
+ extern int sysctl_drop_caches;
+ extern int percpu_pagelist_fraction;
+ extern int compat_log;
++extern int vm_tail_largefiles;
+ 
+ #if defined(CONFIG_X86_LOCAL_APIC) && defined(CONFIG_X86)
+ int unknown_nmi_panic;
+@@ -227,6 +229,11 @@ static ctl_table root_table[] = {
+ 	{ .ctl_name = 0 }
+ };
+ 
++/* Constants for minimum and maximum testing.
++   We use these as one-element integer vectors. */
++static int zero;
++static int one_hundred = 100;
++
+ static ctl_table kern_table[] = {
+ 	{
+ 		.ctl_name	= KERN_OSTYPE,
+@@ -621,6 +628,33 @@ static ctl_table kern_table[] = {
+ 		.mode		= 0444,
+ 		.proc_handler	= &proc_dointvec,
+ 	},
++	{
++		.ctl_name	= KERN_INTERACTIVE,
++		.procname	= "interactive",
++		.data		= &sched_interactive,
++		.maxlen		= sizeof (int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++	},
++	{
++		.ctl_name	= KERN_COMPUTE,
++		.procname	= "compute",
++		.data		= &sched_compute,
++		.maxlen		= sizeof (int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++	},
++	{
++		.ctl_name	= KERN_ISO_CPU,
++		.procname	= "iso_cpu",
++		.data		= &sched_iso_cpu,
++		.maxlen		= sizeof (int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec_minmax,
++		.strategy	= &sysctl_intvec,
++		.extra1		= &zero,
++		.extra2		= &one_hundred,
++	},
+ #if defined(CONFIG_X86_LOCAL_APIC) && defined(CONFIG_X86)
+ 	{
+ 		.ctl_name       = KERN_UNKNOWN_NMI_PANIC,
+@@ -705,12 +739,6 @@ static ctl_table kern_table[] = {
+ 	{ .ctl_name = 0 }
+ };
+ 
+-/* Constants for minimum and maximum testing in vm_table.
+-   We use these as one-element integer vectors. */
+-static int zero;
+-static int one_hundred = 100;
+-
+-
+ static ctl_table vm_table[] = {
+ 	{
+ 		.ctl_name	= VM_OVERCOMMIT_MEMORY,
+@@ -791,16 +819,32 @@ static ctl_table vm_table[] = {
+ 		.proc_handler	= &proc_dointvec,
+ 	},
+ 	{
+-		.ctl_name	= VM_SWAPPINESS,
+-		.procname	= "swappiness",
+-		.data		= &vm_swappiness,
+-		.maxlen		= sizeof(vm_swappiness),
++		.ctl_name	= VM_MAPPED,
++		.procname	= "mapped",
++		.data		= &vm_mapped,
++		.maxlen		= sizeof(vm_mapped),
+ 		.mode		= 0644,
+ 		.proc_handler	= &proc_dointvec_minmax,
+ 		.strategy	= &sysctl_intvec,
+ 		.extra1		= &zero,
+ 		.extra2		= &one_hundred,
+ 	},
++	{
++		.ctl_name	= VM_HARDMAPLIMIT,
++		.procname	= "hardmaplimit",
++		.data		= &vm_hardmaplimit,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++	},
++	{
++		.ctl_name	= VM_TAIL_LARGEFILES,
++		.procname	= "tail_largefiles",
++		.data		= &vm_tail_largefiles,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++	},
+ #ifdef CONFIG_HUGETLB_PAGE
+ 	 {
+ 		.ctl_name	= VM_HUGETLB_PAGES,
+@@ -956,6 +1000,16 @@ static ctl_table vm_table[] = {
+ 		.extra1		= &zero,
+ 	},
+ #endif
++#ifdef CONFIG_SWAP_PREFETCH
++	{
++		.ctl_name	= VM_SWAP_PREFETCH,
++		.procname	= "swap_prefetch",
++		.data		= &swap_prefetch,
++		.maxlen		= sizeof(swap_prefetch),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++	},
++#endif
+ 	{ .ctl_name = 0 }
+ };
+ 
+Index: linux-2.6.18-ck1/Documentation/sysctl/kernel.txt
+===================================================================
+--- linux-2.6.18-ck1.orig/Documentation/sysctl/kernel.txt	2006-09-21 20:03:59.000000000 +1000
++++ linux-2.6.18-ck1/Documentation/sysctl/kernel.txt	2006-09-21 20:05:28.000000000 +1000
+@@ -18,6 +18,7 @@ Currently, these files might (depending 
+ show up in /proc/sys/kernel:
+ - acpi_video_flags
+ - acct
++- compute
+ - core_pattern
+ - core_uses_pid
+ - ctrl-alt-del
+@@ -25,6 +26,8 @@ show up in /proc/sys/kernel:
+ - domainname
+ - hostname
+ - hotplug
++- interactive
++- iso_cpu
+ - java-appletviewer           [ binfmt_java, obsolete ]
+ - java-interpreter            [ binfmt_java, obsolete ]
+ - l2cr                        [ PPC only ]
+@@ -83,6 +86,16 @@ valid for 30 seconds.
+ 
+ ==============================================================
+ 
++compute:
++
++This flag controls the long timeslice, delayed preemption mode in the
++cpu scheduler suitable for scientific computation applications. It
++leads to large latencies so is unsuitable for normal usage.
++
++Disabled by default.
++
++==============================================================
++
+ core_pattern:
+ 
+ core_pattern is used to specify a core dumpfile pattern name.
+@@ -160,6 +173,23 @@ Default value is "/sbin/hotplug".
+ 
+ ==============================================================
+ 
++interactive:
++
++This flag controls the allocation of dynamic priorities in the cpu
++scheduler. It gives low cpu using tasks high priority for lowest
++latencies. Nice value is still observed but stricter cpu proportions
++are obeyed if this tunable is disabled. Enabled by default.
++
++==============================================================
++
++iso_cpu:
++
++This sets the percentage cpu that the unprivileged SCHED_ISO tasks can
++run effectively at realtime priority, averaged over a rolling 3 seconds.
++Set to 80% by default.
++
++==============================================================
++
+ l2cr: (PPC only)
+ 
+ This flag controls the L2 cache of G3 processor boards. If
+Index: linux-2.6.18-ck1/include/linux/init_task.h
+===================================================================
+--- linux-2.6.18-ck1.orig/include/linux/init_task.h	2006-09-21 20:03:58.000000000 +1000
++++ linux-2.6.18-ck1/include/linux/init_task.h	2006-09-21 20:05:29.000000000 +1000
+@@ -87,9 +87,9 @@ extern struct group_info init_groups;
+ 	.usage		= ATOMIC_INIT(2),				\
+ 	.flags		= 0,						\
+ 	.lock_depth	= -1,						\
+-	.prio		= MAX_PRIO-20,					\
+-	.static_prio	= MAX_PRIO-20,					\
+-	.normal_prio	= MAX_PRIO-20,					\
++	.prio		= MAX_PRIO-21,					\
++	.static_prio	= MAX_PRIO-21,					\
++	.normal_prio	= MAX_PRIO-21,					\
+ 	.policy		= SCHED_NORMAL,					\
+ 	.cpus_allowed	= CPU_MASK_ALL,					\
+ 	.mm		= NULL,						\
+@@ -122,6 +122,7 @@ extern struct group_info init_groups;
+ 		.signal = {{0}}},					\
+ 	.blocked	= {{0}},					\
+ 	.alloc_lock	= __SPIN_LOCK_UNLOCKED(tsk.alloc_lock),		\
++	.mutexes_held	= 0,						\
+ 	.journal_info	= NULL,						\
+ 	.cpu_timers	= INIT_CPU_TIMERS(tsk.cpu_timers),		\
+ 	.fs_excl	= ATOMIC_INIT(0),				\
+Index: linux-2.6.18-ck1/kernel/fork.c
+===================================================================
+--- linux-2.6.18-ck1.orig/kernel/fork.c	2006-09-21 20:03:58.000000000 +1000
++++ linux-2.6.18-ck1/kernel/fork.c	2006-09-21 20:05:29.000000000 +1000
+@@ -1044,6 +1044,7 @@ static struct task_struct *copy_process(
+ 	p->io_context = NULL;
+ 	p->io_wait = NULL;
+ 	p->audit_context = NULL;
++	p->mutexes_held = 0;
+ 	cpuset_fork(p);
+ #ifdef CONFIG_NUMA
+  	p->mempolicy = mpol_copy(p->mempolicy);
+Index: linux-2.6.18-ck1/kernel/mutex.c
+===================================================================
+--- linux-2.6.18-ck1.orig/kernel/mutex.c	2006-09-21 20:03:58.000000000 +1000
++++ linux-2.6.18-ck1/kernel/mutex.c	2006-09-21 20:05:29.000000000 +1000
+@@ -60,6 +60,16 @@ EXPORT_SYMBOL(__mutex_init);
+ static void fastcall noinline __sched
+ __mutex_lock_slowpath(atomic_t *lock_count);
+ 
++static inline void inc_mutex_count(void)
++{
++	current->mutexes_held++;
++}
++
++static inline void dec_mutex_count(void)
++{
++	current->mutexes_held--;
++}
++
+ /***
+  * mutex_lock - acquire the mutex
+  * @lock: the mutex to be acquired
+@@ -89,6 +99,7 @@ void inline fastcall __sched mutex_lock(
+ 	 * 'unlocked' into 'locked' state.
+ 	 */
+ 	__mutex_fastpath_lock(&lock->count, __mutex_lock_slowpath);
++	inc_mutex_count();
+ }
+ 
+ EXPORT_SYMBOL(mutex_lock);
+@@ -114,6 +125,7 @@ void fastcall __sched mutex_unlock(struc
+ 	 * into 'unlocked' state:
+ 	 */
+ 	__mutex_fastpath_unlock(&lock->count, __mutex_unlock_slowpath);
++	dec_mutex_count();
+ }
+ 
+ EXPORT_SYMBOL(mutex_unlock);
+@@ -274,9 +286,14 @@ __mutex_lock_interruptible_slowpath(atom
+  */
+ int fastcall __sched mutex_lock_interruptible(struct mutex *lock)
+ {
++	int ret;
++
+ 	might_sleep();
+-	return __mutex_fastpath_lock_retval
++	ret = __mutex_fastpath_lock_retval
+ 			(&lock->count, __mutex_lock_interruptible_slowpath);
++	if (likely(!ret))
++		inc_mutex_count();
++	return ret;
+ }
+ 
+ EXPORT_SYMBOL(mutex_lock_interruptible);
+@@ -331,8 +348,12 @@ static inline int __mutex_trylock_slowpa
+  */
+ int fastcall __sched mutex_trylock(struct mutex *lock)
+ {
+-	return __mutex_fastpath_trylock(&lock->count,
++	int ret = __mutex_fastpath_trylock(&lock->count,
+ 					__mutex_trylock_slowpath);
++
++	if (likely(ret))
++		inc_mutex_count();
++	return ret;
+ }
+ 
+ EXPORT_SYMBOL(mutex_trylock);
+Index: linux-2.6.18-ck1/block/cfq-iosched.c
+===================================================================
+--- linux-2.6.18-ck1.orig/block/cfq-iosched.c	2006-09-21 20:00:43.000000000 +1000
++++ linux-2.6.18-ck1/block/cfq-iosched.c	2006-09-21 20:05:31.000000000 +1000
+@@ -1359,10 +1359,12 @@ static void cfq_init_prio_data(struct cf
+ 			printk(KERN_ERR "cfq: bad prio %x\n", ioprio_class);
+ 		case IOPRIO_CLASS_NONE:
+ 			/*
+-			 * no prio set, place us in the middle of the BE classes
++			 * Select class and ioprio according to policy and nice
+ 			 */
++			cfqq->ioprio_class = task_policy_ioprio_class(tsk);
+ 			cfqq->ioprio = task_nice_ioprio(tsk);
+-			cfqq->ioprio_class = IOPRIO_CLASS_BE;
++			if (cfqq->ioprio_class == IOPRIO_CLASS_IDLE)
++				cfq_clear_cfqq_idle_window(cfqq);
+ 			break;
+ 		case IOPRIO_CLASS_RT:
+ 			cfqq->ioprio = task_ioprio(tsk);
+Index: linux-2.6.18-ck1/include/linux/ioprio.h
+===================================================================
+--- linux-2.6.18-ck1.orig/include/linux/ioprio.h	2006-09-21 20:00:43.000000000 +1000
++++ linux-2.6.18-ck1/include/linux/ioprio.h	2006-09-21 20:05:31.000000000 +1000
+@@ -22,7 +22,7 @@
+  * class, the default for any process. IDLE is the idle scheduling class, it
+  * is only served when no one else is using the disk.
+  */
+-enum {
++enum ioprio_class {
+ 	IOPRIO_CLASS_NONE,
+ 	IOPRIO_CLASS_RT,
+ 	IOPRIO_CLASS_BE,
+@@ -51,8 +51,25 @@ static inline int task_ioprio(struct tas
+ 	return IOPRIO_PRIO_DATA(task->ioprio);
+ }
+ 
++static inline enum ioprio_class
++	task_policy_ioprio_class(struct task_struct *task)
++{
++	if (rt_task(task))
++		return IOPRIO_CLASS_RT;
++	if (idleprio_task(task))
++		return IOPRIO_CLASS_IDLE;
++	return IOPRIO_CLASS_BE;
++}
++
+ static inline int task_nice_ioprio(struct task_struct *task)
+ {
++	if (rt_task(task))
++		return (MAX_RT_PRIO - task->rt_priority) * IOPRIO_BE_NR /
++			(MAX_RT_PRIO + 1);
++	if (iso_task(task))
++		return 0;
++	if (idleprio_task(task))
++		return IOPRIO_BE_NR - 1;
+ 	return (task_nice(task) + 20) / 5;
+ }
+ 
+Index: linux-2.6.18-ck1/kernel/Kconfig.hz
+===================================================================
+--- linux-2.6.18-ck1.orig/kernel/Kconfig.hz	2005-08-29 13:31:26.000000000 +1000
++++ linux-2.6.18-ck1/kernel/Kconfig.hz	2006-09-21 20:05:32.000000000 +1000
+@@ -4,7 +4,7 @@
+ 
+ choice
+ 	prompt "Timer frequency"
+-	default HZ_250
++	default HZ_1000
+ 	help
+ 	 Allows the configuration of the timer frequency. It is customary
+ 	 to have the timer interrupt run at 1000 HZ but 100 HZ may be more
+@@ -21,14 +21,17 @@ choice
+ 	help
+ 	  100 HZ is a typical choice for servers, SMP and NUMA systems
+ 	  with lots of processors that may show reduced performance if
+-	  too many timer interrupts are occurring.
++	  too many timer interrupts are occurring. Laptops may also show
++	  improved battery life.
+ 
+-	config HZ_250
++	config HZ_250_NODEFAULT
+ 		bool "250 HZ"
+ 	help
+-	 250 HZ is a good compromise choice allowing server performance
+-	 while also showing good interactive responsiveness even
+-	 on SMP and NUMA systems.
++	 250 HZ is a lousy compromise choice allowing server interactivity
++	 while also showing desktop throughput and no extra power saving on
++	 laptops. Good for when you can't make up your mind.
++
++	 Recommend 100 or 1000 instead.
+ 
+ 	config HZ_1000
+ 		bool "1000 HZ"
+@@ -41,6 +44,6 @@ endchoice
+ config HZ
+ 	int
+ 	default 100 if HZ_100
+-	default 250 if HZ_250
++	default 250 if HZ_250_NODEFAULT
+ 	default 1000 if HZ_1000
+ 
+Index: linux-2.6.18-ck1/Documentation/sysctl/vm.txt
+===================================================================
+--- linux-2.6.18-ck1.orig/Documentation/sysctl/vm.txt	2006-09-21 19:54:18.000000000 +1000
++++ linux-2.6.18-ck1/Documentation/sysctl/vm.txt	2006-09-21 20:05:38.000000000 +1000
+@@ -22,6 +22,8 @@ Currently, these files are in /proc/sys/
+ - dirty_background_ratio
+ - dirty_expire_centisecs
+ - dirty_writeback_centisecs
++- hardmaplimit
++- mapped
+ - max_map_count
+ - min_free_kbytes
+ - laptop_mode
+@@ -30,12 +32,13 @@ Currently, these files are in /proc/sys/
+ - zone_reclaim_mode
+ - min_unmapped_ratio
+ - panic_on_oom
++- swap_prefetch
+ 
+ ==============================================================
+ 
+ dirty_ratio, dirty_background_ratio, dirty_expire_centisecs,
+ dirty_writeback_centisecs, vfs_cache_pressure, laptop_mode,
+-block_dump, swap_token_timeout, drop-caches:
++block_dump, swap_token_timeout, drop-caches, tail_largefiles:
+ 
+ See Documentation/filesystems/proc.txt
+ 
+@@ -85,6 +88,27 @@ for swap because we only cluster swap da
+ 
+ ==============================================================
+ 
++hardmaplimit:
++
++This flag makes the vm adhere to the mapped value as closely as possible
++except in the most extreme vm stress where doing so would provoke an out
++of memory condition (see mapped below).
++
++Enabled by default.
++
++==============================================================
++
++mapped:
++
++This is the percentage ram that is filled with mapped pages (applications)
++before the vm will start reclaiming mapped pages by moving them to swap.
++It is altered by the relative stress of the vm at the time so is not
++strictly adhered to to prevent provoking out of memory kills.
++
++Set to 66 by default.
++
++==============================================================
++
+ max_map_count:
+ 
+ This file contains the maximum number of memory map areas a process
+@@ -192,3 +216,14 @@ rather than killing rogue processes, set
+ 
+ The default value is 0.
+ 
++==============================================================
++
++swap_prefetch
++
++This enables or disables the swap prefetching feature. When the virtual
++memory subsystem has been extremely idle for at least 5 seconds it will start
++copying back pages from swap into the swapcache and keep a copy in swap. In
++practice it can take many minutes before the vm is idle enough.
++
++The default value is 1.
++
+Index: linux-2.6.18-ck1/include/linux/swap.h
+===================================================================
+--- linux-2.6.18-ck1.orig/include/linux/swap.h	2006-09-21 19:54:58.000000000 +1000
++++ linux-2.6.18-ck1/include/linux/swap.h	2006-09-21 20:05:35.000000000 +1000
+@@ -173,6 +173,7 @@ extern unsigned int nr_free_pagecache_pa
+ /* linux/mm/swap.c */
+ extern void FASTCALL(lru_cache_add(struct page *));
+ extern void FASTCALL(lru_cache_add_active(struct page *));
++extern void FASTCALL(lru_cache_add_tail(struct page *));
+ extern void FASTCALL(activate_page(struct page *));
+ extern void FASTCALL(mark_page_accessed(struct page *));
+ extern void lru_add_drain(void);
+@@ -181,9 +182,11 @@ extern int rotate_reclaimable_page(struc
+ extern void swap_setup(void);
+ 
+ /* linux/mm/vmscan.c */
+-extern unsigned long try_to_free_pages(struct zone **, gfp_t);
++extern unsigned long try_to_free_pages(struct zone **, gfp_t,
++				       struct task_struct *p);
+ extern unsigned long shrink_all_memory(unsigned long nr_pages);
+-extern int vm_swappiness;
++extern int vm_mapped;
++extern int vm_hardmaplimit;
+ extern int remove_mapping(struct address_space *mapping, struct page *page);
+ extern long vm_total_pages;
+ 
+@@ -229,6 +232,7 @@ extern void free_pages_and_swap_cache(st
+ extern struct page * lookup_swap_cache(swp_entry_t);
+ extern struct page * read_swap_cache_async(swp_entry_t, struct vm_area_struct *vma,
+ 					   unsigned long addr);
++extern int add_to_swap_cache(struct page *page, swp_entry_t entry);
+ /* linux/mm/swapfile.c */
+ extern long total_swap_pages;
+ extern unsigned int nr_swapfiles;
+Index: linux-2.6.18-ck1/init/Kconfig
+===================================================================
+--- linux-2.6.18-ck1.orig/init/Kconfig	2006-09-21 19:54:58.000000000 +1000
++++ linux-2.6.18-ck1/init/Kconfig	2006-09-21 20:05:33.000000000 +1000
+@@ -100,6 +100,28 @@ config SWAP
+ 	  used to provide more virtual memory than the actual RAM present
+ 	  in your computer.  If unsure say Y.
+ 
++config SWAP_PREFETCH
++	bool "Support for prefetching swapped memory"
++	depends on SWAP
++	default y
++	---help---
++	  This option will allow the kernel to prefetch swapped memory pages
++	  when idle. The pages will be kept on both swap and in swap_cache
++	  thus avoiding the need for further I/O if either ram or swap space
++	  is required.
++
++	  What this will do on workstations is slowly bring back applications
++	  that have swapped out after memory intensive workloads back into
++	  physical ram if you have free ram at a later stage and the machine
++	  is relatively idle. This means that when you come back to your
++	  computer after leaving it idle for a while, applications will come
++	  to life faster. Note that your swap usage will appear to increase
++	  but these are cached pages, can be dropped freely by the vm, and it
++	  should stabilise around 50% swap usage maximum.
++
++	  Workstations and multiuser workstation servers will most likely want
++	  to say Y.
++
+ config SYSVIPC
+ 	bool "System V IPC"
+ 	---help---
+Index: linux-2.6.18-ck1/mm/Makefile
+===================================================================
+--- linux-2.6.18-ck1.orig/mm/Makefile	2006-09-21 19:55:01.000000000 +1000
++++ linux-2.6.18-ck1/mm/Makefile	2006-09-21 20:05:33.000000000 +1000
+@@ -13,6 +13,7 @@ obj-y			:= bootmem.o filemap.o mempool.o
+ 			   prio_tree.o util.o mmzone.o vmstat.o $(mmu-y)
+ 
+ obj-$(CONFIG_SWAP)	+= page_io.o swap_state.o swapfile.o thrash.o
++obj-$(CONFIG_SWAP_PREFETCH) += swap_prefetch.o
+ obj-$(CONFIG_HUGETLBFS)	+= hugetlb.o
+ obj-$(CONFIG_NUMA) 	+= mempolicy.o
+ obj-$(CONFIG_SPARSEMEM)	+= sparse.o
+Index: linux-2.6.18-ck1/mm/swap.c
+===================================================================
+--- linux-2.6.18-ck1.orig/mm/swap.c	2006-09-21 19:55:01.000000000 +1000
++++ linux-2.6.18-ck1/mm/swap.c	2006-09-21 20:05:38.000000000 +1000
+@@ -17,6 +17,7 @@
+ #include <linux/sched.h>
+ #include <linux/kernel_stat.h>
+ #include <linux/swap.h>
++#include <linux/swap-prefetch.h>
+ #include <linux/mman.h>
+ #include <linux/pagemap.h>
+ #include <linux/pagevec.h>
+@@ -157,6 +158,7 @@ EXPORT_SYMBOL(mark_page_accessed);
+  */
+ static DEFINE_PER_CPU(struct pagevec, lru_add_pvecs) = { 0, };
+ static DEFINE_PER_CPU(struct pagevec, lru_add_active_pvecs) = { 0, };
++static DEFINE_PER_CPU(struct pagevec, lru_add_tail_pvecs) = { 0, };
+ 
+ void fastcall lru_cache_add(struct page *page)
+ {
+@@ -178,6 +180,31 @@ void fastcall lru_cache_add_active(struc
+ 	put_cpu_var(lru_add_active_pvecs);
+ }
+ 
++static void __pagevec_lru_add_tail(struct pagevec *pvec)
++{
++	int i;
++	struct zone *zone = NULL;
++
++	for (i = 0; i < pagevec_count(pvec); i++) {
++		struct page *page = pvec->pages[i];
++		struct zone *pagezone = page_zone(page);
++
++		if (pagezone != zone) {
++			if (zone)
++				spin_unlock_irq(&zone->lru_lock);
++			zone = pagezone;
++			spin_lock_irq(&zone->lru_lock);
++		}
++		BUG_ON(PageLRU(page));
++		SetPageLRU(page);
++		add_page_to_inactive_list_tail(zone, page);
++	}
++	if (zone)
++		spin_unlock_irq(&zone->lru_lock);
++	release_pages(pvec->pages, pvec->nr, pvec->cold);
++	pagevec_reinit(pvec);
++}
++
+ static void __lru_add_drain(int cpu)
+ {
+ 	struct pagevec *pvec = &per_cpu(lru_add_pvecs, cpu);
+@@ -188,6 +215,9 @@ static void __lru_add_drain(int cpu)
+ 	pvec = &per_cpu(lru_add_active_pvecs, cpu);
+ 	if (pagevec_count(pvec))
+ 		__pagevec_lru_add_active(pvec);
++	pvec = &per_cpu(lru_add_tail_pvecs, cpu);
++	if (pagevec_count(pvec))
++		__pagevec_lru_add_tail(pvec);
+ }
+ 
+ void lru_add_drain(void)
+@@ -404,6 +434,20 @@ void __pagevec_lru_add_active(struct pag
+ }
+ 
+ /*
++ * Function used uniquely to put pages back to the lru at the end of the
++ * inactive list to preserve the lru order.
++ */
++void fastcall lru_cache_add_tail(struct page *page)
++{
++	struct pagevec *pvec = &get_cpu_var(lru_add_tail_pvecs);
++
++	page_cache_get(page);
++	if (!pagevec_add(pvec, page))
++		__pagevec_lru_add_tail(pvec);
++	put_cpu_var(lru_add_pvecs);
++}
++
++/*
+  * Try to drop buffers from the pages in a pagevec
+  */
+ void pagevec_strip(struct pagevec *pvec)
+@@ -515,5 +559,8 @@ void __init swap_setup(void)
+ 	 * Right now other parts of the system means that we
+ 	 * _really_ don't want to cluster much more
+ 	 */
++
++	prepare_swap_prefetch();
++
+ 	hotcpu_notifier(cpu_swap_callback, 0);
+ }
+Index: linux-2.6.18-ck1/mm/swap_prefetch.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ linux-2.6.18-ck1/mm/swap_prefetch.c	2006-09-21 20:05:33.000000000 +1000
+@@ -0,0 +1,579 @@
++/*
++ * linux/mm/swap_prefetch.c
++ *
++ * Copyright (C) 2005-2006 Con Kolivas
++ *
++ * Written by Con Kolivas <kernel@kolivas.org>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ */
++
++#include <linux/fs.h>
++#include <linux/mm.h>
++#include <linux/swap.h>
++#include <linux/swap-prefetch.h>
++#include <linux/ioprio.h>
++#include <linux/kthread.h>
++#include <linux/pagemap.h>
++#include <linux/syscalls.h>
++#include <linux/writeback.h>
++#include <linux/vmstat.h>
++
++/*
++ * Time to delay prefetching if vm is busy or prefetching unsuccessful. There
++ * needs to be at least this duration of idle time meaning in practice it can
++ * be much longer
++ */
++#define PREFETCH_DELAY	(HZ * 5)
++
++/* sysctl - enable/disable swap prefetching */
++int swap_prefetch __read_mostly = 1;
++
++struct swapped_root {
++	unsigned long		busy;		/* vm busy */
++	spinlock_t		lock;		/* protects all data */
++	struct list_head	list;		/* MRU list of swapped pages */
++	struct radix_tree_root	swap_tree;	/* Lookup tree of pages */
++	unsigned int		count;		/* Number of entries */
++	unsigned int		maxcount;	/* Maximum entries allowed */
++	kmem_cache_t		*cache;		/* Of struct swapped_entry */
++};
++
++static struct swapped_root swapped = {
++	.lock		= SPIN_LOCK_UNLOCKED,
++	.list  		= LIST_HEAD_INIT(swapped.list),
++	.swap_tree	= RADIX_TREE_INIT(GFP_ATOMIC),
++};
++
++static struct task_struct *kprefetchd_task;
++
++/*
++ * We check to see no part of the vm is busy. If it is this will interrupt
++ * trickle_swap and wait another PREFETCH_DELAY. Purposefully racy.
++ */
++inline void delay_swap_prefetch(void)
++{
++	if (!test_bit(0, &swapped.busy))
++		__set_bit(0, &swapped.busy);
++}
++
++/*
++ * Drop behind accounting which keeps a list of the most recently used swap
++ * entries.
++ */
++void add_to_swapped_list(struct page *page)
++{
++	struct swapped_entry *entry;
++	unsigned long index, flags;
++	int wakeup;
++
++	if (!swap_prefetch)
++		return;
++
++	wakeup = 0;
++
++	spin_lock_irqsave(&swapped.lock, flags);
++	if (swapped.count >= swapped.maxcount) {
++		/*
++		 * We limit the number of entries to 2/3 of physical ram.
++		 * Once the number of entries exceeds this we start removing
++		 * the least recently used entries.
++		 */
++		entry = list_entry(swapped.list.next,
++			struct swapped_entry, swapped_list);
++		radix_tree_delete(&swapped.swap_tree, entry->swp_entry.val);
++		list_del(&entry->swapped_list);
++		swapped.count--;
++	} else {
++		entry = kmem_cache_alloc(swapped.cache, GFP_ATOMIC);
++		if (unlikely(!entry))
++			/* bad, can't allocate more mem */
++			goto out_locked;
++	}
++
++	index = page_private(page);
++	entry->swp_entry.val = index;
++	/*
++	 * On numa we need to store the node id to ensure that we prefetch to
++	 * the same node it came from.
++	 */
++	store_swap_entry_node(entry, page);
++
++	if (likely(!radix_tree_insert(&swapped.swap_tree, index, entry))) {
++		/*
++		 * If this is the first entry, kprefetchd needs to be
++		 * (re)started.
++		 */
++		if (!swapped.count)
++			wakeup = 1;
++		list_add(&entry->swapped_list, &swapped.list);
++		swapped.count++;
++	}
++
++out_locked:
++	spin_unlock_irqrestore(&swapped.lock, flags);
++
++	/* Do the wakeup outside the lock to shorten lock hold time. */
++	if (wakeup)
++		wake_up_process(kprefetchd_task);
++
++	return;
++}
++
++/*
++ * Removes entries from the swapped_list. The radix tree allows us to quickly
++ * look up the entry from the index without having to iterate over the whole
++ * list.
++ */
++void remove_from_swapped_list(const unsigned long index)
++{
++	struct swapped_entry *entry;
++	unsigned long flags;
++
++	if (list_empty(&swapped.list))
++		return;
++
++	spin_lock_irqsave(&swapped.lock, flags);
++	entry = radix_tree_delete(&swapped.swap_tree, index);
++	if (likely(entry)) {
++		list_del_init(&entry->swapped_list);
++		swapped.count--;
++		kmem_cache_free(swapped.cache, entry);
++	}
++	spin_unlock_irqrestore(&swapped.lock, flags);
++}
++
++enum trickle_return {
++	TRICKLE_SUCCESS,
++	TRICKLE_FAILED,
++	TRICKLE_DELAY,
++};
++
++struct node_stats {
++	unsigned long	last_free;
++	/* Free ram after a cycle of prefetching */
++	unsigned long	current_free;
++	/* Free ram on this cycle of checking prefetch_suitable */
++	unsigned long	prefetch_watermark;
++	/* Maximum amount we will prefetch to */
++	unsigned long	highfree[MAX_NR_ZONES];
++	/* The amount of free ram before we start prefetching */
++	unsigned long	lowfree[MAX_NR_ZONES];
++	/* The amount of free ram where we will stop prefetching */
++	unsigned long	*pointfree[MAX_NR_ZONES];
++	/* highfree or lowfree depending on whether we've hit a watermark */
++};
++
++/*
++ * prefetch_stats stores the free ram data of each node and this is used to
++ * determine if a node is suitable for prefetching into.
++ */
++struct prefetch_stats {
++	nodemask_t	prefetch_nodes;
++	/* Which nodes are currently suited to prefetching */
++	unsigned long	prefetched_pages;
++	/* Total pages we've prefetched on this wakeup of kprefetchd */
++	struct node_stats node[MAX_NUMNODES];
++};
++
++static struct prefetch_stats sp_stat;
++
++/*
++ * This tries to read a swp_entry_t into swap cache for swap prefetching.
++ * If it returns TRICKLE_DELAY we should delay further prefetching.
++ */
++static enum trickle_return trickle_swap_cache_async(const swp_entry_t entry,
++	const int node)
++{
++	enum trickle_return ret = TRICKLE_FAILED;
++	struct page *page;
++
++	read_lock_irq(&swapper_space.tree_lock);
++	/* Entry may already exist */
++	page = radix_tree_lookup(&swapper_space.page_tree, entry.val);
++	read_unlock_irq(&swapper_space.tree_lock);
++	if (page) {
++		remove_from_swapped_list(entry.val);
++		goto out;
++	}
++
++	/*
++	 * Get a new page to read from swap. We have already checked the
++	 * watermarks so __alloc_pages will not call on reclaim.
++	 */
++	page = alloc_pages_node(node, GFP_HIGHUSER & ~__GFP_WAIT, 0);
++	if (unlikely(!page)) {
++		ret = TRICKLE_DELAY;
++		goto out;
++	}
++
++	if (add_to_swap_cache(page, entry)) {
++		/* Failed to add to swap cache */
++		goto out_release;
++	}
++
++	/* Add them to the tail of the inactive list to preserve LRU order */
++	lru_cache_add_tail(page);
++	if (unlikely(swap_readpage(NULL, page))) {
++		ret = TRICKLE_DELAY;
++		goto out_release;
++	}
++
++	sp_stat.prefetched_pages++;
++	sp_stat.node[node].last_free--;
++
++	ret = TRICKLE_SUCCESS;
++out_release:
++	page_cache_release(page);
++out:
++	return ret;
++}
++
++static void clear_last_prefetch_free(void)
++{
++	int node;
++
++	/*
++	 * Reset the nodes suitable for prefetching to all nodes. We could
++	 * update the data to take into account memory hotplug if desired..
++	 */
++	sp_stat.prefetch_nodes = node_online_map;
++	for_each_node_mask(node, sp_stat.prefetch_nodes) {
++		struct node_stats *ns = &sp_stat.node[node];
++
++		ns->last_free = 0;
++	}
++}
++
++static void clear_current_prefetch_free(void)
++{
++	int node;
++
++	sp_stat.prefetch_nodes = node_online_map;
++	for_each_node_mask(node, sp_stat.prefetch_nodes) {
++		struct node_stats *ns = &sp_stat.node[node];
++
++		ns->current_free = 0;
++	}
++}
++
++/*
++ * This updates the high and low watermarks of amount of free ram in each
++ * node used to start and stop prefetching. We prefetch from pages_high * 4
++ * down to pages_high * 3.
++ */
++static void examine_free_limits(void)
++{
++	struct zone *z;
++
++	for_each_zone(z) {
++		struct node_stats *ns;
++		int idx;
++
++		if (!populated_zone(z))
++			continue;
++
++		ns = &sp_stat.node[z->zone_pgdat->node_id];
++		idx = zone_idx(z);
++		ns->lowfree[idx] = z->pages_high * 3;
++		ns->highfree[idx] = ns->lowfree[idx] + z->pages_high;
++
++		if (z->free_pages > ns->highfree[idx]) {
++			/*
++			 * We've gotten above the high watermark of free pages
++			 * so we can start prefetching till we get to the low
++			 * watermark.
++			 */
++			ns->pointfree[idx] = &ns->lowfree[idx];
++		}
++	}
++}
++
++/*
++ * We want to be absolutely certain it's ok to start prefetching.
++ */
++static int prefetch_suitable(void)
++{
++	unsigned long limit;
++	struct zone *z;
++	int node, ret = 0, test_pagestate = 0;
++
++	/* Purposefully racy */
++	if (test_bit(0, &swapped.busy)) {
++		__clear_bit(0, &swapped.busy);
++		goto out;
++	}
++
++	/*
++	 * get_page_state and above_background_load are expensive so we only
++	 * perform them every SWAP_CLUSTER_MAX prefetched_pages.
++	 * We test to see if we're above_background_load as disk activity
++	 * even at low priority can cause interrupt induced scheduling
++	 * latencies.
++	 */
++	if (!(sp_stat.prefetched_pages % SWAP_CLUSTER_MAX)) {
++		if (above_background_load())
++			goto out;
++		test_pagestate = 1;
++	}
++
++	clear_current_prefetch_free();
++
++	/*
++	 * Have some hysteresis between where page reclaiming and prefetching
++	 * will occur to prevent ping-ponging between them.
++	 */
++	for_each_zone(z) {
++		struct node_stats *ns;
++		unsigned long free;
++		int idx;
++
++		if (!populated_zone(z))
++			continue;
++
++		node = z->zone_pgdat->node_id;
++		ns = &sp_stat.node[node];
++		idx = zone_idx(z);
++
++		free = z->free_pages;
++		if (free < *ns->pointfree[idx]) {
++			/*
++			 * Free pages have dropped below the low watermark so
++			 * we won't start prefetching again till we hit the
++			 * high watermark of free pages.
++			 */
++			ns->pointfree[idx] = &ns->highfree[idx];
++			node_clear(node, sp_stat.prefetch_nodes);
++			continue;
++		}
++		ns->current_free += free;
++	}
++
++	/*
++	 * We iterate over each node testing to see if it is suitable for
++	 * prefetching and clear the nodemask if it is not.
++	 */
++	for_each_node_mask(node, sp_stat.prefetch_nodes) {
++		struct node_stats *ns = &sp_stat.node[node];
++
++		/*
++		 * We check to see that pages are not being allocated
++		 * elsewhere at any significant rate implying any
++		 * degree of memory pressure (eg during file reads)
++		 */
++		if (ns->last_free) {
++			if (ns->current_free + SWAP_CLUSTER_MAX <
++			    ns->last_free) {
++				ns->last_free = ns->current_free;
++				node_clear(node,
++					sp_stat.prefetch_nodes);
++				continue;
++			}
++		} else
++			ns->last_free = ns->current_free;
++
++		if (!test_pagestate)
++			continue;
++
++		/* We shouldn't prefetch when we are doing writeback */
++		if (node_page_state(node, NR_WRITEBACK)) {
++			node_clear(node, sp_stat.prefetch_nodes);
++			continue;
++		}
++
++		/*
++		 * >2/3 of the ram on this node is mapped, slab, swapcache or
++		 * dirty, we need to leave some free for pagecache.
++		 * Note that currently nr_slab is innacurate on numa because
++		 * nr_slab is incremented on the node doing the accounting
++		 * even if the slab is being allocated on a remote node. This
++		 * would be expensive to fix and not of great significance.
++		 */
++		limit = node_page_state(node, NR_FILE_PAGES);
++		limit += node_page_state(node, NR_SLAB);
++		limit += node_page_state(node, NR_FILE_DIRTY);
++		limit += node_page_state(node, NR_UNSTABLE_NFS);
++		limit += total_swapcache_pages;
++		if (limit > ns->prefetch_watermark) {
++			node_clear(node, sp_stat.prefetch_nodes);
++			continue;
++		}
++	}
++
++	if (nodes_empty(sp_stat.prefetch_nodes))
++		goto out;
++
++	/* Survived all that? Hooray we can prefetch! */
++	ret = 1;
++out:
++	return ret;
++}
++
++/*
++ * Get previous swapped entry when iterating over all entries. swapped.lock
++ * should be held and we should already ensure that entry exists.
++ */
++static inline struct swapped_entry *prev_swapped_entry
++	(struct swapped_entry *entry)
++{
++	return list_entry(entry->swapped_list.prev->prev,
++		struct swapped_entry, swapped_list);
++}
++
++/*
++ * trickle_swap is the main function that initiates the swap prefetching. It
++ * first checks to see if the busy flag is set, and does not prefetch if it
++ * is, as the flag implied we are low on memory or swapping in currently.
++ * Otherwise it runs until prefetch_suitable fails which occurs when the
++ * vm is busy, we prefetch to the watermark, or the list is empty or we have
++ * iterated over all entries
++ */
++static enum trickle_return trickle_swap(void)
++{
++	enum trickle_return ret = TRICKLE_DELAY;
++	struct swapped_entry *entry;
++	unsigned long flags;
++
++	/*
++	 * If laptop_mode is enabled don't prefetch to avoid hard drives
++	 * doing unnecessary spin-ups
++	 */
++	if (!swap_prefetch || laptop_mode)
++		return ret;
++
++	examine_free_limits();
++	entry = NULL;
++
++	for ( ; ; ) {
++		swp_entry_t swp_entry;
++		int node;
++
++		if (!prefetch_suitable())
++			break;
++
++		spin_lock_irqsave(&swapped.lock, flags);
++		if (list_empty(&swapped.list)) {
++			ret = TRICKLE_FAILED;
++			spin_unlock_irqrestore(&swapped.lock, flags);
++			break;
++		}
++
++		if (!entry) {
++			/*
++			 * This sets the entry for the first iteration. It
++			 * also is a safeguard against the entry disappearing
++			 * while the lock is not held.
++			 */
++			entry = list_entry(swapped.list.prev,
++				struct swapped_entry, swapped_list);
++		} else if (entry->swapped_list.prev == swapped.list.next) {
++			/*
++			 * If we have iterated over all entries and there are
++			 * still entries that weren't swapped out there may
++			 * be a reason we could not swap them back in so
++			 * delay attempting further prefetching.
++			 */
++			spin_unlock_irqrestore(&swapped.lock, flags);
++			break;
++		}
++
++		node = get_swap_entry_node(entry);
++		if (!node_isset(node, sp_stat.prefetch_nodes)) {
++			/*
++			 * We found an entry that belongs to a node that is
++			 * not suitable for prefetching so skip it.
++			 */
++			entry = prev_swapped_entry(entry);
++			spin_unlock_irqrestore(&swapped.lock, flags);
++			continue;
++		}
++		swp_entry = entry->swp_entry;
++		entry = prev_swapped_entry(entry);
++		spin_unlock_irqrestore(&swapped.lock, flags);
++
++		if (trickle_swap_cache_async(swp_entry, node) == TRICKLE_DELAY)
++			break;
++	}
++
++	if (sp_stat.prefetched_pages) {
++		lru_add_drain();
++		sp_stat.prefetched_pages = 0;
++	}
++	return ret;
++}
++
++static int kprefetchd(void *__unused)
++{
++	struct sched_param param = { .sched_priority = 0 };
++
++	sched_setscheduler(current, SCHED_BATCH, &param);
++	set_user_nice(current, 19);
++	/* Set ioprio to lowest if supported by i/o scheduler */
++	sys_ioprio_set(IOPRIO_WHO_PROCESS, 0, IOPRIO_CLASS_IDLE);
++
++	do {
++		try_to_freeze();
++
++		/*
++		 * TRICKLE_FAILED implies no entries left - we do not schedule
++		 * a wakeup, and further delay the next one.
++		 */
++		if (trickle_swap() == TRICKLE_FAILED) {
++			set_current_state(TASK_INTERRUPTIBLE);
++			schedule();
++		}
++		clear_last_prefetch_free();
++		schedule_timeout_interruptible(PREFETCH_DELAY);
++	} while (!kthread_should_stop());
++
++	return 0;
++}
++
++/*
++ * Create kmem cache for swapped entries
++ */
++void __init prepare_swap_prefetch(void)
++{
++	struct zone *zone;
++
++	swapped.cache = kmem_cache_create("swapped_entry",
++		sizeof(struct swapped_entry), 0, SLAB_PANIC, NULL, NULL);
++
++	/*
++	 * Set max number of entries to 2/3 the size of physical ram  as we
++	 * only ever prefetch to consume 2/3 of the ram.
++	 */
++	swapped.maxcount = nr_free_pagecache_pages() / 3 * 2;
++
++	for_each_zone(zone) {
++		unsigned long present;
++		struct node_stats *ns;
++		int idx;
++
++		present = zone->present_pages;
++		if (!present)
++			continue;
++
++		ns = &sp_stat.node[zone->zone_pgdat->node_id];
++		ns->prefetch_watermark += present / 3 * 2;
++		idx = zone_idx(zone);
++		ns->pointfree[idx] = &ns->highfree[idx];
++	}
++}
++
++static int __init kprefetchd_init(void)
++{
++	kprefetchd_task = kthread_run(kprefetchd, NULL, "kprefetchd");
++
++	return 0;
++}
++
++static void __exit kprefetchd_exit(void)
++{
++	kthread_stop(kprefetchd_task);
++}
++
++module_init(kprefetchd_init);
++module_exit(kprefetchd_exit);
+Index: linux-2.6.18-ck1/mm/swap_state.c
+===================================================================
+--- linux-2.6.18-ck1.orig/mm/swap_state.c	2006-09-21 19:55:01.000000000 +1000
++++ linux-2.6.18-ck1/mm/swap_state.c	2006-09-21 20:05:33.000000000 +1000
+@@ -10,6 +10,7 @@
+ #include <linux/mm.h>
+ #include <linux/kernel_stat.h>
+ #include <linux/swap.h>
++#include <linux/swap-prefetch.h>
+ #include <linux/init.h>
+ #include <linux/pagemap.h>
+ #include <linux/buffer_head.h>
+@@ -82,6 +83,7 @@ static int __add_to_swap_cache(struct pa
+ 		error = radix_tree_insert(&swapper_space.page_tree,
+ 						entry.val, page);
+ 		if (!error) {
++			remove_from_swapped_list(entry.val);
+ 			page_cache_get(page);
+ 			SetPageLocked(page);
+ 			SetPageSwapCache(page);
+@@ -95,11 +97,12 @@ static int __add_to_swap_cache(struct pa
+ 	return error;
+ }
+ 
+-static int add_to_swap_cache(struct page *page, swp_entry_t entry)
++int add_to_swap_cache(struct page *page, swp_entry_t entry)
+ {
+ 	int error;
+ 
+ 	if (!swap_duplicate(entry)) {
++		remove_from_swapped_list(entry.val);
+ 		INC_CACHE_INFO(noent_race);
+ 		return -ENOENT;
+ 	}
+@@ -148,6 +151,9 @@ int add_to_swap(struct page * page, gfp_
+ 	swp_entry_t entry;
+ 	int err;
+ 
++	/* Swap prefetching is delayed if we're swapping pages */
++	delay_swap_prefetch();
++
+ 	BUG_ON(!PageLocked(page));
+ 
+ 	for (;;) {
+@@ -320,6 +326,9 @@ struct page *read_swap_cache_async(swp_e
+ 	struct page *found_page, *new_page = NULL;
+ 	int err;
+ 
++	/* Swap prefetching is delayed if we're already reading from swap */
++	delay_swap_prefetch();
++
+ 	do {
+ 		/*
+ 		 * First check the swap cache.  Since this is normally
+Index: linux-2.6.18-ck1/mm/vmscan.c
+===================================================================
+--- linux-2.6.18-ck1.orig/mm/vmscan.c	2006-09-21 19:55:01.000000000 +1000
++++ linux-2.6.18-ck1/mm/vmscan.c	2006-09-21 20:05:36.000000000 +1000
+@@ -16,6 +16,7 @@
+ #include <linux/slab.h>
+ #include <linux/kernel_stat.h>
+ #include <linux/swap.h>
++#include <linux/swap-prefetch.h>
+ #include <linux/pagemap.h>
+ #include <linux/init.h>
+ #include <linux/highmem.h>
+@@ -35,6 +36,7 @@
+ #include <linux/rwsem.h>
+ #include <linux/delay.h>
+ #include <linux/kthread.h>
++#include <linux/timer.h>
+ 
+ #include <asm/tlbflush.h>
+ #include <asm/div64.h>
+@@ -61,7 +63,7 @@ struct scan_control {
+ 	 * whole list at once. */
+ 	int swap_cluster_max;
+ 
+-	int swappiness;
++	int mapped;
+ };
+ 
+ /*
+@@ -106,9 +108,10 @@ struct shrinker {
+ #endif
+ 
+ /*
+- * From 0 .. 100.  Higher means more swappy.
++ * From 0 .. 100.  Lower means more swappy.
+  */
+-int vm_swappiness = 60;
++int vm_mapped __read_mostly = 66;
++int vm_hardmaplimit __read_mostly = 1;
+ long vm_total_pages;	/* The total number of pages which the VM controls */
+ 
+ static LIST_HEAD(shrinker_list);
+@@ -395,6 +398,7 @@ int remove_mapping(struct address_space 
+ 
+ 	if (PageSwapCache(page)) {
+ 		swp_entry_t swap = { .val = page_private(page) };
++		add_to_swapped_list(page);
+ 		__delete_from_swap_cache(page);
+ 		write_unlock_irq(&mapping->tree_lock);
+ 		swap_free(swap);
+@@ -755,10 +759,14 @@ static void shrink_active_list(unsigned 
+ 		 * The distress ratio is important - we don't want to start
+ 		 * going oom.
+ 		 *
+-		 * A 100% value of vm_swappiness overrides this algorithm
+-		 * altogether.
++		 * This distress value is ignored if we apply a hardmaplimit except
++		 * in extreme distress.
++		 *
++		 * A 0% value of vm_mapped overrides this algorithm altogether.
+ 		 */
+-		swap_tendency = mapped_ratio / 2 + distress + sc->swappiness;
++		swap_tendency = mapped_ratio * 100 / (sc->mapped + 1);
++		if (!vm_hardmaplimit || distress == 100)
++			swap_tendency += distress;
+ 
+ 		/*
+ 		 * Now use this metric to decide whether to start moving mapped
+@@ -904,6 +912,41 @@ static unsigned long shrink_zone(int pri
+ }
+ 
+ /*
++ * Helper functions to adjust nice level of kswapd, based on the priority of
++ * the task (p) that called it. If it is already higher priority we do not
++ * demote its nice level since it is still working on behalf of a higher
++ * priority task. With kernel threads we leave it at nice 0.
++ *
++ * We don't ever run kswapd real time, so if a real time task calls kswapd we
++ * set it to highest SCHED_NORMAL priority.
++ */
++static int effective_sc_prio(struct task_struct *p)
++{
++	if (likely(p->mm)) {
++		if (rt_task(p))
++			return -20;
++		if (idleprio_task(p))
++			return 19;
++		return task_nice(p);
++	}
++	return 0;
++}
++
++static void set_kswapd_nice(struct task_struct *kswapd, struct task_struct *p,
++			    int active)
++{
++	long nice = effective_sc_prio(p);
++
++	if (task_nice(kswapd) > nice || !active)
++		set_user_nice(kswapd, nice);
++}
++
++static int sc_priority(struct task_struct *p)
++{
++	return (DEF_PRIORITY + (DEF_PRIORITY * effective_sc_prio(p) / 40));
++}
++
++/*
+  * This is the direct reclaim path, for page-allocating processes.  We only
+  * try to reclaim pages from zones which will satisfy the caller's allocation
+  * request.
+@@ -959,7 +1002,8 @@ static unsigned long shrink_zones(int pr
+  * holds filesystem locks which prevent writeout this might not work, and the
+  * allocation attempt will fail.
+  */
+-unsigned long try_to_free_pages(struct zone **zones, gfp_t gfp_mask)
++unsigned long try_to_free_pages(struct zone **zones, gfp_t gfp_mask,
++				struct task_struct *p)
+ {
+ 	int priority;
+ 	int ret = 0;
+@@ -967,15 +1011,20 @@ unsigned long try_to_free_pages(struct z
+ 	unsigned long nr_reclaimed = 0;
+ 	struct reclaim_state *reclaim_state = current->reclaim_state;
+ 	unsigned long lru_pages = 0;
+-	int i;
++	int i, scan_priority = DEF_PRIORITY;
+ 	struct scan_control sc = {
+ 		.gfp_mask = gfp_mask,
+ 		.may_writepage = !laptop_mode,
+ 		.swap_cluster_max = SWAP_CLUSTER_MAX,
+ 		.may_swap = 1,
+-		.swappiness = vm_swappiness,
++		.mapped = vm_mapped,
+ 	};
+ 
++	if (p)
++		scan_priority = sc_priority(p);
++
++	delay_swap_prefetch();
++
+ 	count_vm_event(ALLOCSTALL);
+ 
+ 	for (i = 0; zones[i] != NULL; i++) {
+@@ -984,11 +1033,11 @@ unsigned long try_to_free_pages(struct z
+ 		if (!cpuset_zone_allowed(zone, __GFP_HARDWALL))
+ 			continue;
+ 
+-		zone->temp_priority = DEF_PRIORITY;
++		zone->temp_priority = scan_priority;
+ 		lru_pages += zone->nr_active + zone->nr_inactive;
+ 	}
+ 
+-	for (priority = DEF_PRIORITY; priority >= 0; priority--) {
++	for (priority = scan_priority; priority >= 0; priority--) {
+ 		sc.nr_scanned = 0;
+ 		if (!priority)
+ 			disable_swap_token();
+@@ -1018,7 +1067,7 @@ unsigned long try_to_free_pages(struct z
+ 		}
+ 
+ 		/* Take a nap, wait for some writeback to complete */
+-		if (sc.nr_scanned && priority < DEF_PRIORITY - 2)
++		if (sc.nr_scanned && priority < scan_priority - 2)
+ 			blk_congestion_wait(WRITE, HZ/10);
+ 	}
+ out:
+@@ -1056,9 +1105,9 @@ out:
+  */
+ static unsigned long balance_pgdat(pg_data_t *pgdat, int order)
+ {
+-	int all_zones_ok;
++	int all_zones_ok = 0;
+ 	int priority;
+-	int i;
++	int i, scan_priority;
+ 	unsigned long total_scanned;
+ 	unsigned long nr_reclaimed;
+ 	struct reclaim_state *reclaim_state = current->reclaim_state;
+@@ -1066,9 +1115,11 @@ static unsigned long balance_pgdat(pg_da
+ 		.gfp_mask = GFP_KERNEL,
+ 		.may_swap = 1,
+ 		.swap_cluster_max = SWAP_CLUSTER_MAX,
+-		.swappiness = vm_swappiness,
++		.mapped = vm_mapped,
+ 	};
+ 
++	scan_priority = sc_priority(pgdat->kswapd);
++
+ loop_again:
+ 	total_scanned = 0;
+ 	nr_reclaimed = 0;
+@@ -1078,10 +1129,10 @@ loop_again:
+ 	for (i = 0; i < pgdat->nr_zones; i++) {
+ 		struct zone *zone = pgdat->node_zones + i;
+ 
+-		zone->temp_priority = DEF_PRIORITY;
++		zone->temp_priority = scan_priority;
+ 	}
+ 
+-	for (priority = DEF_PRIORITY; priority >= 0; priority--) {
++	for (priority = scan_priority; priority >= 0; priority--) {
+ 		int end_zone = 0;	/* Inclusive.  0 = ZONE_DMA */
+ 		unsigned long lru_pages = 0;
+ 
+@@ -1097,18 +1148,26 @@ loop_again:
+ 		 */
+ 		for (i = pgdat->nr_zones - 1; i >= 0; i--) {
+ 			struct zone *zone = pgdat->node_zones + i;
++			unsigned long watermark;
+ 
+ 			if (!populated_zone(zone))
+ 				continue;
+ 
+-			if (zone->all_unreclaimable && priority != DEF_PRIORITY)
++			if (zone->all_unreclaimable && priority != scan_priority)
+ 				continue;
+ 
+-			if (!zone_watermark_ok(zone, order, zone->pages_high,
+-					       0, 0)) {
++			/*
++			 * The watermark is relaxed depending on the
++			 * level of "priority" till it drops to
++			 * pages_high.
++			 */
++			watermark = zone->pages_high + (zone->pages_high *
++				    priority / scan_priority);
++			if (!zone_watermark_ok(zone, order, watermark, 0, 0)) {
+ 				end_zone = i;
+ 				goto scan;
+ 			}
++
+ 		}
+ 		goto out;
+ scan:
+@@ -1130,14 +1189,18 @@ scan:
+ 		for (i = 0; i <= end_zone; i++) {
+ 			struct zone *zone = pgdat->node_zones + i;
+ 			int nr_slab;
++			unsigned long watermark;
+ 
+ 			if (!populated_zone(zone))
+ 				continue;
+ 
+-			if (zone->all_unreclaimable && priority != DEF_PRIORITY)
++			if (zone->all_unreclaimable && priority != scan_priority)
+ 				continue;
+ 
+-			if (!zone_watermark_ok(zone, order, zone->pages_high,
++			watermark = zone->pages_high + (zone->pages_high *
++				    priority / scan_priority);
++
++			if (!zone_watermark_ok(zone, order, watermark,
+ 					       end_zone, 0))
+ 				all_zones_ok = 0;
+ 			zone->temp_priority = priority;
+@@ -1170,7 +1233,7 @@ scan:
+ 		 * OK, kswapd is getting into trouble.  Take a nap, then take
+ 		 * another pass across the zones.
+ 		 */
+-		if (total_scanned && priority < DEF_PRIORITY - 2)
++		if (total_scanned && priority < scan_priority - 2)
+ 			blk_congestion_wait(WRITE, HZ/10);
+ 
+ 		/*
+@@ -1196,6 +1259,8 @@ out:
+ 	return nr_reclaimed;
+ }
+ 
++#define WT_EXPIRY	(HZ * 5)	/* Time to wakeup watermark_timer */
++
+ /*
+  * The background pageout daemon, started as a kernel thread
+  * from the init process. 
+@@ -1245,6 +1310,8 @@ static int kswapd(void *p)
+ 
+ 		try_to_freeze();
+ 
++		/* kswapd has been busy so delay watermark_timer */
++		mod_timer(&pgdat->watermark_timer, jiffies + WT_EXPIRY);
+ 		prepare_to_wait(&pgdat->kswapd_wait, &wait, TASK_INTERRUPTIBLE);
+ 		new_order = pgdat->kswapd_max_order;
+ 		pgdat->kswapd_max_order = 0;
+@@ -1255,6 +1322,7 @@ static int kswapd(void *p)
+ 			 */
+ 			order = new_order;
+ 		} else {
++			set_user_nice(tsk, 0);
+ 			schedule();
+ 			order = pgdat->kswapd_max_order;
+ 		}
+@@ -1268,9 +1336,10 @@ static int kswapd(void *p)
+ /*
+  * A zone is low on free memory, so wake its kswapd task to service it.
+  */
+-void wakeup_kswapd(struct zone *zone, int order)
++void wakeup_kswapd(struct zone *zone, int order, struct task_struct *p)
+ {
+ 	pg_data_t *pgdat;
++	int active;
+ 
+ 	if (!populated_zone(zone))
+ 		return;
+@@ -1282,7 +1351,9 @@ void wakeup_kswapd(struct zone *zone, in
+ 		pgdat->kswapd_max_order = order;
+ 	if (!cpuset_zone_allowed(zone, __GFP_HARDWALL))
+ 		return;
+-	if (!waitqueue_active(&pgdat->kswapd_wait))
++	active = waitqueue_active(&pgdat->kswapd_wait);
++	set_kswapd_nice(pgdat->kswapd, p, active);
++	if (!active)
+ 		return;
+ 	wake_up_interruptible(&pgdat->kswapd_wait);
+ }
+@@ -1301,6 +1372,8 @@ static unsigned long shrink_all_zones(un
+ 	struct zone *zone;
+ 	unsigned long nr_to_scan, ret = 0;
+ 
++	delay_swap_prefetch();
++
+ 	for_each_zone(zone) {
+ 
+ 		if (!populated_zone(zone))
+@@ -1352,7 +1425,7 @@ unsigned long shrink_all_memory(unsigned
+ 		.may_swap = 0,
+ 		.swap_cluster_max = nr_pages,
+ 		.may_writepage = 1,
+-		.swappiness = vm_swappiness,
++		.mapped = vm_mapped,
+ 	};
+ 
+ 	current->reclaim_state = &reclaim_state;
+@@ -1397,7 +1470,7 @@ unsigned long shrink_all_memory(unsigned
+ 		/* Force reclaiming mapped pages in the passes #3 and #4 */
+ 		if (pass > 2) {
+ 			sc.may_swap = 1;
+-			sc.swappiness = 100;
++			sc.mapped = 0;
+ 		}
+ 
+ 		for (prio = DEF_PRIORITY; prio >= 0; prio--) {
+@@ -1463,20 +1536,57 @@ static int __devinit cpu_callback(struct
+ #endif /* CONFIG_HOTPLUG_CPU */
+ 
+ /*
++ * We wake up kswapd every WT_EXPIRY till free ram is above pages_lots
++ */
++static void watermark_wakeup(unsigned long data)
++{
++	pg_data_t *pgdat = (pg_data_t *)data;
++	struct timer_list *wt = &pgdat->watermark_timer;
++	int i;
++
++	if (!waitqueue_active(&pgdat->kswapd_wait) || above_background_load())
++		goto out;
++	for (i = pgdat->nr_zones - 1; i >= 0; i--) {
++		struct zone *z = pgdat->node_zones + i;
++
++		if (!populated_zone(z) || is_highmem(z)) {
++			/* We are better off leaving highmem full */
++			continue;
++		}
++		if (!zone_watermark_ok(z, 0, z->pages_lots, 0, 0)) {
++			wake_up_interruptible(&pgdat->kswapd_wait);
++			goto out;
++		}
++	}
++out:
++	mod_timer(wt, jiffies + WT_EXPIRY);
++	return;
++}
++
++/*
+  * This kswapd start function will be called by init and node-hot-add.
+  * On node-hot-add, kswapd will moved to proper cpus if cpus are hot-added.
+  */
+ int kswapd_run(int nid)
+ {
+ 	pg_data_t *pgdat = NODE_DATA(nid);
++	struct timer_list *wt;
+ 	int ret = 0;
+ 
+ 	if (pgdat->kswapd)
+ 		return 0;
+ 
++	wt = &pgdat->watermark_timer;
++	init_timer(wt);
++	wt->data = (unsigned long)pgdat;
++	wt->function = watermark_wakeup;
++	wt->expires = jiffies + WT_EXPIRY;
++	add_timer(wt);
++
+ 	pgdat->kswapd = kthread_run(kswapd, pgdat, "kswapd%d", nid);
+ 	if (IS_ERR(pgdat->kswapd)) {
+ 		/* failure at boot is fatal */
++		del_timer(wt);
+ 		BUG_ON(system_state == SYSTEM_BOOTING);
+ 		printk("Failed to start kswapd on node %d\n",nid);
+ 		ret = -1;
+@@ -1542,7 +1652,7 @@ static int __zone_reclaim(struct zone *z
+ 		.swap_cluster_max = max_t(unsigned long, nr_pages,
+ 					SWAP_CLUSTER_MAX),
+ 		.gfp_mask = gfp_mask,
+-		.swappiness = vm_swappiness,
++		.mapped = vm_mapped,
+ 	};
+ 
+ 	disable_swap_token();
+Index: linux-2.6.18-ck1/include/linux/mm_inline.h
+===================================================================
+--- linux-2.6.18-ck1.orig/include/linux/mm_inline.h	2006-06-18 15:32:49.000000000 +1000
++++ linux-2.6.18-ck1/include/linux/mm_inline.h	2006-09-21 20:05:33.000000000 +1000
+@@ -14,6 +14,13 @@ add_page_to_inactive_list(struct zone *z
+ }
+ 
+ static inline void
++add_page_to_inactive_list_tail(struct zone *zone, struct page *page)
++{
++	list_add_tail(&page->lru, &zone->inactive_list);
++	zone->nr_inactive++;
++}
++
++static inline void
+ del_page_from_active_list(struct zone *zone, struct page *page)
+ {
+ 	list_del(&page->lru);
+Index: linux-2.6.18-ck1/include/linux/swap-prefetch.h
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ linux-2.6.18-ck1/include/linux/swap-prefetch.h	2006-09-21 20:05:33.000000000 +1000
+@@ -0,0 +1,55 @@
++#ifndef SWAP_PREFETCH_H_INCLUDED
++#define SWAP_PREFETCH_H_INCLUDED
++
++#ifdef CONFIG_SWAP_PREFETCH
++/* mm/swap_prefetch.c */
++extern int swap_prefetch;
++struct swapped_entry {
++	swp_entry_t		swp_entry;	/* The actual swap entry */
++	struct list_head	swapped_list;	/* Linked list of entries */
++#if MAX_NUMNODES > 1
++	int			node;		/* Node id */
++#endif
++} __attribute__((packed));
++
++static inline void store_swap_entry_node(struct swapped_entry *entry,
++	struct page *page)
++{
++#if MAX_NUMNODES > 1
++	entry->node = page_to_nid(page);
++#endif
++}
++
++static inline int get_swap_entry_node(struct swapped_entry *entry)
++{
++#if MAX_NUMNODES > 1
++	return entry->node;
++#else
++	return 0;
++#endif
++}
++
++extern void add_to_swapped_list(struct page *page);
++extern void remove_from_swapped_list(const unsigned long index);
++extern void delay_swap_prefetch(void);
++extern void prepare_swap_prefetch(void);
++
++#else	/* CONFIG_SWAP_PREFETCH */
++static inline void add_to_swapped_list(struct page *__unused)
++{
++}
++
++static inline void prepare_swap_prefetch(void)
++{
++}
++
++static inline void remove_from_swapped_list(const unsigned long __unused)
++{
++}
++
++static inline void delay_swap_prefetch(void)
++{
++}
++#endif	/* CONFIG_SWAP_PREFETCH */
++
++#endif		/* SWAP_PREFETCH_H_INCLUDED */
+Index: linux-2.6.18-ck1/include/linux/mmzone.h
+===================================================================
+--- linux-2.6.18-ck1.orig/include/linux/mmzone.h	2006-09-21 19:54:58.000000000 +1000
++++ linux-2.6.18-ck1/include/linux/mmzone.h	2006-09-21 20:05:36.000000000 +1000
+@@ -13,6 +13,7 @@
+ #include <linux/init.h>
+ #include <linux/seqlock.h>
+ #include <linux/nodemask.h>
++#include <linux/timer.h>
+ #include <asm/atomic.h>
+ #include <asm/page.h>
+ 
+@@ -139,7 +140,7 @@ struct per_cpu_pageset {
+ struct zone {
+ 	/* Fields commonly accessed by the page allocator */
+ 	unsigned long		free_pages;
+-	unsigned long		pages_min, pages_low, pages_high;
++	unsigned long		pages_min, pages_low, pages_high, pages_lots;
+ 	/*
+ 	 * We don't know if the memory that we're going to allocate will be freeable
+ 	 * or/and it will be released eventually, so to avoid totally wasting several
+@@ -328,6 +329,7 @@ typedef struct pglist_data {
+ 	wait_queue_head_t kswapd_wait;
+ 	struct task_struct *kswapd;
+ 	int kswapd_max_order;
++	struct timer_list watermark_timer;
+ } pg_data_t;
+ 
+ #define node_present_pages(nid)	(NODE_DATA(nid)->node_present_pages)
+@@ -346,7 +348,7 @@ void __get_zone_counts(unsigned long *ac
+ void get_zone_counts(unsigned long *active, unsigned long *inactive,
+ 			unsigned long *free);
+ void build_all_zonelists(void);
+-void wakeup_kswapd(struct zone *zone, int order);
++void wakeup_kswapd(struct zone *zone, int order, struct task_struct *p);
+ int zone_watermark_ok(struct zone *z, int order, unsigned long mark,
+ 		int classzone_idx, int alloc_flags);
+ 
+Index: linux-2.6.18-ck1/mm/page_alloc.c
+===================================================================
+--- linux-2.6.18-ck1.orig/mm/page_alloc.c	2006-09-21 19:55:01.000000000 +1000
++++ linux-2.6.18-ck1/mm/page_alloc.c	2006-09-21 20:05:35.000000000 +1000
+@@ -935,7 +935,7 @@ restart:
+ 		goto got_pg;
+ 
+ 	do {
+-		wakeup_kswapd(*z, order);
++		wakeup_kswapd(*z, order, p);
+ 	} while (*(++z));
+ 
+ 	/*
+@@ -1000,7 +1000,7 @@ rebalance:
+ 	reclaim_state.reclaimed_slab = 0;
+ 	p->reclaim_state = &reclaim_state;
+ 
+-	did_some_progress = try_to_free_pages(zonelist->zones, gfp_mask);
++	did_some_progress = try_to_free_pages(zonelist->zones, gfp_mask, p);
+ 
+ 	p->reclaim_state = NULL;
+ 	p->flags &= ~PF_MEMALLOC;
+@@ -1307,6 +1307,7 @@ void show_free_areas(void)
+ 			" min:%lukB"
+ 			" low:%lukB"
+ 			" high:%lukB"
++			" lots:%lukB"
+ 			" active:%lukB"
+ 			" inactive:%lukB"
+ 			" present:%lukB"
+@@ -1318,6 +1319,7 @@ void show_free_areas(void)
+ 			K(zone->pages_min),
+ 			K(zone->pages_low),
+ 			K(zone->pages_high),
++			K(zone->pages_lots),
+ 			K(zone->nr_active),
+ 			K(zone->nr_inactive),
+ 			K(zone->present_pages),
+@@ -2241,6 +2243,7 @@ void setup_per_zone_pages_min(void)
+ 
+ 		zone->pages_low   = zone->pages_min + (tmp >> 2);
+ 		zone->pages_high  = zone->pages_min + (tmp >> 1);
++		zone->pages_lots  = zone->pages_min + tmp;
+ 		spin_unlock_irqrestore(&zone->lru_lock, flags);
+ 	}
+ 
+Index: linux-2.6.18-ck1/fs/buffer.c
+===================================================================
+--- linux-2.6.18-ck1.orig/fs/buffer.c	2006-09-21 19:54:55.000000000 +1000
++++ linux-2.6.18-ck1/fs/buffer.c	2006-09-21 20:05:35.000000000 +1000
+@@ -498,7 +498,7 @@ static void free_more_memory(void)
+ 	for_each_online_pgdat(pgdat) {
+ 		zones = pgdat->node_zonelists[gfp_zone(GFP_NOFS)].zones;
+ 		if (*zones)
+-			try_to_free_pages(zones, GFP_NOFS);
++			try_to_free_pages(zones, GFP_NOFS, NULL);
+ 	}
+ }
+ 
+Index: linux-2.6.18-ck1/mm/page-writeback.c
+===================================================================
+--- linux-2.6.18-ck1.orig/mm/page-writeback.c	2006-09-21 19:55:01.000000000 +1000
++++ linux-2.6.18-ck1/mm/page-writeback.c	2006-09-21 20:05:38.000000000 +1000
+@@ -45,7 +45,7 @@
+  */
+ static long ratelimit_pages = 32;
+ 
+-static long total_pages;	/* The total number of pages in the machine. */
++long total_pages __read_mostly;	/* The total number of pages in the machine. */
+ static int dirty_exceeded __cacheline_aligned_in_smp;	/* Dirty mem may be over limit */
+ 
+ /*
+@@ -64,33 +64,33 @@ static inline long sync_writeback_pages(
+ /*
+  * Start background writeback (via pdflush) at this percentage
+  */
+-int dirty_background_ratio = 10;
++int dirty_background_ratio __read_mostly = 10;
+ 
+ /*
+  * The generator of dirty data starts writeback at this percentage
+  */
+-int vm_dirty_ratio = 40;
++int vm_dirty_ratio __read_mostly;
+ 
+ /*
+  * The interval between `kupdate'-style writebacks, in jiffies
+  */
+-int dirty_writeback_interval = 5 * HZ;
++int dirty_writeback_interval __read_mostly = 5 * HZ;
+ 
+ /*
+  * The longest number of jiffies for which data is allowed to remain dirty
+  */
+-int dirty_expire_interval = 30 * HZ;
++int dirty_expire_interval __read_mostly = 30 * HZ;
+ 
+ /*
+  * Flag that makes the machine dump writes/reads and block dirtyings.
+  */
+-int block_dump;
++int block_dump __read_mostly;
+ 
+ /*
+  * Flag that puts the machine in "laptop mode". Doubles as a timeout in jiffies:
+  * a full sync is triggered after this time elapses without any disk activity.
+  */
+-int laptop_mode;
++int laptop_mode __read_mostly;
+ 
+ EXPORT_SYMBOL(laptop_mode);
+ 
+@@ -110,9 +110,6 @@ static void background_writeout(unsigned
+  *
+  * We only allow 1/2 of the currently-unmapped memory to be dirtied.
+  *
+- * We don't permit the clamping level to fall below 5% - that is getting rather
+- * excessive.
+- *
+  * We make sure that the background writeout level is below the adjusted
+  * clamping level.
+  */
+@@ -146,15 +143,16 @@ get_dirty_limits(long *pbackground, long
+ 	if (dirty_ratio > unmapped_ratio / 2)
+ 		dirty_ratio = unmapped_ratio / 2;
+ 
+-	if (dirty_ratio < 5)
+-		dirty_ratio = 5;
+-
+ 	background_ratio = dirty_background_ratio;
+ 	if (background_ratio >= dirty_ratio)
+ 		background_ratio = dirty_ratio / 2;
+ 
+ 	background = (background_ratio * available_memory) / 100;
+ 	dirty = (dirty_ratio * available_memory) / 100;
++	if (dirty < MAX_WRITEBACK_PAGES) {
++		dirty = MAX_WRITEBACK_PAGES;
++		background = 0;
++	}
+ 	tsk = current;
+ 	if (tsk->flags & PF_LESS_THROTTLE || rt_task(tsk)) {
+ 		background += background / 4;
+Index: linux-2.6.18-ck1/include/linux/writeback.h
+===================================================================
+--- linux-2.6.18-ck1.orig/include/linux/writeback.h	2006-09-21 19:54:58.000000000 +1000
++++ linux-2.6.18-ck1/include/linux/writeback.h	2006-09-21 20:05:38.000000000 +1000
+@@ -86,6 +86,8 @@ void laptop_io_completion(void);
+ void laptop_sync_completion(void);
+ void throttle_vm_writeout(void);
+ 
++extern long total_pages;
++
+ /* These are exported to sysctl. */
+ extern int dirty_background_ratio;
+ extern int vm_dirty_ratio;
+Index: linux-2.6.18-ck1/mm/filemap.c
+===================================================================
+--- linux-2.6.18-ck1.orig/mm/filemap.c	2006-09-21 19:55:01.000000000 +1000
++++ linux-2.6.18-ck1/mm/filemap.c	2006-09-21 20:05:38.000000000 +1000
+@@ -466,6 +466,16 @@ int add_to_page_cache_lru(struct page *p
+ 	return ret;
+ }
+ 
++int add_to_page_cache_lru_tail(struct page *page,
++	struct address_space *mapping, pgoff_t offset, gfp_t gfp_mask)
++{
++	int ret = add_to_page_cache(page, mapping, offset, gfp_mask);
++
++	if (ret == 0)
++		lru_cache_add_tail(page);
++	return ret;
++}
++
+ #ifdef CONFIG_NUMA
+ struct page *page_cache_alloc(struct address_space *x)
+ {
+@@ -851,6 +861,34 @@ static void shrink_readahead_size_eio(st
+ 	ra->ra_pages /= 4;
+ }
+ 
++/*
++ * Sysctl which determines whether we should read from large files to the
++ * tail of the inactive lru list.
++ */
++int vm_tail_largefiles __read_mostly = 1;
++
++static inline int nr_mapped(void)
++{
++	return global_page_state(NR_FILE_MAPPED) +
++		global_page_state(NR_ANON_PAGES);
++}
++
++/*
++ * This examines how large in pages a file size is and returns 1 if it is
++ * more than half the unmapped ram. Avoid doing read_page_state which is
++ * expensive unless we already know it is likely to be large enough.
++ */
++static int large_isize(unsigned long nr_pages)
++{
++	if (nr_pages * 6 > total_pages) {
++		 unsigned long unmapped_ram = total_pages - nr_mapped();
++
++		if (nr_pages * 2 > unmapped_ram)
++			return 1;
++	}
++	return 0;
++}
++
+ /**
+  * do_generic_mapping_read - generic file read routine
+  * @mapping:	address_space to be read
+@@ -1059,8 +1097,19 @@ no_cached_page:
+ 				goto out;
+ 			}
+ 		}
+-		error = add_to_page_cache_lru(cached_page, mapping,
+-						index, GFP_KERNEL);
++
++		/*
++		 * If we know the file is large we add the pages read to the
++		 * end of the lru as we're unlikely to be able to cache the
++		 * whole file in ram so make those pages the first to be
++		 * dropped if not referenced soon.
++		 */
++		if (vm_tail_largefiles && large_isize(end_index))
++			error = add_to_page_cache_lru_tail(cached_page,
++						mapping, index, GFP_KERNEL);
++		else
++			error = add_to_page_cache_lru(cached_page, mapping,
++							index, GFP_KERNEL);
+ 		if (error) {
+ 			if (error == -EEXIST)
+ 				goto find_page;
+Index: linux-2.6.18-ck1/Documentation/filesystems/proc.txt
+===================================================================
+--- linux-2.6.18-ck1.orig/Documentation/filesystems/proc.txt	2006-06-18 15:32:24.000000000 +1000
++++ linux-2.6.18-ck1/Documentation/filesystems/proc.txt	2006-09-21 20:05:38.000000000 +1000
+@@ -1318,6 +1318,14 @@ To free pagecache, dentries and inodes:
+ As this is a non-destructive operation and dirty objects are not freeable, the
+ user should run `sync' first.
+ 
++tail_largefiles
++---------------
++
++When enabled reads from large files to the tail end of the inactive lru list.
++This means that any cache from reading large files is dropped very quickly,
++preventing loss of mapped ram and useful pagecache when large files are read.
++This does, however, make caching less effective when working with large files.
++
+ 
+ 2.5 /proc/sys/dev - Device specific parameters
+ ----------------------------------------------
+Index: linux-2.6.18-ck1/arch/i386/Kconfig
+===================================================================
+--- linux-2.6.18-ck1.orig/arch/i386/Kconfig	2006-09-21 19:54:24.000000000 +1000
++++ linux-2.6.18-ck1/arch/i386/Kconfig	2006-09-21 20:05:38.000000000 +1000
+@@ -495,7 +495,7 @@ endchoice
+ 
+ choice
+ 	depends on EXPERIMENTAL && !X86_PAE
+-	prompt "Memory split" if EMBEDDED
++	prompt "Memory split"
+ 	default VMSPLIT_3G
+ 	help
+ 	  Select the desired split between kernel and user memory.
+@@ -514,13 +514,13 @@ choice
+ 	  option alone!
+ 
+ 	config VMSPLIT_3G
+-		bool "3G/1G user/kernel split"
++		bool "Default 896MB lowmem (3G/1G user/kernel split)"
+ 	config VMSPLIT_3G_OPT
+-		bool "3G/1G user/kernel split (for full 1G low memory)"
++		bool "1GB lowmem (3G/1G user/kernel split)"
+ 	config VMSPLIT_2G
+-		bool "2G/2G user/kernel split"
++		bool "2GB lowmem (2G/2G user/kernel split)"
+ 	config VMSPLIT_1G
+-		bool "1G/3G user/kernel split"
++		bool "3GB lowmem (1G/3G user/kernel split)"
+ endchoice
+ 
+ config PAGE_OFFSET
+Index: linux-2.6.18-ck1/Makefile
+===================================================================
+--- linux-2.6.18-ck1.orig/Makefile	2006-09-21 19:54:19.000000000 +1000
++++ linux-2.6.18-ck1/Makefile	2006-09-21 20:05:53.000000000 +1000
+@@ -1,7 +1,7 @@
+ VERSION = 2
+ PATCHLEVEL = 6
+ SUBLEVEL = 18
+-EXTRAVERSION =
++EXTRAVERSION = -ck1
+ NAME=Avast! A bilge rat!
+ 
+ # *DOCUMENTATION*

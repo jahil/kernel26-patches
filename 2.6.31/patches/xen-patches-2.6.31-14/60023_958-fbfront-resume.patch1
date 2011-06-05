@@ -1,0 +1,33 @@
+From: http://xenbits.xensource.com/linux-2.6.18-xen.hg?rev/2641f0d17eaa
+# HG changeset patch
+# User Keir Fraser <keir.fraser@citrix.com>
+# Date 1259848386 0
+# Node ID 2641f0d17eaa22811883aee22f399db46cbff06f
+# Parent  ff5ea1801bd3f5857c095c760f04dfab787f8c1d
+Subject: xenfb: Only start one xenfb kthread
+Patch-mainline: n/a
+
+When doing save/restore testing with the linux-2.6.18-xen.hg tree it
+was discovered that every time a restore happened we would get a new
+xenfb thread.  While the framebuffer continues to work, this is an
+obvious resource leak.  The attached patch only starts up a new xenfb
+thread the first time the backend connects, and continues to re-use
+that in the future.  Jeremy's upstream LKML tree doesn't suffer from
+this since it uses a completely different mechanism to do screen
+updates.  Original patch from John Haxby @ Oracle; slightly modified
+by me to apply to the linux-2.6.18-xen.hg tree.
+
+Signed-off-by: Chris Lalancette <clalance@redhat.com>
+Acked-by: jbeulich@novell.com
+
+--- 11.2-2009-12-15.orig/drivers/xen/fbfront/xenfb.c	2009-12-15 13:47:53.000000000 +0100
++++ 11.2-2009-12-15/drivers/xen/fbfront/xenfb.c	2009-12-15 13:55:44.000000000 +0100
+@@ -831,7 +831,7 @@ static void xenfb_backend_changed(struct
+ 				 "request-update", "%d", &val) < 0)
+ 			val = 0;
+ 
+-		if (val){
++		if (val && !info->kthread) {
+ 			info->kthread = kthread_run(xenfb_thread, info,
+ 						    "xenfb thread");
+ 			if (IS_ERR(info->kthread)) {

@@ -1,0 +1,28 @@
+From: Greg Kroah-Hartman <gregkh@suse.de>
+Subject: Linux 2.6.32.16
+Patch-mainline: 2.6.32.16
+
+Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+
+Automatically created from "patches.kernel.org/patch-2.6.32.15-16" by xen-port-patches.py
+
+--- sle11sp1-2010-08-06.orig/arch/x86/kernel/setup-xen.c	2010-02-09 17:12:56.000000000 +0100
++++ sle11sp1-2010-08-06/arch/x86/kernel/setup-xen.c	2010-08-06 17:06:51.000000000 +0200
+@@ -757,6 +757,17 @@ static struct dmi_system_id __initdata b
+ 			DMI_MATCH(DMI_BOARD_NAME, "DG45FC"),
+ 		},
+ 	},
++	/*
++	 * The Dell Inspiron Mini 1012 has DMI_BIOS_VENDOR = "Dell Inc.", so
++	 * match on the product name.
++	 */
++	{
++		.callback = dmi_low_memory_corruption,
++		.ident = "Phoenix BIOS",
++		.matches = {
++			DMI_MATCH(DMI_PRODUCT_NAME, "Inspiron 1012"),
++		},
++	},
+ #endif
+ 	{}
+ };

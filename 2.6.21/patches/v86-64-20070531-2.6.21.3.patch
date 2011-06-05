@@ -1,0 +1,2562 @@
+diff -uprN -X linux/Documentation/dontdiff linux/arch/x86_64/ia32/ia32entry.S linux-v86-64/arch/x86_64/ia32/ia32entry.S
+--- linux/arch/x86_64/ia32/ia32entry.S	2007-04-28 04:49:26.000000000 +0700
++++ linux-v86-64/arch/x86_64/ia32/ia32entry.S	2007-05-23 16:01:47.000000000 +0700
+@@ -512,7 +512,11 @@ ia32_sys_call_table:
+ 	.quad stub32_iopl		/* 110 */
+ 	.quad sys_vhangup
+ 	.quad quiet_ni_syscall	/* old "idle" system call */
++#ifdef CONFIG_VM86_64
++	.quad sys_vm86_old
++#else
+ 	.quad sys32_vm86_warning	/* vm86old */ 
++#endif
+ 	.quad compat_sys_wait4
+ 	.quad sys_swapoff		/* 115 */
+ 	.quad compat_sys_sysinfo
+@@ -565,7 +569,11 @@ ia32_sys_call_table:
+ 	.quad sys_mremap
+ 	.quad sys_setresuid16
+ 	.quad sys_getresuid16	/* 165 */
++#ifdef CONFIG_VM86_64
++	.quad sys_vm86
++#else
+ 	.quad sys32_vm86_warning	/* vm86 */ 
++#endif
+ 	.quad quiet_ni_syscall	/* query_module */
+ 	.quad sys_poll
+ 	.quad compat_sys_nfsservctl
+diff -uprN -X linux/Documentation/dontdiff linux/arch/x86_64/ia32/ia32_signal.c linux-v86-64/arch/x86_64/ia32/ia32_signal.c
+--- linux/arch/x86_64/ia32/ia32_signal.c	2007-04-28 04:49:26.000000000 +0700
++++ linux-v86-64/arch/x86_64/ia32/ia32_signal.c	2007-05-23 16:01:47.000000000 +0700
+@@ -348,6 +348,7 @@ ia32_setup_sigcontext(struct sigcontext_
+ 	int tmp, err = 0;
+ 
+ 	tmp = 0;
++#ifndef CONFIG_X86_64
+ 	__asm__("movl %%gs,%0" : "=r"(tmp): "0"(tmp));
+ 	err |= __put_user(tmp, (unsigned int __user *)&sc->gs);
+ 	__asm__("movl %%fs,%0" : "=r"(tmp): "0"(tmp));
+@@ -356,6 +357,22 @@ ia32_setup_sigcontext(struct sigcontext_
+ 	err |= __put_user(tmp, (unsigned int __user *)&sc->ds);
+ 	__asm__("movl %%es,%0" : "=r"(tmp): "0"(tmp));
+ 	err |= __put_user(tmp, (unsigned int __user *)&sc->es);
++#else
++#define CHECKNULLSEL(XXX)  { if (!((XXX) & 0xFFF8)) (XXX) = 0; }
++	__asm__("movl %%gs,%0" : "=r"(tmp): "0"(tmp));
++	CHECKNULLSEL(tmp);
++	err |= __put_user(tmp, (unsigned int __user *)&sc->gs);
++	__asm__("movl %%fs,%0" : "=r"(tmp): "0"(tmp));
++	CHECKNULLSEL(tmp);
++	err |= __put_user(tmp, (unsigned int __user *)&sc->fs);
++	__asm__("movl %%ds,%0" : "=r"(tmp): "0"(tmp));
++	CHECKNULLSEL(tmp);
++	err |= __put_user(tmp, (unsigned int __user *)&sc->ds);
++	__asm__("movl %%es,%0" : "=r"(tmp): "0"(tmp));
++	CHECKNULLSEL(tmp);
++	err |= __put_user(tmp, (unsigned int __user *)&sc->es);
++#undef CHECKNULLSEL
++#endif
+ 
+ 	err |= __put_user((u32)regs->rdi, &sc->edi);
+ 	err |= __put_user((u32)regs->rsi, &sc->esi);
+diff -uprN -X linux/Documentation/dontdiff linux/arch/x86_64/ia32/sys_ia32.c linux-v86-64/arch/x86_64/ia32/sys_ia32.c
+--- linux/arch/x86_64/ia32/sys_ia32.c	2007-04-28 04:49:26.000000000 +0700
++++ linux-v86-64/arch/x86_64/ia32/sys_ia32.c	2007-05-23 16:01:47.000000000 +0700
+@@ -72,6 +72,11 @@
+ #include <net/sock.h>
+ #include <asm/ia32.h>
+ 
++#ifdef CONFIG_VM86_64
++#include <asm/vm86.h>
++#endif
++
++
+ #define AA(__x)		((unsigned long)(__x))
+ 
+ int cp_compat_stat(struct kstat *kbuf, struct compat_stat __user *ubuf)
+@@ -842,6 +847,7 @@ long sys32_fadvise64_64(int fd, __u32 of
+ 			       advice); 
+ } 
+ 
++#ifndef CONFIG_VM86_64
+ long sys32_vm86_warning(void)
+ { 
+ 	struct task_struct *me = current;
+@@ -853,6 +859,7 @@ long sys32_vm86_warning(void)
+ 	} 
+ 	return -ENOSYS;
+ } 
++#endif
+ 
+ long sys32_lookup_dcookie(u32 addr_low, u32 addr_high,
+ 			  char __user * buf, size_t len)
+diff -uprN -X linux/Documentation/dontdiff linux/arch/x86_64/Kconfig linux-v86-64/arch/x86_64/Kconfig
+--- linux/arch/x86_64/Kconfig	2007-04-28 04:49:26.000000000 +0700
++++ linux-v86-64/arch/x86_64/Kconfig	2007-05-31 10:04:14.000000000 +0700
+@@ -709,6 +709,19 @@ config IA32_EMULATION
+ 	  turn this on, unless you're 100% sure that you don't have any 32-bit programs
+ 	  left.
+ 
++config VM86_64
++	bool "Virtual 8086 mode support"
++	depends on EXPERIMENTAL && IA32_EMULATION && ZONE_DMA32
++	help
++	  Virtual 8086 mode support.
++
++config VM86_DEV
++	tristate "Device driver interface for V86 mode"
++	depends on VM86_64
++	help
++	  Device driver interface to virtual 8086 mode, which replaces 
++	  vm86() system call with device ioctl interface.
++
+ config IA32_AOUT
+        tristate "IA32 a.out support"
+        depends on IA32_EMULATION
+diff -uprN -X linux/Documentation/dontdiff linux/arch/x86_64/kernel/e820.c linux-v86-64/arch/x86_64/kernel/e820.c
+--- linux/arch/x86_64/kernel/e820.c	2007-04-28 04:49:26.000000000 +0700
++++ linux-v86-64/arch/x86_64/kernel/e820.c	2007-05-23 16:01:47.000000000 +0700
+@@ -27,6 +27,10 @@
+ 
+ struct e820map e820 __initdata;
+ 
++#ifdef CONFIG_VM86_64
++int vm86_64_reserved_page_110 __initdata;
++#endif
++
+ /* 
+  * PFN of last memory page.
+  */
+@@ -264,6 +268,11 @@ e820_mark_nosave_range(unsigned long sta
+ 	if (start >= end)
+ 		return;
+ 
++#ifdef CONFIG_VM86_64
++	if (start == 0x00110000 && end == 0x00111000 && vm86_64_reserved_page_110)
++		return;
++#endif
++
+ 	printk("Nosave address range: %016lx - %016lx\n", start, end);
+ 	max_pfn = end >> PAGE_SHIFT;
+ 	for (pfn = start >> PAGE_SHIFT; pfn < max_pfn; pfn++)
+@@ -357,6 +366,43 @@ void __init add_memory_region(unsigned l
+ 		return;
+ 	}
+ 
++#ifdef 	CONFIG_VM86_64
++        if (start <= 0x00110000 &&
++	    start + size >= 0x00111000 && type == E820_RAM) {
++		int save = e820.nr_map;
++		/* Bite page 110 from this region */        
++		if (start == 0x00110000) {
++		    if (size > 0x1000) {
++			if (x == E820MAX) 
++			    goto too_many_entries;
++			e820.map[x].addr = 0x00111000;
++			e820.map[x].size = size - 0x1000;
++			e820.map[x].type = E820_RAM;
++			e820.nr_map++;
++		    }
++		} else {
++		    e820.map[x].addr = start;
++		    e820.map[x].size = 0x00110000 - start;
++		    e820.map[x].type = E820_RAM;
++		    e820.nr_map++;
++		    x++;
++		    if (size > e820.map[x - 2].size + 0x1000) {
++			if (x == E820MAX) 
++			    goto too_many_entries;
++			e820.map[x].addr = 0x00111000;
++			e820.map[x].size = size - (e820.map[x - 2].size + 0x1000);
++			e820.map[x].type = E820_RAM;
++			e820.nr_map++;
++		    }
++		}
++	    vm86_64_reserved_page_110 = 1;
++	    printk(KERN_INFO "Page 0x110 successfully reserved for VM86_64\n");
++	    return;
++	too_many_entries:
++	    x = e820.nr_map = save;
++	}
++#endif 
++
+ 	e820.map[x].addr = start;
+ 	e820.map[x].size = size;
+ 	e820.map[x].type = type;
+@@ -601,6 +647,9 @@ void __init setup_memory_region(void)
+ 	 * Otherwise fake a memory map; one section from 0k->640k,
+ 	 * the next section from 1mb->appropriate_mem_k
+ 	 */
++#ifdef CONFIG_VM86_64
++        vm86_64_reserved_page_110 = 0;
++#endif
+ 	sanitize_e820_map(E820_MAP, &E820_MAP_NR);
+ 	if (copy_e820_map(E820_MAP, E820_MAP_NR) < 0)
+ 		early_panic("Cannot find a valid memory map");
+diff -uprN -X linux/Documentation/dontdiff linux/arch/x86_64/kernel/ioport.c linux-v86-64/arch/x86_64/kernel/ioport.c
+--- linux/arch/x86_64/kernel/ioport.c	2007-04-28 04:49:26.000000000 +0700
++++ linux-v86-64/arch/x86_64/kernel/ioport.c	2007-05-23 16:01:47.000000000 +0700
+@@ -17,6 +17,10 @@
+ #include <linux/slab.h>
+ #include <linux/thread_info.h>
+ 
++#ifdef CONFIG_VM86_64
++#include <asm/vm86.h>
++#endif
++
+ /* Set EXTENT bits starting at BASE in BITMAP to value TURN_ON. */
+ static void set_bitmap(unsigned long *bitmap, unsigned int base, unsigned int extent, int new_value)
+ {
+@@ -49,6 +53,7 @@ asmlinkage long sys_ioperm(unsigned long
+ 	 * IO bitmap up. ioperm() is much less timing critical than clone(),
+ 	 * this is why we delay this operation until now:
+ 	 */
++#ifndef CONFIG_VM86_64
+ 	if (!t->io_bitmap_ptr) {
+ 		bitmap = kmalloc(IO_BITMAP_BYTES, GFP_KERNEL);
+ 		if (!bitmap)
+@@ -58,6 +63,17 @@ asmlinkage long sys_ioperm(unsigned long
+ 		t->io_bitmap_ptr = bitmap;
+ 		set_thread_flag(TIF_IO_BITMAP);
+ 	}
++#else
++	if (!t->vm86_control_ptr) {
++		bitmap = vm86_control_alloc();
++		if (!bitmap)
++			return -ENOMEM;
++
++		memset(&bitmap[VM86CTL_IO_BITMAP_OFFSET], 0xff, IO_BITMAP_BYTES);
++		t->vm86_control_ptr = bitmap;
++		set_thread_flag(TIF_IO_BITMAP);
++	}
++#endif
+ 
+ 	/*
+ 	 * do it in the per-thread copy and in the TSS ...
+@@ -68,16 +84,26 @@ asmlinkage long sys_ioperm(unsigned long
+ 	 */
+ 	tss = &per_cpu(init_tss, get_cpu());
+ 
++#ifndef  CONFIG_VM86_64
+ 	set_bitmap(t->io_bitmap_ptr, from, num, !turn_on);
++#else
++	set_bitmap(&t->vm86_control_ptr[VM86CTL_IO_BITMAP_OFFSET], from, num, !turn_on);
++#endif
+ 
+ 	/*
+ 	 * Search for a (possibly new) maximum. This is simple and stupid,
+ 	 * to keep it obviously correct:
+ 	 */
+ 	max_long = 0;
++#ifndef CONFIG_VM86_64
+ 	for (i = 0; i < IO_BITMAP_LONGS; i++)
+ 		if (t->io_bitmap_ptr[i] != ~0UL)
+ 			max_long = i;
++#else
++	for (i = 0; i < IO_BITMAP_LONGS; i++)
++		if (t->vm86_control_ptr[VM86CTL_IO_BITMAP_OFFSET + i] != ~0UL)
++			max_long = i;
++#endif
+ 
+ 	bytes = (max_long + 1) * sizeof(long);
+ 	bytes_updated = max(bytes, t->io_bitmap_max);
+@@ -85,8 +111,12 @@ asmlinkage long sys_ioperm(unsigned long
+ 	t->io_bitmap_max = bytes;
+ 
+ 	/* Update the TSS: */
+-	memcpy(tss->io_bitmap, t->io_bitmap_ptr, bytes_updated);
+ 
++#ifndef CONFIG_VM86_64
++	memcpy(tss->io_bitmap, t->io_bitmap_ptr, bytes_updated);
++#else
++	memcpy(tss->io_bitmap, &t->vm86_control_ptr[VM86CTL_IO_BITMAP_OFFSET], bytes_updated);
++#endif
+ 	put_cpu();
+ 
+ 	return 0;
+diff -uprN -X linux/Documentation/dontdiff linux/arch/x86_64/kernel/Makefile linux-v86-64/arch/x86_64/kernel/Makefile
+--- linux/arch/x86_64/kernel/Makefile	2007-04-28 04:49:26.000000000 +0700
++++ linux-v86-64/arch/x86_64/kernel/Makefile	2007-05-30 11:51:06.000000000 +0700
+@@ -37,6 +37,8 @@ obj-$(CONFIG_X86_PM_TIMER)	+= pmtimer.o
+ obj-$(CONFIG_X86_VSMP)		+= vsmp.o
+ obj-$(CONFIG_K8_NB)		+= k8.o
+ obj-$(CONFIG_AUDIT)		+= audit.o
++obj-$(CONFIG_VM86_64)		+= vm86.o
++obj-$(CONFIG_VM86_DEV)		+= vm86dev.o
+ 
+ obj-$(CONFIG_MODULES)		+= module.o
+ obj-$(CONFIG_PCI)		+= early-quirks.o
+diff -uprN -X linux/Documentation/dontdiff linux/arch/x86_64/kernel/process.c linux-v86-64/arch/x86_64/kernel/process.c
+--- linux/arch/x86_64/kernel/process.c	2007-04-28 04:49:26.000000000 +0700
++++ linux-v86-64/arch/x86_64/kernel/process.c	2007-05-23 16:01:47.000000000 +0700
+@@ -51,6 +51,10 @@
+ #include <asm/proto.h>
+ #include <asm/ia32.h>
+ #include <asm/idle.h>
++#ifdef CONFIG_VM86_64
++#include <asm/vm86.h>
++#endif
++
+ 
+ asmlinkage extern void ret_from_fork(void);
+ 
+@@ -364,6 +368,7 @@ void exit_thread(void)
+ 	struct task_struct *me = current;
+ 	struct thread_struct *t = &me->thread;
+ 
++#ifndef CONFIG_VM86_64
+ 	if (me->thread.io_bitmap_ptr) { 
+ 		struct tss_struct *tss = &per_cpu(init_tss, get_cpu());
+ 
+@@ -377,6 +382,23 @@ void exit_thread(void)
+ 		t->io_bitmap_max = 0;
+ 		put_cpu();
+ 	}
++#else
++	if (me->thread.vm86_control_ptr) { 
++		struct tss_struct *tss = &per_cpu(init_tss, get_cpu());
++		vm86_control_free(t->vm86_control_ptr);
++		t->vm86_control_ptr = NULL;
++		clear_thread_flag(TIF_IO_BITMAP);
++		/*
++		 * Careful, clear this in the TSS too:
++		 */
++		memset(tss->io_bitmap, 0xff, t->io_bitmap_max);
++		t->io_bitmap_max = 0;
++		put_cpu();
++		
++		
++	}
++#endif
++
+ }
+ 
+ void flush_thread(void)
+@@ -419,6 +441,9 @@ void release_thread(struct task_struct *
+ 			BUG();
+ 		}
+ 	}
++#ifdef	CONFIG_VM86_64
++	release_vm86_irqs(dead_task);
++#endif
+ }
+ 
+ static inline void set_32bit_tls(struct task_struct *t, int tls, u32 addr)
+@@ -485,6 +510,7 @@ int copy_thread(int nr, unsigned long cl
+ 	asm("mov %%es,%0" : "=m" (p->thread.es));
+ 	asm("mov %%ds,%0" : "=m" (p->thread.ds));
+ 
++#ifndef CONFIG_VM86_64
+ 	if (unlikely(test_tsk_thread_flag(me, TIF_IO_BITMAP))) {
+ 		p->thread.io_bitmap_ptr = kmalloc(IO_BITMAP_BYTES, GFP_KERNEL);
+ 		if (!p->thread.io_bitmap_ptr) {
+@@ -495,6 +521,19 @@ int copy_thread(int nr, unsigned long cl
+ 				IO_BITMAP_BYTES);
+ 		set_tsk_thread_flag(p, TIF_IO_BITMAP);
+ 	} 
++#else
++	if (unlikely(test_tsk_thread_flag(me, TIF_IO_BITMAP))) {
++		p->thread.vm86_control_ptr = vm86_control_alloc();
++		if (!p->thread.vm86_control_ptr) {
++			p->thread.io_bitmap_max = 0;
++			return -ENOMEM;
++		}
++		memcpy(&p->thread.vm86_control_ptr[VM86CTL_IO_BITMAP_OFFSET], &me->thread.vm86_control_ptr[VM86CTL_IO_BITMAP_OFFSET],
++				IO_BITMAP_BYTES);
++		set_tsk_thread_flag(p, TIF_IO_BITMAP);
++	} 
++#endif
++
+ 
+ 	/*
+ 	 * Set a new TLS for the child thread?
+@@ -511,10 +550,20 @@ int copy_thread(int nr, unsigned long cl
+ 	}
+ 	err = 0;
+ out:
++
++#ifndef  CONFIG_VM86_64
+ 	if (err && p->thread.io_bitmap_ptr) {
+ 		kfree(p->thread.io_bitmap_ptr);
+ 		p->thread.io_bitmap_max = 0;
+ 	}
++#else
++	if (err && p->thread.vm86_control_ptr) {
++		vm86_control_free(p->thread.vm86_control_ptr);
++		p->thread.vm86_control_ptr = NULL;
++		p->thread.io_bitmap_max = 0;
++	}
++#endif
++
+ 	return err;
+ }
+ 
+@@ -547,8 +596,13 @@ static inline void __switch_to_xtra(stru
+ 		 * Copy the relevant range of the IO bitmap.
+ 		 * Normally this is 128 bytes or less:
+ 		 */
++#ifndef  CONFIG_VM86_64
+ 		memcpy(tss->io_bitmap, next->io_bitmap_ptr,
+ 		       max(prev->io_bitmap_max, next->io_bitmap_max));
++#else
++		memcpy(tss->io_bitmap, &next->vm86_control_ptr[VM86CTL_IO_BITMAP_OFFSET],
++		       max(prev->io_bitmap_max, next->io_bitmap_max));
++#endif
+ 	} else if (test_tsk_thread_flag(prev_p, TIF_IO_BITMAP)) {
+ 		/*
+ 		 * Clear any possible leftover bits:
+diff -uprN -X linux/Documentation/dontdiff linux/arch/x86_64/kernel/setup.c linux-v86-64/arch/x86_64/kernel/setup.c
+--- linux/arch/x86_64/kernel/setup.c	2007-04-28 04:49:26.000000000 +0700
++++ linux-v86-64/arch/x86_64/kernel/setup.c	2007-05-23 16:01:47.000000000 +0700
+@@ -65,6 +65,10 @@
+ #include <asm/sections.h>
+ #include <asm/dmi.h>
+ 
++#ifdef CONFIG_VM86_64
++#include <asm/vm86.h>
++#endif
++
+ /*
+  * Machine setup..
+  */
+@@ -407,6 +411,10 @@ void __init setup_arch(char **cmdline_p)
+ 	e820_reserve_resources(); 
+ 	e820_mark_nosave_regions();
+ 
++#ifdef CONFIG_VM86_64
++	vm86_init();
++#endif
++
+ 	{
+ 	unsigned i;
+ 	/* request I/O space for devices used on all i[345]86 PCs */
+diff -uprN -X linux/Documentation/dontdiff linux/arch/x86_64/kernel/vm86.c linux-v86-64/arch/x86_64/kernel/vm86.c
+--- linux/arch/x86_64/kernel/vm86.c	1970-01-01 07:00:00.000000000 +0700
++++ linux-v86-64/arch/x86_64/kernel/vm86.c	2007-05-31 09:17:59.000000000 +0700
+@@ -0,0 +1,1727 @@
++/*
++ *  linux/kernel/vm86.c
++ *
++ *  Copyright (C) 1994  Linus Torvalds
++ *
++ *  29 dec 2001 - Fixed oopses caused by unchecked access to the vm86
++ *                stack - Manfred Spraul <manfred@colorfullife.com>
++ *
++ *  22 mar 2002 - Manfred detected the stackfaults, but didn't handle
++ *                them correctly. Now the emulation will be in a
++ *                consistent state after stackfaults - Kasper Dupont
++ *                <kasperd@daimi.au.dk>
++ *
++ *  22 mar 2002 - Added missing clear_IF in set_vflags_* Kasper Dupont
++ *                <kasperd@daimi.au.dk>
++ *
++ *  ?? ??? 2002 - Fixed premature returns from handle_vm86_fault
++ *                caused by Kasper Dupont's changes - Stas Sergeev
++ *
++ *   4 apr 2002 - Fixed CHECK_IF_IN_TRAP broken by Stas' changes.
++ *                Kasper Dupont <kasperd@daimi.au.dk>
++ *
++ *   9 apr 2002 - Changed syntax of macros in handle_vm86_fault.
++ *                Kasper Dupont <kasperd@daimi.au.dk>
++ *
++ *   9 apr 2002 - Changed stack access macros to jump to a label
++ *                instead of returning to userspace. This simplifies
++ *                do_int, and is needed by handle_vm6_fault. Kasper
++ *                Dupont <kasperd@daimi.au.dk>
++ *
++ *  22 may 2007 - Ported to x86-64 with some limitations
++ *		  Vladimir M. Shelyugin <vladimir32@gmail.com>
++ */
++
++#include <linux/errno.h>
++#include <linux/sched.h>
++#include <linux/syscalls.h>
++#include <linux/mm.h>
++#include <linux/smp.h>
++#include <linux/smp_lock.h>
++#include <linux/sem.h>
++#include <linux/msg.h>
++#include <linux/shm.h>
++#include <linux/stat.h>
++#include <linux/mman.h>
++#include <linux/gfp.h>
++#include <linux/vmalloc.h>
++#include <linux/file.h>
++#include <linux/utsname.h>
++#include <linux/personality.h>
++#include <linux/ptrace.h>
++
++#include <asm/uaccess.h>
++#include <asm/io.h>
++#include <linux/ioport.h>
++#include <asm/i387.h>
++#include <asm/vm86.h>
++#include <asm/siginfo.h>
++#include <asm/tlbflush.h>
++#include <linux/interrupt.h>
++#include <linux/irq.h>
++#include <asm/irq.h>
++
++/*
++ * 8- and 16-bit register defines..
++ */
++#define AL(regs)	(((unsigned char *)&((regs)->eax))[0])
++#define AH(regs)	(((unsigned char *)&((regs)->eax))[1])
++#define IP(regs)	(*(unsigned short *)&((regs)->eip))
++#define SP(regs)	(*(unsigned short *)&((regs)->esp))
++
++/*
++ * virtual flags (16 and 32-bit versions)
++ */
++#define VFLAGS	(*(unsigned short *)&ctrl[VM86CTL_VEFLAGS_OFFSET])
++#define VEFLAGS	(*(unsigned int *)&ctrl[VM86CTL_VEFLAGS_OFFSET])
++#define VEFMASK	(*(unsigned int *)&ctrl[VM86CTL_VEFMASK_OFFSET])
++#define KVM86S(ctrl) ((struct kernel_vm86_struct *)((ctrl) + VM86CTL_USER_STACK_BOT_OFFSET))
++#define KVM86R(ctrl) ((struct kernel_vm86_regs *)((ctrl) + VM86CTL_USER_STACK_BOT_OFFSET))
++#define	KVM86I(ctrl) ((struct kernel_vm86_struct *)&ctrl[VM86CTL_USER_STACK_BOT_OFFSET])
++#define VMPI(ctrl) 	KVM86S(ctrl)->vm86plus
++#define VMEFLAG	(ctrl[VM86CTL_VMEFLAG_OFFSET])
++#define IRB	(&ctrl[VM86CTL_INT_BITMAP_OFFSET])
++
++#define set_flags(X,new,mask) \
++((X) = ((X) & ~(mask)) | ((new) & (mask)))
++
++#define SAFE_MASK	(0xDD5)
++#define RETURN_MASK	(0xDFF)
++
++/* Global VM86 enable flag */
++
++int vm86_64_enabled = 0;
++
++/*  We need one physical page to place V86 entrycode and 
++    identity-map it because entrycode resets the paging MMU.
++    The highest accessible page for V86 programs is 0x10F, thus
++    page 0x110 is the good choce for this purpose. */
++
++static struct resource vm86_gate_resource = {
++	.name = "VM86 entryway",
++	.start = 0x00110000,
++	.end = 0x00110FFF,
++	.flags = IORESOURCE_MEM,
++};
++
++/* Free control structure */
++static void vm86_control_free_pages(struct page **p)
++{
++	int i;
++	for (i = 0; i < 3; i++) {
++	    if (p[i]) {
++		__free_page(p[i]);
++		p[i] = 0;
++	    }
++	}  
++}
++
++/*  Allocate control structure:
++    V86 control strucrure consists of three pages which are mapped
++    to linear numbers 0x111 - 0x113. Most of structure is filled
++    by I/O permission bitmap used in both long and V86 modes.
++*/
++
++static int vm86_control_alloc_pages(struct page **p)
++{
++	int i;
++	int enabled;
++	enabled = 1;
++
++	for (i = 0; i < 3; i++) {
++	    p[i] = NULL;
++	}
++
++	/* Page 111 must lie in 1st physical 4Gb, because it 
++	    will be pointed by 32-bit CR3 */
++	    
++	p[0] = alloc_page(GFP_KERNEL | __GFP_DMA32);
++
++	if (!p[0]) {
++	    /* Couldn't get from lower mem? We'll disable V86 but
++		still try to allocate space for IOPB */ 
++    	    p[0] = alloc_page(GFP_KERNEL);
++	    enabled = 0;
++	}
++
++	p[1] = alloc_page(GFP_KERNEL);
++	p[2] = alloc_page(GFP_KERNEL);
++
++	for (i = 0; i < 3; i++) {
++	    if (!p[i]) {
++		vm86_control_free_pages(p);
++		return 0;
++	    }
++	}
++	return 1 + enabled;
++}
++
++unsigned long *vm86_control_alloc(void)
++{
++	struct page *pages[3];
++	unsigned long *p;
++	unsigned int *tss32;
++	int res;
++	
++	if (!(res = vm86_control_alloc_pages(pages)))
++	    return NULL;
++
++	p = vmap(pages, 3, VM_MAP, PAGE_KERNEL_EXEC); /* Must be executable for interrupt handling */
++
++	if (!p) {
++	    vm86_control_free_pages(pages);
++	    return NULL;
++	}
++	
++	memset(p, 0, PAGE_SIZE * 3);
++	p[VM86CTL_LOCAL_ENABLE_OFFSET] = res - 1;
++	p[VM86CTL_PAGE111_PHYS_OFFSET] = page_to_phys(pages[0]);
++	p[VM86CTL_PAGE112_PHYS_OFFSET] = page_to_phys(pages[1]);
++	p[VM86CTL_PAGE113_PHYS_OFFSET] = page_to_phys(pages[2]);
++	p[VM86CTL_TSS32_DESC_OFFSET] = 0x00008B1111000000 + 
++	  (VM86CTL_IOBM_END_OFFSET - VM86CTL_TSS32_OFFSET) * 8 + 1;
++	p[VM86CTL_INTXX_OFFSET] = 0x0000000000c300cd;
++	tss32 = (unsigned int *)(p + VM86CTL_TSS32_OFFSET);
++	tss32[1] = 0x001138EC; /* SS:ESP for PL0 */
++	tss32[2] = 0x00000018; 
++	tss32[7] = page_to_phys(pages[0]) + 32; /* CR3 in TSS32 */
++	p[VM86CTL_IOBM_PTR_OFFSET] = 0x88UL << 48;
++	p[VM86CTL_IOBM_END_OFFSET] = 7;
++	memset(&p[VM86CTL_IO_BITMAP_OFFSET - 4], 0xff, 32); /* Interrupt redirection map, currently unused */
++	memset(&p[VM86CTL_IO_BITMAP_OFFSET], 0xff, 	/* Forbid all I/O port access */
++	  (VM86CTL_IOBM_END_OFFSET - VM86CTL_IO_BITMAP_OFFSET) * 8);
++	return p;
++}
++
++void vm86_control_free(unsigned long *ptr)
++{	
++	vfree((void *)ptr);
++}
++
++
++/* call entrycode */
++inline unsigned long call_110(void)
++{
++   unsigned long retval;
++   __asm __volatile(
++	    "\tpushq %%rbp\n"	/* ??? GCC bug ??? It doesn't recognize RBP in clobber list */
++	    "\tmovq $0x00110100,%%rax\n"
++	    "\tcall *%%rax\n" 
++	    "\tpopq %%rbp\n"
++	    : "=a"(retval) 
++	    : 
++	    : "rbx", "rcx", "rdx", "rsi", "rdi",
++	      "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "cc", "memory"
++   );
++   return retval;
++}
++
++/* call int xx in control structure */
++inline void call_int(void *ptr)
++{
++   __asm __volatile(
++	    "call *%0\n" 
++	    : : "r"(ptr) : "memory"
++   );
++}
++
++/*	Enter V86 mode. 
++	Returns number of exception caused exit from it		*/
++
++int enter_vm86(unsigned long *ctrl)
++{
++        unsigned long *pml4 = NULL;
++	unsigned long *pml3 = NULL;
++        unsigned long *pml2 = NULL;
++	unsigned long *pml1 = NULL;
++	unsigned long p110, p111, p112, p113;
++
++	unsigned long *page110 = (unsigned long *)0x00110000;
++	unsigned long *page111 = (unsigned long *)0x00111000;
++	unsigned long *page112 = (unsigned long *)0x00112000;
++	unsigned long *page113 = (unsigned long *)0x00113000;
++	unsigned long pa;
++	unsigned *stk;
++	unsigned trapno;
++	unsigned intno;
++	int ecode;
++	int i;
++
++re_enter:
++
++	if (unlikely(test_tsk_thread_flag(current, TIF_SIGPENDING))) {
++	    __asm __volatile("sti");
++	    return -2;
++	}
++
++	if (unlikely(test_tsk_thread_flag(current, TIF_NEED_RESCHED))) {
++	    __asm __volatile("sti");
++	    schedule();
++	    goto re_enter;
++	}
++
++  	KVM86R(ctrl)->eflags |= VM_MASK | IF_MASK | 2;
++
++	__asm __volatile("cli\n" : :);
++
++	/* Direct access to CPU paging structures */
++	__asm __volatile("movq %%cr3,%0" : "=a"(pa));
++
++	pa &= 0xFFFFFFFFFFFFF000;
++	pml4 = phys_to_virt(pa);
++	pa = pml4[0];
++
++	if (!(pa & 1))
++	    return -EFAULT;
++
++	pa &= 0xFFFFFFFFFFFFF000;
++	pml3 = phys_to_virt(pa);
++	pa = pml3[0];
++
++  	if (!(pa & 1))
++	    return -EFAULT;
++
++	pa &= 0xFFFFFFFFFFFFF000;
++	pml2 = phys_to_virt(pa);
++	pa = pml2[0];
++
++    	if (!(pa & 1))
++	    return -EFAULT;
++	pa &= 0xFFFFFFFFFFFFF000;
++	pml1 = phys_to_virt(pa);
++	pa = pml1[0];
++
++	/* Map pages 110-113, preserve old PTEs */
++	p110 = pml1[0x110];
++	p111 = pml1[0x111];
++	p112 = pml1[0x112];
++	p113 = pml1[0x113];
++	pml1[0x110] = 0x00110007UL;
++	__flush_tlb_one(page110);
++	pml1[0x111] = ctrl[VM86CTL_PAGE111_PHYS_OFFSET] | 3;
++	__flush_tlb_one(page111);
++	pml1[0x112] = ctrl[VM86CTL_PAGE112_PHYS_OFFSET] | 3;
++	__flush_tlb_one(page112);
++	pml1[0x113] = ctrl[VM86CTL_PAGE113_PHYS_OFFSET] | 3;
++	__flush_tlb_one(page113);
++	
++	/* Temporary PML4[0] */
++	page111[0] = pml4[0];
++	/* Temporary PDPT[0] */
++	page111[4] = pml3[0] & 0xFFFFFFFFFFFFFE19; /* reserved bits must be zero */
++
++	/* Call V86 */
++	stk = (unsigned int *)((char *)ctrl + call_110() - 0x00111000);
++
++	/* Restore page table values */
++	pml1[0x110] = p110;
++	__flush_tlb_one(page110);
++	pml1[0x111] = p111;
++	__flush_tlb_one(page111);
++	pml1[0x112] = p112;
++	__flush_tlb_one(page112);
++	pml1[0x113] = p113;
++	__flush_tlb_one(page113);
++
++	/* This is a bug in monitor or #MC in page 110 */
++	if (stk != (unsigned int *)&ctrl[VM86CTL_USER_STACK_BOT_OFFSET]) {
++	   /* Trapped not in V86 */
++	    printk("Trap caught not in V86 mode\n");
++	    printk("Stack dump:\n");
++	    for (i = 0; i < 50; i++) {
++		printk("STACK[%d] = 0x%08x\n", i, stk[i]);
++	    }
++	   return -1;
++	}
++
++	trapno = stk[8];
++
++	if (trapno == 2) {
++	    __asm __volatile("int $2\n");
++	    goto re_enter;
++	}
++
++	if (ctrl[VM86CTL_PENDING_NMI_OFFSET]) {
++	    __asm __volatile("int $2\n");
++	}
++	
++	if (trapno == 13) {
++	    ecode = stk[9];
++	    if (ecode & 1) {
++		/* External interrupt.
++		 Let kernel handle interrupt simply executing 
++		 int <intno> instruction
++		*/
++		intno = ecode >> 3;
++		if (ecode & 2) {
++		    unsigned char *inth;
++		    if (intno < 0x20) {
++			trapno = intno;
++		    }
++		    else {
++			inth = (unsigned char *)&ctrl[VM86CTL_INTXX_OFFSET];
++			inth[1] = intno;
++			call_int(inth);
++			goto re_enter;
++		    }
++		}
++		else {
++		  /* Can't determine interrupt vector. This should never occur. */
++		  printk("VM86: External interrupt detected but vector cannot be determined\n");
++		  return -1;
++		}
++	    }
++	    else if (ecode & 2) {
++	       trapno = ecode >> 3;
++	    }
++	}
++	
++	if (trapno == 2) {
++	    __asm __volatile("int $2\n");
++	    goto re_enter;
++	}
++	
++	__asm __volatile("sti" : :);
++
++	return trapno;
++}
++
++
++#if 0
++static void vm86_dump_state(struct kernel_vm86_struct *info)
++{
++   unsigned char __user *p;
++   unsigned char data[10];
++   int i;
++   printk("VM86 state dump:\n");
++   printk("EAX: %08X ",info->regs.eax);
++   printk("EBX: %08X ",info->regs.ebx);
++   printk("ECX: %08X ",info->regs.ecx);
++   printk("EDX: %08X\n",info->regs.edx);
++   printk("ESI: %08X ",info->regs.esi);
++   printk("EDI: %08X ",info->regs.edi);
++   printk("EBP: %08X ",info->regs.ebp);
++   printk("ESP: %08X\n",info->regs.esp);
++   printk("EIP: %08X ",info->regs.eip);
++   printk("EFLAGS: %08X\n",info->regs.eflags);
++   printk("CS: %04X ",info->regs.cs);
++   printk("SS: %04X ",info->regs.ss);
++   printk("DS: %04X ",info->regs.ds);
++   printk("ES: %04X ",info->regs.es);
++   printk("FS: %04X ",info->regs.fs);
++   printk("GS: %04X\n",info->regs.gs);
++   p = (unsigned char *)(unsigned long)((info->regs.cs << 4) + (info->regs.eip & 0xFFFF) - 5);
++   if (!copy_from_user(data, p, 15)) {
++     printk("Code: ");
++     for (i = 0; i < 15; i++) {
++       printk("%02x ", data[i]);
++     }
++    printk("\n");
++   }
++   p = (unsigned char *)(unsigned long)((info->regs.ss << 4) + (info->regs.esp & 0xFFFF) - 5);
++   if (!copy_from_user(data, p, 15)) {
++     printk("Stack: ");
++     for (i = 0; i < 15; i++) {
++       printk("%02x ", data[i]);
++     }
++    printk("\n");   
++   }
++}
++
++#endif
++
++static void mark_screen_rdonly(struct mm_struct *mm)
++{
++	pgd_t *pgd;
++	pud_t *pud;
++	pmd_t *pmd;
++	pte_t *pte;
++	spinlock_t *ptl;
++	int i;
++
++	pgd = pgd_offset(mm, 0xA0000UL);
++	if (pgd_none_or_clear_bad(pgd))
++		goto out;
++	pud = pud_offset(pgd, 0xA0000UL);
++	if (pud_none_or_clear_bad(pud))
++		goto out;
++	pmd = pmd_offset(pud, 0xA0000UL);
++	if (pmd_none_or_clear_bad(pmd))
++		goto out;
++	pte = pte_offset_map_lock(mm, pmd, 0xA0000UL, &ptl);
++	for (i = 0; i < 32; i++) {
++		if (pte_present(*pte))
++			set_pte(pte, pte_wrprotect(*pte));
++		pte++;
++	}
++	pte_unmap_unlock(pte, ptl);
++out:
++	flush_tlb();
++}
++
++static int do_vm86_irq_handling(int subfunction, int irqnumber);
++static int do_sys_vm86(unsigned long *ctrl);
++
++/* vm86_old() system call is not supported */
++
++asmlinkage int sys_vm86_old(struct vm86_struct __user *v86)
++{ 
++	return -ENOSYS;
++}
++
++/* vm86() system call */
++
++asmlinkage int sys_vm86(unsigned int fn, struct vm86plus_struct __user *v86)
++{ 
++	struct task_struct *me = current;
++	struct thread_struct *t = &me->thread;
++	unsigned long *ctrl;
++	struct kernel_vm86_struct *info;
++	int tmp;
++	int res;
++
++	if (!vm86_64_enabled)
++	    return -ENOSYS;
++	
++	if (!t->vm86_control_ptr) {
++	    t->vm86_control_ptr = vm86_control_alloc();
++	    if (!t->vm86_control_ptr)
++		return -ENOMEM;
++	    t->io_bitmap_max = 0;
++	    set_thread_flag(TIF_IO_BITMAP);
++	}
++
++	ctrl = t->vm86_control_ptr;
++
++	if (!ctrl[VM86CTL_LOCAL_ENABLE_OFFSET])
++	    return -ENOSYS;
++
++	info = KVM86I(ctrl);
++	
++	switch (fn) {
++		case VM86_REQUEST_IRQ:
++		case VM86_FREE_IRQ:
++		case VM86_GET_IRQ_BITS:
++		case VM86_GET_AND_RESET_IRQ:
++			return do_vm86_irq_handling((int)fn, (int)(unsigned long)v86);
++			
++		case VM86_PLUS_INSTALL_CHECK:
++			/* NOTE: on old vm86 stuff this will return the error
++			   from access_ok(), because the subfunction is
++			   interpreted as (invalid) address to vm86_struct.
++			   So the installation check works.
++			 */
++			 return 0;
++	}
++
++	/* we come here only for functions VM86_ENTER, VM86_ENTER_NO_BYPASS */
++
++	tmp  = copy_from_user(&info->regs, &v86->regs, 
++	    (char *)&info->regs.cr2 - (char *)&info->regs);
++	tmp += copy_from_user(&info->regs.eip, &v86->regs.eip,
++		(char *)&info->regs + sizeof(info->regs) - (char *)&info->regs.eip);
++	tmp += copy_from_user(&info->flags, &v86->flags,
++		(char *)info + sizeof(*info) - (char *)&info->flags);
++
++	if (tmp)
++	    return -EFAULT;
++
++	res = do_sys_vm86(ctrl);
++
++	if (res >= 0) {
++
++	    if (VMEFLAG)
++		set_flags(VEFLAGS, info->regs.eflags, VIF_MASK);
++	    set_flags(info->regs.eflags, VEFLAGS, VIF_MASK | VEFMASK);
++
++	    tmp  = copy_to_user(&v86->regs, &info->regs,
++    		    (char *)&info->regs.cr2 - (char *)&info->regs);
++	    tmp += copy_to_user(&v86->regs.eip, &info->regs.eip,
++		(char *)&info->regs + sizeof(info->regs) - (char *)&info->regs.eip);
++	    tmp += copy_to_user(&v86->screen_bitmap, &info->screen_bitmap,
++		sizeof(info->screen_bitmap));
++		
++	    if (tmp)
++		return -EFAULT;
++	}
++	return res;
++} 
++
++static int handle_vm86_fault(unsigned long *ctrl);
++void math_state_restore(void);
++static int do_int(unsigned long *ctrl, int i, unsigned char __user * ssp, unsigned short sp);
++
++
++/* Redirect trap to V86 vector */
++
++static int vm86_trap(int trapno,  unsigned long  *ctrl)
++{
++	int res;
++	struct kernel_vm86_regs *regs = KVM86R(ctrl);
++	res = do_int(ctrl, trapno, (unsigned char __user *) (unsigned long)(regs->ss << 4),
++	    SP(regs));
++	if (res >=0 )
++	    return res;
++	return -1;
++}
++
++#define VM86_TRAP_INTERNAL(trapno, info) \
++    do { \
++	int res; \
++	if ((res = vm86_trap(trapno, info)) >= 0) \
++	    return res; \
++	continue; \
++    } while(0);
++
++#define VM86_TRAP_SIGNAL_INFO(trapno, errcode, info, sig, sigcode, addr) \
++    do { \
++	siginfo.si_code = sigcode;\
++	siginfo.si_signo = sig;\
++	siginfo.si_errno = 0; \
++	siginfo.si_addr = addr; \
++	current->thread.error_code = errcode; \
++	current->thread.trap_no = trapno; \
++	force_sig_info(sig, &siginfo, current); \
++	return VM86_SIGNAL; \
++    } while(0);
++    
++static void vm86_coprocessor_error(unsigned long rip)
++{
++	struct task_struct * task;
++	siginfo_t info;
++	unsigned short cwd, swd;
++
++	/*
++	 * Save the info for the exception handler and clear the error.
++	 */
++	task = current;
++	save_init_fpu(task);
++	task->thread.trap_no = 16;
++	task->thread.error_code = 0;
++	info.si_signo = SIGFPE;
++	info.si_errno = 0;
++	info.si_code = __SI_FAULT;
++	info.si_addr = (void *)rip;
++	/*
++	 * (~cwd & swd) will mask out exceptions that are not set to unmasked
++	 * status.  0x3f is the exception bits in these regs, 0x200 is the
++	 * C1 reg you need in case of a stack fault, 0x040 is the stack
++	 * fault bit.  We should only be taking one exception at a time,
++	 * so if this combination doesn't produce any single exception,
++	 * then we have a bad program that isn't synchronizing its FPU usage
++	 * and it will suffer the consequences since we won't be able to
++	 * fully reproduce the context of the exception
++	 */
++	cwd = get_fpu_cwd(task);
++	swd = get_fpu_swd(task);
++	switch (swd & ~cwd & 0x3f) {
++		case 0x000:
++		default:
++			break;
++		case 0x001: /* Invalid Op */
++			/*
++			 * swd & 0x240 == 0x040: Stack Underflow
++			 * swd & 0x240 == 0x240: Stack Overflow
++			 * User must clear the SF bit (0x40) if set
++			 */
++			info.si_code = FPE_FLTINV;
++			break;
++		case 0x002: /* Denormalize */
++		case 0x010: /* Underflow */
++			info.si_code = FPE_FLTUND;
++			break;
++		case 0x004: /* Zero Divide */
++			info.si_code = FPE_FLTDIV;
++			break;
++		case 0x008: /* Overflow */
++			info.si_code = FPE_FLTOVF;
++			break;
++		case 0x020: /* Precision */
++			info.si_code = FPE_FLTRES;
++			break;
++	}
++	force_sig_info(SIGFPE, &info, task);
++}
++
++
++static void vm86_simd_coprocessor_error(unsigned long rip)
++{
++	struct task_struct * task;
++	siginfo_t info;
++	unsigned short mxcsr;
++
++	/*
++	 * Save the info for the exception handler and clear the error.
++	 */
++	task = current;
++	save_init_fpu(task);
++	task->thread.trap_no = 19;
++	task->thread.error_code = 0;
++	info.si_signo = SIGFPE;
++	info.si_errno = 0;
++	info.si_code = __SI_FAULT;
++	info.si_addr = (void *)rip;
++	/*
++	 * The SIMD FPU exceptions are handled a little differently, as there
++	 * is only a single status/control register.  Thus, to determine which
++	 * unmasked exception was caught we must mask the exception mask bits
++	 * at 0x1f80, and then use these to mask the exception bits at 0x3f.
++	 */
++	mxcsr = get_fpu_mxcsr(task);
++	switch (~((mxcsr & 0x1f80) >> 7) & (mxcsr & 0x3f)) {
++		case 0x000:
++		default:
++			break;
++		case 0x001: /* Invalid Op */
++			info.si_code = FPE_FLTINV;
++			break;
++		case 0x002: /* Denormalize */
++		case 0x010: /* Underflow */
++			info.si_code = FPE_FLTUND;
++			break;
++		case 0x004: /* Zero Divide */
++			info.si_code = FPE_FLTDIV;
++			break;
++		case 0x008: /* Overflow */
++			info.si_code = FPE_FLTOVF;
++			break;
++		case 0x020: /* Precision */
++			info.si_code = FPE_FLTRES;
++			break;
++	}
++	force_sig_info(SIGFPE, &info, task);
++}
++
++static int do_sys_vm86(unsigned long *ctrl)
++{
++	int trapno;
++	int res;
++	unsigned char c;
++	unsigned int bit;
++	struct kernel_vm86_regs *regs = KVM86R(ctrl);
++	siginfo_t siginfo;
++	struct kernel_vm86_struct *info = KVM86I(ctrl);
++	unsigned long *tmp;
++
++	/* Don't trust user in EFLAGS settings */
++ 	VEFLAGS = info->regs.eflags;
++	info->regs.eflags &= SAFE_MASK;
++	info->regs.eflags |= VM_MASK | IF_MASK | 2;
++
++	switch (info->cpu_type) {
++		case CPU_286:
++			VEFMASK = 0;
++			break;
++		case CPU_386:
++			VEFMASK = NT_MASK | IOPL_MASK;
++			break;
++		case CPU_486:
++			VEFMASK = AC_MASK | NT_MASK | IOPL_MASK;
++			break;
++		default:
++			VEFMASK = ID_MASK | AC_MASK | NT_MASK | IOPL_MASK;
++			break;
++	}
++
++	if (info->flags & VM86_SCREEN_BITMAP)
++		mark_screen_rdonly(current->mm);
++
++	VMEFLAG = 0;
++
++	if (info->cpu_type == CPU_286 ||
++	    info->vm86plus.force_return_for_pic ||
++	    (VEFLAGS & (VIP_MASK | VIF_MASK)) == (VIP_MASK | VIF_MASK))
++		goto skip_vme;
++		
++	VMEFLAG = X86_CR4_VME;
++
++skip_vme:
++	tmp = (unsigned long *)&info->int_revectored;
++	IRB[0] = tmp[0];
++	IRB[1] = tmp[1];
++	IRB[2] = tmp[2];
++	IRB[3] = tmp[3];
++	set_bit(0x21, (void *)IRB);
++
++	while (1)
++	{
++	    if (VMEFLAG) {
++    		set_flags(info->regs.eflags, VEFLAGS, VIF_MASK | VIP_MASK);
++		if ((VEFLAGS & (VIP_MASK | VIF_MASK)) == (VIP_MASK | VIF_MASK))
++		    return VM86_STI;
++	    }
++	
++	    trapno = enter_vm86(ctrl);
++	    
++	    if (VMEFLAG)
++    		set_flags(VEFLAGS, info->regs.eflags, VIF_MASK);
++	    
++	    switch (trapno) {
++		case -2:	/* Signal is pending */
++		    return VM86_SIGNAL;
++
++		case 0:		/* Division by zero */
++		    VM86_TRAP_SIGNAL_INFO(trapno, 0, info, SIGFPE, FPE_INTDIV, 
++			(unsigned char __user *)(((unsigned long)(regs->cs) << 4) | ((unsigned long)(regs->eip))));
++
++		case 4:		/* Overflow */
++		case 5:		/* Bound range */
++		    VM86_TRAP_INTERNAL(trapno, ctrl);
++
++		case 1:		/* Single step */
++		    return VM86_TRAP + (1 << 8);
++
++		case 3:		/* Breakpoint */
++		    return VM86_TRAP + (3 << 8);
++
++		case 6:		/* Invalid opcode */
++		    VM86_TRAP_SIGNAL_INFO(trapno, 0, info, SIGILL, ILL_ILLOPN, 
++			(unsigned char __user *)(((unsigned long)(regs->cs) << 4) | ((unsigned long)(regs->eip))));
++		    
++		case 7:		/* Device not available */
++		    math_state_restore();
++		    continue;
++		    
++		case 13:	/* General protection fault */
++		    res = handle_vm86_fault(ctrl);
++		    if (res >= 0)
++			return res;
++		    continue;
++    
++		case 14:	/* Page fault */
++		    /* Hit screen? */
++		    bit = (info->regs.cr2 - 0xA0000) >> PAGE_SHIFT;
++		    if (bit < 32)
++			info->screen_bitmap |= (1 << bit);
++		    
++
++		    if (!(info->regs.error_code & 1)) {
++			/* Page not present */
++			if (copy_from_user(&c,
++			    (void *)(unsigned long)info->regs.cr2, 1) != 0)
++		    		goto segfault;
++			continue;
++		    }
++		    else {
++			if (info->regs.error_code & 2) {
++			  /* Write access denied, it may be cow. 
++			     Simply read one byte from fault address and write it back.
++			   */
++			    if (copy_from_user(&c,
++				(void *)(unsigned long)info->regs.cr2, 1) != 0)
++		    		    goto segfault;
++
++			    if (copy_to_user((void *)(unsigned long)info->regs.cr2,
++				&c, 1) != 0)
++		    		    goto segfault;
++			    continue;
++			}
++			else 
++			    goto segfault;
++		    }
++		    break;
++
++		case 16:	/* Math fault */
++		    vm86_coprocessor_error(((unsigned long)(regs->cs) << 4) | (unsigned long)(regs->eip));
++		    return VM86_SIGNAL;
++
++		case 17:	/* Alignment violation */
++		    VM86_TRAP_SIGNAL_INFO(trapno, 0, info, SIGBUS, BUS_ADRALN,  0);
++
++		case 19:	/* SSE math fault */
++		    vm86_simd_coprocessor_error(((unsigned long)(regs->cs) << 4) | (unsigned long)(regs->eip));
++		    return VM86_SIGNAL;
++		
++		case -1:	/* Unrecoverable monitor error */
++		case 8:		/* Double error */
++		case 9:		/* XXX (Coprocessor segment overrun; unused on x86-64) */
++		case 10:	/* Invalid TSS */
++		case 11:	/* Segment not present */
++		case 12:	/* Stack fault */
++		case 18:	/* Machine check error */
++		default:
++		    VM86_TRAP_SIGNAL_INFO(trapno, 0, info, SIGBUS, BUS_OBJERR,  0);
++	    }
++	}
++
++
++segfault:  /* SIGSEGV on page fault */
++    current->thread.cr2 = info->regs.cr2;
++    current->thread.error_code = info->regs.error_code;
++    current->thread.trap_no = 14;
++    siginfo.si_code = SEGV_ACCERR;
++    siginfo.si_signo = SIGSEGV;
++    siginfo.si_errno = 0;
++    siginfo.si_addr = (void __user *)(unsigned long)info->regs.cr2;
++    force_sig_info(SIGSEGV, &siginfo, current);
++    return VM86_SIGNAL;
++}
++
++#define set_IF(ctrl)	\
++	do { \
++	    VEFLAGS |= VIF_MASK;\
++	    if (VMEFLAG) \
++		KVM86R(ctrl)->eflags |= VIF_MASK; \
++	    if (VEFLAGS & VIP_MASK) \
++		return VM86_STI; \
++	} while(0);
++
++#define clear_IF(ctrl)	\
++    do { \
++	VEFLAGS &= ~VIF_MASK; \
++	if (VMEFLAG) \
++	    KVM86R(ctrl)->eflags &= ~VIF_MASK; \
++    } while (0);
++    
++#define clear_TF(ctrl)  KVM86R(ctrl)->eflags &= ~TF_MASK;
++#define clear_AC(ctrl)  KVM86R(ctrl)->eflags &= ~AC_MASK;
++
++/* It is correct to call set_IF(regs) from the set_vflags_*
++ * functions. However someone forgot to call clear_IF(regs)
++ * in the opposite case.
++ * After the command sequence CLI PUSHF STI POPF you should
++ * end up with interrups disabled, but you ended up with
++ * interrupts enabled.
++ *  ( I was testing my own changes, but the only bug I
++ *    could find was in a function I had not changed. )
++ * [KD]
++ */
++
++#define set_vflags_xxx(vxflags, xflags, ctrl) \
++	do {\
++	    set_flags(vxflags, xflags, VEFMASK); \
++	    set_flags(KVM86R(ctrl)->eflags, xflags, SAFE_MASK); \
++	    if (xflags & IF_MASK) \
++		{ set_IF(ctrl); } \
++	    else \
++		{ clear_IF(ctrl); }\
++	} while (0);
++	    
++#define set_vflags_long(eflags, ctrl) set_vflags_xxx(VEFLAGS, eflags, ctrl)
++#define set_vflags_short(flags, ctrl) set_vflags_xxx(VFLAGS, ((unsigned short)(flags)), ctrl)
++
++static inline unsigned int get_vflags(unsigned long *ctrl)
++{
++	unsigned int flags = KVM86R(ctrl)->eflags & RETURN_MASK;
++
++	if (VEFLAGS & VIF_MASK)
++		flags |= IF_MASK;
++	flags |= IOPL_MASK;
++	return flags | (VEFLAGS & VEFMASK);
++}
++
++
++static inline int is_revectored(int nr, struct revectored_struct * bitmap)
++{
++	__asm__ __volatile__("btl %2,%1\n\tsbbl %0,%0"
++		:"=r" (nr)
++		:"m" (*bitmap),"r" (nr));
++	return nr;
++}
++
++#define val_byte(val, n) (((__u8 *)&val)[n])
++
++#define pushb(base, ptr, val, err_label) \
++	do { \
++		__u8 __val = val; \
++		ptr--; \
++		if (put_user(__val, base + ptr) < 0) \
++			goto err_label; \
++	} while(0)
++
++#define pushw(base, ptr, val, err_label) \
++	do { \
++		__u16 __val = val; \
++		ptr--; \
++		if (put_user(val_byte(__val, 1), base + ptr) < 0) \
++			goto err_label; \
++		ptr--; \
++		if (put_user(val_byte(__val, 0), base + ptr) < 0) \
++			goto err_label; \
++	} while(0)
++
++#define pushl(base, ptr, val, err_label) \
++	do { \
++		__u32 __val = val; \
++		ptr--; \
++		if (put_user(val_byte(__val, 3), base + ptr) < 0) \
++			goto err_label; \
++		ptr--; \
++		if (put_user(val_byte(__val, 2), base + ptr) < 0) \
++			goto err_label; \
++		ptr--; \
++		if (put_user(val_byte(__val, 1), base + ptr) < 0) \
++			goto err_label; \
++		ptr--; \
++		if (put_user(val_byte(__val, 0), base + ptr) < 0) \
++			goto err_label; \
++	} while(0)
++
++#define popb(base, ptr, err_label) \
++	({ \
++		__u8 __res; \
++		if (get_user(__res, base + ptr) < 0) \
++			goto err_label; \
++		ptr++; \
++		__res; \
++	})
++
++#define popw(base, ptr, err_label) \
++	({ \
++		__u16 __res; \
++		if (get_user(val_byte(__res, 0), base + ptr) < 0) \
++			goto err_label; \
++		ptr++; \
++		if (get_user(val_byte(__res, 1), base + ptr) < 0) \
++			goto err_label; \
++		ptr++; \
++		__res; \
++	})
++
++#define popl(base, ptr, err_label) \
++	({ \
++		__u32 __res; \
++		if (get_user(val_byte(__res, 0), base + ptr) < 0) \
++			goto err_label; \
++		ptr++; \
++		if (get_user(val_byte(__res, 1), base + ptr) < 0) \
++			goto err_label; \
++		ptr++; \
++		if (get_user(val_byte(__res, 2), base + ptr) < 0) \
++			goto err_label; \
++		ptr++; \
++		if (get_user(val_byte(__res, 3), base + ptr) < 0) \
++			goto err_label; \
++		ptr++; \
++		__res; \
++	})
++
++/* There are so many possible reasons for this function to return
++ * VM86_INTx, so adding another doesn't bother me. We can expect
++ * userspace programs to be able to handle it. (Getting a problem
++ * in userspace is always better than an Oops anyway.) [KD]
++ */
++static int do_int(unsigned long *ctrl, int i,
++    unsigned char __user * ssp, unsigned short sp)
++{
++	unsigned int __user *intr_ptr;
++	unsigned int segoffs;
++	struct kernel_vm86_regs *regs = KVM86R(ctrl);
++	struct kernel_vm86_struct *kvm86 = KVM86S(ctrl);
++
++	if (regs->cs == BIOSSEG)
++		goto cannot_handle;
++
++/*	if (is_revectored(i, &kvm86->int_revectored))
++		goto cannot_handle;*/
++	if (is_revectored(i, (struct revectored_struct *)IRB))
++		goto cannot_handle;
++	if (i == 0x21 && is_revectored(AH(regs),&kvm86->int21_revectored))
++		goto cannot_handle;
++	intr_ptr = (unsigned int __user *) (unsigned long)(i << 2);
++	if (get_user(segoffs, intr_ptr))
++		goto cannot_handle;
++
++	if ((segoffs >> 16) == BIOSSEG)
++		goto cannot_handle;
++
++	pushw(ssp, sp, get_vflags(ctrl), cannot_handle);
++	pushw(ssp, sp, regs->cs, cannot_handle);
++	pushw(ssp, sp, IP(regs), cannot_handle);
++	regs->cs = segoffs >> 16;
++	SP(regs) -= 6;
++	IP(regs) = segoffs & 0xffff;
++	clear_TF(ctrl);
++	clear_IF(ctrl);
++	clear_AC(ctrl);
++	return -1;
++cannot_handle:
++	return VM86_INTx + (i << 8);
++}
++
++
++int handle_vm86_fault(unsigned long *ctrl)
++{
++	unsigned char opcode;
++	unsigned char __user *csp;
++	unsigned char __user *ssp;
++	unsigned short ip, sp, orig_flags;
++	int data32, pref_done;
++	struct kernel_vm86_regs *regs = KVM86R(ctrl);
++
++#define CHECK_IF_IN_TRAP \
++	if (VMPI(ctrl).vm86dbg_active && VMPI(ctrl).vm86dbg_TFpendig) \
++		newflags |= TF_MASK
++		
++#define VM86_FAULT_RETURN do { \
++	if (VMPI(ctrl).force_return_for_pic  && (VEFLAGS & (IF_MASK | VIF_MASK))) \
++		return VM86_PICRETURN; \
++	if (orig_flags & TF_MASK) \
++		return VM86_TRAP + (1 << 8); \
++	 return -1; } while (0)
++
++	orig_flags = *(unsigned short *)&regs->eflags;
++
++	csp = (unsigned char __user *)(unsigned long)(regs->cs << 4);
++	ssp = (unsigned char __user *)(unsigned long)(regs->ss << 4);
++	sp = SP(regs);
++	ip = IP(regs);
++
++	data32 = 0;
++	pref_done = 0;
++	do {
++		switch (opcode = popb(csp, ip, simulate_sigsegv)) {
++			case 0x66:      /* 32-bit data */     data32=1; break;
++			case 0x67:      /* 32-bit address */  break;
++			case 0x2e:      /* CS */              break;
++			case 0x3e:      /* DS */              break;
++			case 0x26:      /* ES */              break;
++			case 0x36:      /* SS */              break;
++			case 0x65:      /* GS */              break;
++			case 0x64:      /* FS */              break;
++			case 0xf2:      /* repnz */       break;
++			case 0xf3:      /* rep */             break;
++			default: pref_done = 1;
++		}
++	} while (!pref_done);
++
++	switch (opcode) {
++
++	/* pushf */
++	case 0x9c:
++		if (data32) {
++			pushl(ssp, sp, get_vflags(ctrl), simulate_sigsegv);
++			SP(regs) -= 4;
++		} else {
++			pushw(ssp, sp, get_vflags(ctrl), simulate_sigsegv);
++			SP(regs) -= 2;
++		}
++		IP(regs) = ip;
++		VM86_FAULT_RETURN;
++
++	/* popf */
++	case 0x9d:
++		{
++		    unsigned int newflags;
++		    if (data32) {
++			    newflags = popl(ssp, sp, simulate_sigsegv);
++			    SP(regs) += 4;
++		    } else {
++			    newflags = popw(ssp, sp, simulate_sigsegv);
++			    SP(regs) += 2;
++		    }
++		    IP(regs) = ip;
++		    CHECK_IF_IN_TRAP;
++		    if (data32) {
++			    set_vflags_long(newflags, ctrl);
++		    } else {
++			    set_vflags_short(newflags, ctrl);
++		    }
++		    VM86_FAULT_RETURN;
++		}
++
++	/* int xx */
++	case 0xcd: {
++		int intno = popb(csp, ip, simulate_sigsegv);
++		IP(regs) = ip;
++		if (VMPI(ctrl).vm86dbg_active) {
++			if ( (1 << (intno & 7)) & VMPI(ctrl).vm86dbg_intxxtab[intno >> 3] )
++				return VM86_INTx + (intno << 8);
++		}
++		return do_int(ctrl, intno, ssp, sp);
++	}
++
++	/* iret */
++	case 0xcf:
++		{
++		    unsigned int newip;
++		    unsigned int newcs;
++		    unsigned int newflags;
++		    if (data32) {
++			    newip = popl(ssp, sp, simulate_sigsegv);
++			    newcs = popl(ssp, sp, simulate_sigsegv);
++			    newflags = popl(ssp, sp, simulate_sigsegv);
++			    SP(regs) += 12;
++		    } else {
++			    newip = popw(ssp, sp, simulate_sigsegv);
++			    newcs = popw(ssp, sp, simulate_sigsegv);
++			    newflags = popw(ssp, sp, simulate_sigsegv);
++			    SP(regs) += 6;
++		    }
++		    IP(regs) = newip;
++		    regs->cs = newcs;
++		    CHECK_IF_IN_TRAP;
++		    if (data32) {
++			set_vflags_long(newflags, ctrl);
++		    } else {
++			set_vflags_short(newflags, ctrl);
++		    }
++		    VM86_FAULT_RETURN;
++		}
++	/* cli */
++	case 0xfa:
++		IP(regs) = ip;
++		clear_IF(ctrl);
++		VM86_FAULT_RETURN;
++
++	/* sti */
++	/*
++	 * Damn. This is incorrect: the 'sti' instruction should actually
++	 * enable interrupts after the /next/ instruction. Not good.
++	 *
++	 * Probably needs some horsing around with the TF flag. Aiee..
++	 */
++	case 0xfb:
++		IP(regs) = ip;
++		set_IF(ctrl);
++		VM86_FAULT_RETURN;
++
++	default:
++		return VM86_UNKNOWN;
++	}
++
++	return -1;
++
++simulate_sigsegv:
++	/* FIXME: After a long discussion with Stas we finally
++	 *        agreed, that this is wrong. Here we should
++	 *        really send a SIGSEGV to the user program.
++	 *        But how do we create the correct context? We
++	 *        are inside a general protection fault handler
++	 *        and has just returned from a page fault handler.
++	 *        The correct context for the signal handler
++	 *        should be a mixture of the two, but how do we
++	 *        get the information? [KD]
++	 */
++	return VM86_UNKNOWN;
++}
++
++/* ---------------- vm86 special IRQ passing stuff ----------------- */
++
++#define VM86_IRQNAME		"vm86irq"
++
++static struct vm86_irqs {
++	struct task_struct *tsk;
++	int sig;
++} vm86_irqs[16];
++
++static DEFINE_SPINLOCK(irqbits_lock);
++static int irqbits;
++
++#define ALLOWED_SIGS ( 1 /* 0 = don't send a signal */ \
++	| (1 << SIGUSR1) | (1 << SIGUSR2) | (1 << SIGIO)  | (1 << SIGURG) \
++	| (1 << SIGUNUSED) )
++	
++static irqreturn_t irq_handler(int intno, void *dev_id)
++{
++	int irq_bit;
++	unsigned long flags;
++
++	spin_lock_irqsave(&irqbits_lock, flags);	
++	irq_bit = 1 << intno;
++	if ((irqbits & irq_bit) || ! vm86_irqs[intno].tsk)
++		goto out;
++	irqbits |= irq_bit;
++	if (vm86_irqs[intno].sig)
++		send_sig(vm86_irqs[intno].sig, vm86_irqs[intno].tsk, 1);
++	/*
++	 * IRQ will be re-enabled when user asks for the irq (whether
++	 * polling or as a result of the signal)
++	 */
++	disable_irq_nosync(intno);
++	spin_unlock_irqrestore(&irqbits_lock, flags);
++	return IRQ_HANDLED;
++
++out:
++	spin_unlock_irqrestore(&irqbits_lock, flags);	
++	return IRQ_NONE;
++}
++
++static inline void free_vm86_irq(int irqnumber)
++{
++	unsigned long flags;
++
++	free_irq(irqnumber, NULL);
++	vm86_irqs[irqnumber].tsk = NULL;
++
++	spin_lock_irqsave(&irqbits_lock, flags);	
++	irqbits &= ~(1 << irqnumber);
++	spin_unlock_irqrestore(&irqbits_lock, flags);	
++}
++
++void release_vm86_irqs(struct task_struct *task)
++{
++	int i;
++	for (i = FIRST_VM86_IRQ ; i <= LAST_VM86_IRQ; i++)
++	    if (vm86_irqs[i].tsk == task)
++		free_vm86_irq(i);
++}
++
++static inline int get_and_reset_irq(int irqnumber)
++{
++	int bit;
++	unsigned long flags;
++	int ret = 0;
++	
++	if (invalid_vm86_irq(irqnumber)) return 0;
++	if (vm86_irqs[irqnumber].tsk != current) return 0;
++	spin_lock_irqsave(&irqbits_lock, flags);	
++	bit = irqbits & (1 << irqnumber);
++	irqbits &= ~bit;
++	if (bit) {
++		enable_irq(irqnumber);
++		ret = 1;
++	}
++
++	spin_unlock_irqrestore(&irqbits_lock, flags);	
++	return ret;
++}
++
++
++static int do_vm86_irq_handling(int subfunction, int irqnumber)
++{
++	int ret;
++	switch (subfunction) {
++		case VM86_GET_AND_RESET_IRQ: {
++			return get_and_reset_irq(irqnumber);
++		}
++		case VM86_GET_IRQ_BITS: {
++			return irqbits;
++		}
++		case VM86_REQUEST_IRQ: {
++			int sig = irqnumber >> 8;
++			int irq = irqnumber & 255;
++			if (!capable(CAP_SYS_ADMIN)) return -EPERM;
++			if (!((1 << sig) & ALLOWED_SIGS)) return -EPERM;
++			if (invalid_vm86_irq(irq)) return -EPERM;
++			if (vm86_irqs[irq].tsk) return -EPERM;
++			ret = request_irq(irq, &irq_handler, 0, VM86_IRQNAME, NULL);
++			if (ret) return ret;
++			vm86_irqs[irq].sig = sig;
++			vm86_irqs[irq].tsk = current;
++			return irq;
++		}
++		case  VM86_FREE_IRQ: {
++			if (invalid_vm86_irq(irqnumber)) return -EPERM;
++			if (!vm86_irqs[irqnumber].tsk) return 0;
++			if (vm86_irqs[irqnumber].tsk != current) return -EPERM;
++			free_vm86_irq(irqnumber);
++			return 0;
++		}
++	}
++	return -EINVAL;
++}
++
++
++/* -------- Initialize V86 handlers and place entrycode into pfn 0x110 ------ */
++
++
++void __init vm86_init(void)
++{
++	extern char p110codestart[], p110codeend[]; 
++	extern char __ex32_de[], __ex32_df[], __ex32_ts[],
++		     __ex32_np[], __ex32_ss[], __ex32_gp[], __ex32_pf[];
++	extern char  __ex64_gp[]; 
++
++	char *page110;
++	unsigned long *dt;
++
++	if (request_resource(&iomem_resource, &vm86_gate_resource)) {
++	    printk(KERN_INFO "WARNING! Can't reserve pfn 0x110, disabling VM86\n");
++	    vm86_64_enabled = 0; 
++	    return;
++	} 
++
++	vm86_64_enabled = 1;
++
++	page110 = phys_to_virt(0x110000);
++	memset(page110, 0, PAGE_SIZE);
++	dt = (unsigned long *)page110; 
++
++/* 
++  There is temporary descriptor table at start of page 110.
++  We use one table for GDT/IDT32/IDT64 because they won't intercept.
++  Code/data descriptors are garbage for IDT and will cause #GP.
++  We need real 32-bit gate descriptors only for contributory exceptions. 
++  Benign exceptions and interrupts are handled by #GP. 
++  Only one 64-bit descriptor for #GP needed
++  because we have no long mode code causing any other contributory exception. 
++  Actually only NMI or #MC can cause #GP in 64-bit mode.
++  This descriptor spans slots for 0x1A/0x1B used as exceptions 
++  in legacy mode. Int 0x1B contains zeroes and not a problem (causes #GP),
++  int 0x1A contains valid descriptor with bad CS and will cause #GP 
++  with CS as an error code. It currently only can be caused by softint 
++  and thus not a problem too.
++  32-bit TSS descriptor located in page 111, which is private for process,
++  because processor modifies it (sets busy flag).
++*/	   
++	    
++#define ADDRTO110(xxx) ((xxx) - p110codestart + 0x00110100)
++#define SPLITADDR(xxx) (((ADDRTO110(xxx) & 0xFFFF0000) << 32) \
++	    | (ADDRTO110(xxx) & 0xFFFF))
++	dt[0] = 0x00008E0000080000 | SPLITADDR(__ex32_de);   /* #DE */
++	dt[1] = 0x00CF9A000000FFFF;  /* 32-bit code segment, #DB */
++	dt[2] = 0x0020980000000000;  /* 64-bit code segment, NMI */
++	dt[3] = 0x00CF92000000FFFF;  /* 32/64-bit data segment, #BP */
++	dt[8] = 0x00008E0000080000 | SPLITADDR(__ex32_df);   /* #DF */
++	dt[10] = 0x00008E0000080000 | SPLITADDR(__ex32_ts);  /* #TS */
++	dt[11] = 0x00008E0000080000 | SPLITADDR(__ex32_np);  /* #NP */
++	dt[12] = 0x00008E0000080000 | SPLITADDR(__ex32_ss);  /* #SS */
++	dt[13] = 0x00008E0000080000 | SPLITADDR(__ex32_gp);  /* #GP */
++	dt[14] = 0x00008E0000080000 | SPLITADDR(__ex32_pf);  /* #PF */
++	dt[26] = 0x00008E0000100000 | SPLITADDR(__ex64_gp);  /* 64-bit #GP */
++#undef SPLITADDR
++#undef ADDRTO110
++
++	memcpy(page110 + 0x100, p110codestart, p110codeend - p110codestart);
++
++	/* Page 110 code */
++	__asm __volatile(
++	/* Keep optimizer happy */
++	"jmp p110codeend\n"
++	"\t.globl p110codestart,p110codeend\n"
++"p110codestart:\n"
++	/* Save all registers we change to page 111 */
++	"\tpushfq\n"
++	"\tmovq %%rsp,0x00111008\n"
++	"\tmovq %%cr3,%%rax\n"
++	"\tmovq %%rax,0x00111010\n"
++	"\tmovq %%cr4,%%rax\n"
++	"\tmovq %%rax,0x00111068\n"
++	"\tmovw %%ss,0x00111090\n"
++	"\tmovw %%ds,0x00111070\n" 
++	"\tmovw %%es,0x00111078\n"
++	"\tmovw %%gs,0x00111088\n"
++	"\tmovw %%fs,0x00111080\n" 
++	"\txorq %%rcx,%%rcx\n"
++	"\tmovq %%rcx,0x001110D0\n"
++	"\tmovl $0xC0000100,%%ecx\n"
++	"\trdmsr\n"
++	"\tmovl %%eax,0x00111098\n"
++	"\tmovl %%edx,0x0011109C\n"
++	"\tmovl $0xC0000101,%%ecx\n"
++	"\trdmsr\n"
++	"\tmovl %%eax,0x001110A0\n"
++	"\tmovl %%edx,0x001110A4\n"
++	"\tstr 0x00111018\n"
++	"\tsidtq 0x00111056\n"
++	"\tsgdtq 0x00111046\n"
++	"\tmovl $0x0C0000080,%%ecx\n"
++	"\trdmsr\n"
++	"\tmovl %%eax,0x00111060\n"
++	"\tmovl %%edx,0x00111064\n" 
++
++	"\tlidtq (__idt32im - p110codestart + 0x00110100)\n"
++	"\tlgdtq (__gdt32im - p110codestart + 0x00110100)\n"
++	"\tmovw $0x18,%%bx\n"
++	"\tmovw %%bx,%%ss\n" 	/* SS must not be null in 32-bit mode */
++	"\tmovq $0x00113FF8,%%rsp\n"
++	"\tmovq 0x001110A8,%%rdi\n"
++	"\tmovq %%rdi,%%cr3\n"
++	"\tljmp *(__to32fptr - p110codestart + 0x00110100)\n"
++
++"__reach32:\n"
++	"\t.code32\n"
++	"\taddl $32,%%edi\n"	/* CR3 will point to legacy mode PDPT */
++	"\tmovl %%cr0,%%ebx\n"
++	"\tmovl %%ebx,%%esi\n"  /* CR0 with PG set */
++	"\tbtrl $31,%%ebx\n"    /* CR0 with PG reset */
++
++	/* Now we're ready to fly over the non-paged abyss */
++
++#ifdef CONFIG_SMP
++	/* Simplest semaphore: While flying over the abyss,
++	   page 110 is our small ark, and our stack will be also located on it. 
++	   All other CPUs must wait here until we have landed on the other shore. */
++"__vm86_syncwait:\n"
++	"\txorl %%eax,%%eax\n"
++	"\tmovl $0xbabadeda, %%edx\n"
++	"\tlock cmpxchgl %%edx,%%ss:0x00110FF8\n"
++	"\tjne __vm86_syncwait\n"
++#endif
++
++	/* 3, 2, 1... Launch! */
++	"\tmovl $0x00110FF8,%%esp\n"
++	/* set EFER to all zeroes: we don't need its features in V86 mode */	
++	"\txorl %%eax,%%eax\n"		
++	"\txorl %%edx,%%edx\n"
++	"\tmovl %%ebx,%%cr0\n"
++	"\tjmp __flush1\n"
++"__flush1:\n"
++	"\twrmsr\n"
++	"\tmovl %%edi,%%cr3\n"
++	"\tmovl %%esi,%%cr0\n"
++	"\tjmp __flush2\n"
++"__flush2:\n"
++	"\tmovl $0x00113FF8,%%esp\n"
++	/* Landed in the legacy mode  */
++
++#ifdef CONFIG_SMP
++	"\tmovl %%eax,%%ss:0x00110FF8\n" /* unlock semaphore */
++#endif
++
++	/* Set TR to 32-bit TSS */
++	"\tbtrl $9, %%ss:0x001110C4\n"  /* Clear busy-bit */
++	"\tmovw $0x10C0,%%ax\n"
++	"\tltr %%ax\n"
++
++	/* Enable VME, if needed */
++	"\tmovl %%cr4,%%eax\n"
++	"\torl %%ss:0x001110E8,%%eax\n"
++	"\tmovl %%eax,%%cr4\n"
++
++	/* Pop all V86 registers from stack in control structure */
++	"\tmovl $0x001138A0,%%esp\n"
++	"\tpushfl\n"
++	"\tbtrl $14,(%%esp)\n"
++	"\tpopfl\n"
++	"\tpopl %%ebx\n"
++	"\tpopl %%ecx\n"
++	"\tpopl %%edx\n"
++	"\tpopl %%esi\n"
++	"\tpopl %%edi\n"
++	"\tpopl %%ebp\n"
++	"\tpopl %%eax\n"
++	"\taddl $12,%%esp\n"	/* skip unneeded data */
++
++"__testnmi_vm86_entry:\n"
++	"\tcmpl $0, %%ss:0x001110D0\n"	/* hit by NMI? */
++	"\tjnz __skip_vm86_exec\n"
++"__finish_vm86_entry:\n"
++
++	"\tiret\n"		/* go to V86 */
++
++	/* We'll be here if we're hit by NMI while executing prepare code.
++	   We must return with nothing done and call normal handler.
++	*/	
++
++"__skip_vm86_exec:\n"
++	"\tpushl $0\n"
++	"\tpushl $2\n"
++
++	/* Common exception return, push registers back to 
++	   stack located in control structure and return to 64-bit */
++"__back_to_64:\n"
++	"\tsubl $4, %%esp\n"
++"__back_to_64_nodecesp:\n"
++	"\tpushl %%eax\n"
++	"\tpushl %%ebp\n"
++	"\tpushl %%edi\n"
++	"\tpushl %%esi\n"
++	"\tpushl %%edx\n"
++	"\tpushl %%ecx\n"
++	"\tpushl %%ebx\n"
++		
++	"\tmovl %%cr0,%%ebx\n"
++	"\tmovl %%ebx,%%esi\n"
++	"\tbtrl $31,%%ebx\n"
++	"\tmovl %%ss:0x001110A8,%%edi\n"
++
++#ifdef  CONFIG_SMP
++	/* Return semaphore */
++"__vm86_syncwait1:\n"
++	"\txorl %%eax,%%eax\n"
++	"\tmovl $0xbabadeda, %%edx\n"
++	"\tlock cmpxchgl %%edx,%%ss:0x00110FF8\n"
++	"\tjne __vm86_syncwait1\n"
++#endif
++
++	/* 3, 2, 1... Launch! */
++	"\tmovl %%esp,%%ebp\n"
++	"\tmovl $0x00110FF8,%%esp\n"
++	"\tmovl $0x0C0000080,%%ecx\n"
++	"\trdmsr\n"
++	"\tbtsl $8,%%eax\n"	
++	"\tmovl %%ebx,%%cr0\n"
++	"\tjmp __flush3\n"
++"__flush3:\n\t"
++	"\twrmsr\n"
++	"\tmovl %%edi,%%cr3\n"
++	"\tmovl %%esi,%%cr0\n"
++	"\tjmp __flush4\n"
++"__flush4:\n"
++	"\tmovl %%ebp,%%esp\n"
++	/* Landed in the long mode */
++
++#ifdef CONFIG_SMP
++	"\tmovl $0,%%ss:0x00110FF8\n"	/* unlock semaphore */
++#endif
++
++	"\t.byte 0x0ea\n"		/* JMP FAR 0010:__main_return */
++	"\t.long (__main_return - p110codestart + 0x00110100)\n"
++	"\t.word 0x10\n"
++	
++	/* Exception handlers */
++	"\t.globl __ex32_de,__ex32_df,__ex32_ts,__ex32_np,__ex32_ss,__ex32_gp,__ex32_pf\n"
++	/* On exception simply return to 64-bit. */
++"__ex32_de:\n"
++	"\tpushl $0\n"
++	"\tpushl $0\n"
++	"\tjmp __back_to_64\n"
++"__ex32_df:\n"
++	"\tpushl $8\n"
++	"\tjmp __back_to_64\n"
++"__ex32_ts:\n"
++	"\tpushl $10\n"
++	"\tjmp __back_to_64\n"
++"__ex32_np:\n"
++	"\tpushl $11\n"
++	"\tjmp __back_to_64\n"
++"__ex32_ss:\n"
++	"\tpushl $12\n"
++	"\tjmp __back_to_64\n"
++
++	/* #GP is the main working horse. 
++	   NMI is the special case: only set the flag, 
++	   return, and don't execute IRET until normal handler is called */
++"__ex32_gp:\n"
++	"\txchgl (%%esp),%%eax\n"
++	"\tpushl %%eax\n"
++	"\tandl $0x2,%%eax\n"
++	"\tcmpl $0x2,%%eax\n"
++	"\tjne __not_nmi32\n"
++	"\tmovb (%%esp),%%al\n"
++	"\tshrb $3,%%al\n"
++	"\tcmpb $2,%%al\n"
++	"\tjne __not_nmi32\n"
++	"\tbtl $17, 16(%%esp)\n"
++	"\tjc __not_nmi32\n"
++
++	/* NMI handler */
++	"\taddl $4,%%esp\n"
++	"\tpopl %%eax\n"
++	"\tincl %%ss:0x001110D0\n"
++	/* If interrupted entry code is testing the NMI pending flag,
++	   force it to re-test */
++	"\tcmpl $(__testnmi_vm86_entry - p110codestart + 0x00110100),(%%esp)\n"
++	"\tjnae __nmi_skip_vm86\n"
++	"\tcmpl $(__finish_vm86_entry - p110codestart + 0x00110100),(%%esp)\n"
++	"\tjnbe __nmi_skip_vm86\n"
++	"\tmovl $(__testnmi_vm86_entry - p110codestart + 0x00110100), (%%esp)\n"
++"__nmi_skip_vm86:\n"
++	 /* It's safe: NMIs are blocked */
++	"\taddl $8,%%esp\n"
++	"\tpopfl\n"
++	"\tljmp *-12(%%esp)\n"
++
++"__not_nmi32:\n"
++	"\tpopl %%eax\n"
++	"\txchgl (%%esp),%%eax\n"
++	"\tpushl $13\n"
++        "\tjmp __back_to_64\n"
++
++	/* Page fault also writes CR2 value */
++"__ex32_pf:\n"
++        "\tpushl $14\n"
++	"\tpushl %%eax\n"
++	"\tmovl %%cr2,%%eax\n"
++	"\txchgl (%%esp),%%eax\n"
++        "\tjmp __back_to_64_nodecesp\n"
++	
++	/* End of 32-bit piece of code */
++
++"__main_return:\n"
++	"\t.code64\n"
++	/* Restore saved register values */
++	"\tmovq 0x00111010,%%rax\n"
++	"\tmovq %%rax,%%cr3\n"
++	"\tjmp __flush5\n"
++"__flush5:\n"
++	"\tmovl $0x0C0000080,%%ecx\n"
++	"\tmovl 0x00111060,%%eax\n"
++	"\tmovl 0x00111064,%%edx\n" 
++	"\twrmsr\n"
++	"\tmovq 0x00111068,%%rax\n"
++	"\tmovq %%rax,%%cr4\n"
++	"\tmovq %%rsp,%%r15\n"
++	"\tmovq 0x00111008,%%rsp\n"
++	"\tmovq 0x00111048,%%rax\n"
++	"\taddq 0x00111018,%%rax\n"
++	"\tbtrq $41,(%%rax)\n"
++	"\tlgdtq 0x00111046\n"
++	"\tltr 0x00111018\n"
++	"\tmovw 0x00111090,%%ss\n"
++	"\tmovw 0x00111070,%%ds\n"
++	"\tmovw 0x00111078,%%es\n"
++	"\tmovw 0x00111088,%%gs\n"
++	"\tmovw 0x00111080,%%fs\n" 
++	"\tmovl $0xC0000100,%%ecx\n"
++	"\tmovl 0x00111098,%%eax\n"
++	"\tmovl 0x0011109C,%%edx\n"
++	"\twrmsr\n"
++	"\tmovl $0xC0000101,%%ecx\n"
++	"\tmovl 0x001110A0,%%eax\n"
++	"\tmovl 0x001110A4,%%edx\n"
++	"\twrmsr\n"
++	"\tpopfq\n"
++	/* IDTR restored the last: this actually unlocks the CPU, 
++	   and all essential register values must be restored before this. */
++	"\tlidtq 0x00111056\n"		
++	"\tmovq %%r15,%%rax\n"
++	"\tret\n"    
++"\t.globl __ex64_df,__ex64_gp\n"
++	
++	/* 64-bit #GP handler. Only needed to catch NMIs and segment reloads */
++"__ex64_gp:\n"
++	"\txchgq (%%rsp),%%rax\n"
++	"\tpushq %%rax\n"
++	"\tandq $2,%%rax\n"
++	"\tcmpb $2,%%al\n"
++	"\tjne __unknown_trap\n"
++	"\tmovb (%%rsp),%%al\n"
++	"\tshrb $3,%%al\n"
++	"\tcmpb $2,%%al\n"
++	"\tjne __unknown_trap\n"
++	"\taddq $8,%%rsp\n"	
++	"\tpopq %%rax\n"
++	"\tincq 0x001110D0\n"
++
++	"\tmovw 32(%%rsp),%%ss\n"
++	"\txchg 24(%%rsp),%%rax\n"
++	"\txchg %%rsp,%%rax\n"
++	"\tpushq 8(%%rax)\n"
++	"\tpushq (%%rax)\n"
++	"\tpushq 16(%%rax)\n"
++	"\tmovq 24(%%rax),%%rax\n"
++	"\tpopfq\n"
++	"\tlretq\n"
++
++"__unknown_trap:\n"
++	"\tmovq 16(%%rsp),%%rax\n"
++	"\tmovl (%%rax),%%eax\n"
++	"\tandl $0xFF00FF,%%eax\n"
++	"\tcmpl $0x25008e,%%eax\n"
++	"\tjne __not_seg_reload\n"
++	"\tmovq 16(%%rsp),%%rax\n"
++	"\tmovl 3(%%rax),%%eax\n"
++	"\tmovq $0,(%%rax)\n"
++	"\taddq $8,%%rsp\n"
++	"\tpopq %%rax\n"
++	"\tiretq\n"
++"__not_seg_reload:"
++	"\tpopq %%rax\n"
++	"\tshlq $32,%%rax\n"
++	"\tbtsq $63,%%rax\n"
++	"\taddq $13,%%rax\n"
++	"\txchgq (%%rsp),%%rax\n"
++	"\tsubq $32,%%rsp\n"
++	"\tmovq %%rsp,%%r15\n"
++	"\tjmp __main_return\n"
++
++"__to32fptr:\n"
++	"\t.long (__reach32 - p110codestart + 0x00110100)\n"
++	"\t.long 0x8\n"
++"__gdt32im:\n\t"
++	"\t.word 0xFFFF\n"
++	"\t.quad 0x00110000\n"
++	"\t.long 0\n\t"
++	"\t.word 0\n\t"
++"__idt32im:\n\t"
++	"\t.word 0x00FF\n"
++	"\t.quad 0x00110000\n"
++"p110codeend:\n"
++	: 
++	:) ;
++}
++
++EXPORT_SYMBOL(sys_vm86);
+diff -uprN -X linux/Documentation/dontdiff linux/arch/x86_64/kernel/vm86dev.c linux-v86-64/arch/x86_64/kernel/vm86dev.c
+--- linux/arch/x86_64/kernel/vm86dev.c	1970-01-01 07:00:00.000000000 +0700
++++ linux-v86-64/arch/x86_64/kernel/vm86dev.c	2007-05-31 10:15:37.000000000 +0700
+@@ -0,0 +1,112 @@
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/kmod.h>
++#include <linux/init.h>
++#include <linux/device.h>
++#include <linux/mm.h>
++#include <linux/fs.h>
++#include <linux/ioctl.h>
++#include <asm/uaccess.h>
++#include <asm/vm86.h>
++
++static int v86_major;
++static int v86_usecount;
++
++struct class *v86_class;
++struct device *v86_dev;
++
++static int v86_open(struct inode *ino, struct file *f)
++{
++    try_module_get(THIS_MODULE);
++    return 0;
++}
++
++static int v86_release(struct inode *ino, struct file *f)
++{
++    module_put(THIS_MODULE);
++    return 0;
++}
++
++static ssize_t v86_read(struct file *f, char __user *buff, size_t length, loff_t *offset)
++{
++    return -EINVAL;
++}
++
++static ssize_t v86_write(struct file *f, const char __user *buff, size_t length, loff_t *offset)
++{
++    return -EINVAL;
++}
++
++static int v86_ioctl(struct inode *ino, struct file *f, unsigned int cmd, unsigned long arg)
++{
++    unsigned int fn;
++    switch (cmd) {
++	case IVM86_ENTER:
++	    fn = VM86_ENTER; break;
++	case IVM86_ENTER_NO_BYPASS:
++	    fn = VM86_ENTER_NO_BYPASS; break;
++	case IVM86_REQUEST_IRQ:
++	    fn = VM86_REQUEST_IRQ; break;
++	case IVM86_FREE_IRQ:
++	    fn = VM86_FREE_IRQ; break;
++	case IVM86_GET_IRQ_BITS:
++	    fn = VM86_GET_IRQ_BITS; break;
++	case IVM86_GET_AND_RESET_IRQ:
++	    fn = VM86_GET_AND_RESET_IRQ; break;
++	default:
++	    return -EINVAL;
++    }
++    return sys_vm86(fn, (struct vm86plus_struct __user *)arg);
++}
++
++static struct file_operations v86_fops = {
++    .open = &v86_open,
++    .release = &v86_release,
++    .read = &v86_read,
++    .write = &v86_write,
++    .ioctl = &v86_ioctl
++};
++
++static int v86_init_module(void)
++{
++    v86_major =  register_chrdev(0, "v86", &v86_fops);
++
++    if (v86_major < 0)
++	return -EIO;
++
++    v86_class = class_create(THIS_MODULE, "v86");
++
++    if (IS_ERR(v86_class)) {
++	printk("Unable to create v86 class\n");
++	v86_class = NULL;
++    }
++
++    v86_dev = device_create(v86_class, NULL,
++				     MKDEV(v86_major, 0), "v86");
++
++    if (IS_ERR(v86_dev)) {
++	printk("Unable to create device in class\n");
++	v86_dev = NULL;
++    }
++    v86_usecount = 0;
++    printk("v86 pseudo-device registered at major number %d\n", v86_major);    
++    return 0;
++}
++
++static void v86_cleanup_module(void)
++{
++    int ret;
++    if (v86_dev)
++	device_destroy(v86_class, MKDEV(v86_major, 0));
++    if (v86_class)
++	class_destroy(v86_class);
++    ret = unregister_chrdev(v86_major, "v86");
++}
++
++module_init(v86_init_module)
++module_exit(v86_cleanup_module)
++
++MODULE_AUTHOR("Vladimir M. Shelyugin");
++MODULE_DESCRIPTION("vm86 device interface");
++MODULE_LICENSE("GPL");
++MODULE_ALIAS("/dev/v86");
+diff -uprN -X linux/Documentation/dontdiff linux/include/asm-x86_64/processor.h linux-v86-64/include/asm-x86_64/processor.h
+--- linux/include/asm-x86_64/processor.h	2007-04-28 04:49:26.000000000 +0700
++++ linux-v86-64/include/asm-x86_64/processor.h	2007-05-23 16:01:47.000000000 +0700
+@@ -270,7 +270,11 @@ struct thread_struct {
+ /* IO permissions. the bitmap could be moved into the GDT, that would make
+    switch faster for a limited number of ioperm using tasks. -AK */
+ 	int		ioperm;
++#ifndef CONFIG_VM86_64
+ 	unsigned long	*io_bitmap_ptr;
++#else
++	unsigned long	*vm86_control_ptr;
++#endif
+ 	unsigned io_bitmap_max;
+ /* cached TLS descriptors. */
+ 	u64 tls_array[GDT_ENTRY_TLS_ENTRIES];
+diff -uprN -X linux/Documentation/dontdiff linux/include/asm-x86_64/vm86.h linux-v86-64/include/asm-x86_64/vm86.h
+--- linux/include/asm-x86_64/vm86.h	1970-01-01 07:00:00.000000000 +0700
++++ linux-v86-64/include/asm-x86_64/vm86.h	2007-05-31 11:55:55.000000000 +0700
+@@ -0,0 +1,264 @@
++#ifndef _LINUX_VM86_H
++#define _LINUX_VM86_H
++
++/*
++ * I'm guessing at the VIF/VIP flag usage, but hope that this is how
++ * the Pentium uses them. Linux will return from vm86 mode when both
++ * VIF and VIP is set.
++ *
++ * On a Pentium, we could probably optimize the virtual flags directly
++ * in the eflags register instead of doing it "by hand" in vflags...
++ *
++ * Linus
++ */
++
++#define TF_MASK		0x00000100
++#define IF_MASK		0x00000200
++#define IOPL_MASK	0x00003000
++#define NT_MASK		0x00004000
++#ifdef CONFIG_VM86_64
++#define VM_MASK		0x00020000
++#else
++#define VM_MASK		0 /* ignored */
++#endif
++#define AC_MASK		0x00040000
++#define VIF_MASK	0x00080000	/* virtual interrupt flag */
++#define VIP_MASK	0x00100000	/* virtual interrupt pending */
++#define ID_MASK		0x00200000
++
++#define BIOSSEG		0x0f000
++
++#define CPU_086		0
++#define CPU_186		1
++#define CPU_286		2
++#define CPU_386		3
++#define CPU_486		4
++#define CPU_586		5
++
++/*
++ * Return values for the 'vm86()' system call
++ */
++#define VM86_TYPE(retval)	((retval) & 0xff)
++#define VM86_ARG(retval)	((retval) >> 8)
++
++#define VM86_SIGNAL	0	/* return due to signal */
++#define VM86_UNKNOWN	1	/* unhandled GP fault - IO-instruction or similar */
++#define VM86_INTx	2	/* int3/int x instruction (ARG = x) */
++#define VM86_STI	3	/* sti/popf/iret instruction enabled virtual interrupts */
++
++/*
++ * Additional return values when invoking new vm86()
++ */
++#define VM86_PICRETURN	4	/* return due to pending PIC request */
++#define VM86_TRAP	6	/* return due to DOS-debugger request */
++
++/*
++ * function codes when invoking new vm86()
++ */
++#define VM86_PLUS_INSTALL_CHECK	0
++#define VM86_ENTER		1
++#define VM86_ENTER_NO_BYPASS	2
++#define	VM86_REQUEST_IRQ	3
++#define VM86_FREE_IRQ		4
++#define VM86_GET_IRQ_BITS	5
++#define VM86_GET_AND_RESET_IRQ	6
++
++
++
++
++
++/*
++ * This is the stack-layout seen by the user space program when we have
++ * done a translation of "SAVE_ALL" from vm86 mode. The real kernel layout
++ * is 'kernel_vm86_regs' (see below).
++ */
++
++
++typedef unsigned int int32bit;
++typedef unsigned short int16bit;
++
++
++struct vm86_regs {
++/*
++ * normal regs, with special meaning for the segment descriptors..
++ */
++	int32bit ebx;
++	int32bit ecx;
++	int32bit edx;
++	int32bit esi;
++	int32bit edi;
++	int32bit ebp;
++	int32bit eax;
++	int32bit __null_ds;
++	int32bit __null_es;
++	int32bit __null_fs;
++	int32bit __null_gs;
++	int32bit orig_eax;
++	int32bit eip;
++	int16bit cs, __csh;
++	int32bit eflags;
++	int32bit esp;
++	int16bit ss, __ssh;
++/*
++ * these are specific to v86 mode:
++ */
++	int16bit es, __esh;
++	int16bit ds, __dsh;
++	int16bit fs, __fsh;
++	int16bit gs, __gsh;
++};
++
++struct revectored_struct {
++	int32bit __map[8];			/* 256 bits */
++};
++
++struct vm86_struct {
++	struct vm86_regs regs;
++	int32bit flags;
++	int32bit screen_bitmap;
++	int32bit cpu_type;
++	struct revectored_struct int_revectored;
++	struct revectored_struct int21_revectored;
++};
++
++/*
++ * flags masks
++ */
++#define VM86_SCREEN_BITMAP	0x0001
++
++struct vm86plus_info_struct {
++	int32bit force_return_for_pic:1;
++	int32bit vm86dbg_active:1;       /* for debugger */
++	int32bit vm86dbg_TFpendig:1;     /* for debugger */
++	int32bit unused:28;
++	int32bit is_vm86pus:1;	      /* for vm86 internal use */
++	unsigned char vm86dbg_intxxtab[32];   /* for debugger */
++};
++
++struct vm86plus_struct {
++	struct vm86_regs regs;
++	int32bit flags;
++	int32bit screen_bitmap;
++	int32bit cpu_type;
++	struct revectored_struct int_revectored;
++	struct revectored_struct int21_revectored;
++	struct vm86plus_info_struct vm86plus;
++};
++
++#ifdef __KERNEL__
++/*
++ * This is the (kernel) stack-layout when we have done a "SAVE_ALL" from vm86
++ * mode - the main change is that the old segment descriptors aren't
++ * useful any more and are forced to be zero by the kernel (and the
++ * hardware when a trap occurs), and the real segment descriptors are
++ * at the end of the structure. Look at ptrace.h to see the "normal"
++ * setup. For user space layout see 'struct vm86_regs' above.
++ */
++
++struct kernel_vm86_regs {
++/*
++ * normal regs, with special meaning for the segment descriptors..
++ */
++	int32bit ebx;
++	int32bit ecx;
++	int32bit edx;
++	int32bit esi;
++	int32bit edi;
++	int32bit ebp;
++	int32bit eax;
++	int32bit cr2;
++	int32bit exception;
++	int32bit error_code;
++	int32bit eip;
++	int16bit cs, __csh;
++	int32bit eflags;
++	int32bit esp;
++	int16bit ss, __ssh;
++/*
++ * these are specific to v86 mode:
++ */
++	int16bit es, __esh;
++	int16bit ds, __dsh;
++	int16bit fs, __fsh;
++	int16bit gs, __gsh;
++};
++
++struct kernel_vm86_struct {
++	struct kernel_vm86_regs regs;
++/*
++ * the below part remains on the kernel stack while we are in VM86 mode.
++ * 'tss.esp0' then contains the address of VM86_TSS_ESP0 below, and when we
++ * get forced back from VM86, the CPU and "SAVE_ALL" will restore the above
++ * 'struct kernel_vm86_regs' with the then actual values.
++ * Therefore, pt_regs in fact points to a complete 'kernel_vm86_struct'
++ * in kernelspace, hence we need not reget the data from userspace.
++ */
++	int32bit flags;
++	int32bit screen_bitmap;
++	int32bit cpu_type;
++	struct revectored_struct int_revectored;
++	struct revectored_struct int21_revectored;
++	struct vm86plus_info_struct vm86plus;
++};
++
++#define	 VM86CTL_PML4_TMP_OFFSET	0
++#define	 VM86CTL_RSP_SAVE_OFFSET	1
++#define	 VM86CTL_CR3_SAVE_OFFSET	2
++#define	 VM86CTL_TR_SAVE_OFFSET		3
++#define	 VM86CTL_PDPT_TMP_OFFSET	4
++#define	 VM86CTL_GDTR_SAVE_OFFSET	8
++#define	 VM86CTL_IDTR_SAVE_OFFSET	10
++#define	 VM86CTL_EFER_SAVE_OFFSET	12
++#define	 VM86CTL_CR4_SAVE_OFFSET	13
++#define	 VM86CTL_DS_SAVE_OFFSET		14
++#define	 VM86CTL_ES_SAVE_OFFSET		15
++#define	 VM86CTL_FS_SAVE_OFFSET		16
++#define	 VM86CTL_GS_SAVE_OFFSET		17
++#define	 VM86CTL_SS_SAVE_OFFSET		18
++#define	 VM86CTL_FSBASE_SAVE_OFFSET	19
++#define	 VM86CTL_GSBASE_SAVE_OFFSET	20
++#define	 VM86CTL_PAGE111_PHYS_OFFSET	21
++#define	 VM86CTL_PAGE112_PHYS_OFFSET	22
++#define	 VM86CTL_PAGE113_PHYS_OFFSET	23
++#define	 VM86CTL_TSS32_DESC_OFFSET	24
++#define	 VM86CTL_INTXX_OFFSET		25
++#define	 VM86CTL_PENDING_NMI_OFFSET	26
++#define	 VM86CTL_VEFLAGS_OFFSET		27
++#define	 VM86CTL_VEFMASK_OFFSET		28
++#define	 VM86CTL_VMEFLAG_OFFSET		29
++#define	 VM86CTL_LOCAL_ENABLE_OFFSET	30
++#define	 VM86CTL_TSS32_OFFSET		32
++#define	 VM86CTL_IOBM_PTR_OFFSET	44
++#define	 VM86CTL_INT_BITMAP_OFFSET	45
++#define	 VM86CTL_IO_BITMAP_OFFSET	49
++#define	 VM86CTL_IOBM_END_OFFSET	1073
++#define	 VM86CTL_USER_STACK_BOT_OFFSET	1300
++#define	 VM86CTL_EMERG_STACK_TOP_OFFSET	1535
++
++#define	FIRST_VM86_IRQ		3
++#define LAST_VM86_IRQ		15
++#define invalid_vm86_irq(irq)	((irq) < 3 || (irq) > 15)
++
++#ifdef CONFIG_VM86_64
++unsigned long *vm86_control_alloc(void);
++void vm86_control_free(unsigned long *);
++void vm86_init(void);
++int sys_vm86_old(struct vm86_struct __user *);
++int sys_vm86(unsigned int, struct vm86plus_struct __user *);
++void release_vm86_irqs(struct task_struct *task);
++#endif
++
++
++#endif /* __KERNEL__ */
++
++/* Device interface ioctls */
++#include <linux/ioctl.h>
++
++#define IVM86_ENTER			_IOWR(0, 1, struct vm86_struct)
++#define IVM86_ENTER_NO_BYPASS		_IOWR(0, 2, struct vm86_struct)
++#define	IVM86_REQUEST_IRQ		_IOW(0, 3, int)
++#define IVM86_FREE_IRQ			_IOW(0, 4, int)
++#define IVM86_GET_IRQ_BITS		_IOR(0, 5, int)
++#define IVM86_GET_AND_RESET_IRQ		_IOWR(0, 6, int)
++
++#endif

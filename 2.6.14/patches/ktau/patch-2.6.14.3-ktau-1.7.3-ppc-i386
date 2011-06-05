@@ -1,0 +1,2282 @@
+diff -urN linux-2.6.14.3/Makefile linux-2.6.14.3-ktau-1.7.3-ppc-i386/Makefile
+--- linux-2.6.14.3/Makefile	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/Makefile	2006-01-26 09:00:45.000000000 -0800
+@@ -1,7 +1,7 @@
+ VERSION = 2
+ PATCHLEVEL = 6
+ SUBLEVEL = 14
+-EXTRAVERSION = .3
++EXTRAVERSION = .3-ktau-1.7.3-ppc-i386
+ NAME=Affluent Albatross
+ 
+ # *DOCUMENTATION*
+diff -urN linux-2.6.14.3/arch/i386/kernel/entry.S linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/i386/kernel/entry.S
+--- linux-2.6.14.3/arch/i386/kernel/entry.S	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/i386/kernel/entry.S	2006-01-24 08:49:20.000000000 -0800
+@@ -233,7 +233,56 @@
+ 	cmpl $(nr_syscalls), %eax
+ 	jae syscall_badsys
+ syscall_call:
++
++#ifdef CONFIG_KTAU_SYSCALL 
++	/*
++	* Function   :  ktau_syscall_entry
++	* Description:	KTAU Instrumentation for syscall entry
++	* Input	     :	eax (stack pointer)
++        *		edx (address of system call)
++	*		ecx (system call number)
++	*/
++	/******** START KTAU **********/
++        pushl %ecx                      # save %ecx
++        pushl %edx                      # save %edx
++        pushl %eax                      # save %eax
++        movl %eax, %ecx			
++					# save syscall address from the table
++        movl sys_call_table(,%eax,4), %edx
++        movl %esp, %eax                 # pt_regs pointer 
++        call ktau_syscall_entry 
++        addl $4,%esp                    # return stack to state before pass
++        popl %edx                       # restore %edx 
++        popl %ecx                       # restore %ecx 
++        movl ORIG_EAX(%esp),%eax        # restore %eax
++	/*********** END KTAU **********/
++#endif /* CONFIG_KTAU */
++
+ 	call *sys_call_table(,%eax,4)
++
++#ifdef CONFIG_KTAU_SYSCALL
++	/*
++	* Function   :  ktau_syscall_exit
++	* Description:	KTAU Instrumentation for syscall exit
++	* Input	     :	eax (stack pointer)
++        *		edx (address of system call)
++	*		ecx (system call number)
++	*/
++	/******** START KTAU **********/
++        pushl %ecx                      # save %ecx
++        pushl %edx                      # save %edx
++        pushl %eax                      # save %eax
++        movl EFLAGS(%esp),%ecx          # get the call number from (ORIG_EAX+0xC)
++                                        # save syscall address from the table
++        movl sys_call_table(,%ecx,4), %edx
++        movl %esp, %eax                 # pt_regs pointer 
++        call ktau_syscall_exit 
++        popl %eax                       # store %eax
++        popl %edx                       # store %edx
++        popl %ecx                       # store %ecx
++	/*********** END KTAU **********/
++#endif /* CONFIG_KTAU */
++
+ 	movl %eax,EAX(%esp)		# store the return value
+ syscall_exit:
+ 	cli				# make sure we don't miss an interrupt
+diff -urN linux-2.6.14.3/arch/i386/kernel/irq.c linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/i386/kernel/irq.c
+--- linux-2.6.14.3/arch/i386/kernel/irq.c	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/i386/kernel/irq.c	2006-01-24 08:49:20.000000000 -0800
+@@ -22,6 +22,10 @@
+ DEFINE_PER_CPU(irq_cpustat_t, irq_stat) ____cacheline_maxaligned_in_smp;
+ EXPORT_PER_CPU_SYMBOL(irq_stat);
+ 
++#ifdef CONFIG_KTAU_IRQ
++//#include <linux/ktau/ktau_inst.h>
++#endif /*CONFIG_KTAU_IRQ*/
++
+ #ifndef CONFIG_X86_LOCAL_APIC
+ /*
+  * 'what should we do if we get a hw irq event on an illegal vector'.
+@@ -60,6 +64,11 @@
+ 	u32 *isp;
+ #endif
+ 
++#ifdef CONFIG_KTAU_IRQ
++	//GET_KTAU_INDEX();
++	//if(current->pid) ktau_start_timer((unsigned int) &do_IRQ);
++#endif /*CONFIG_KTAU_IRQ*/
++
+ 	irq_enter();
+ #ifdef CONFIG_DEBUG_STACKOVERFLOW
+ 	/* Debugging check for stack overflow: is there less than 1KB free? */
+@@ -108,6 +117,9 @@
+ 		__do_IRQ(irq, regs);
+ 
+ 	irq_exit();
++#ifdef CONFIG_KTAU_IRQ
++	//if(current->pid) ktau_stop_timer((unsigned int) &do_IRQ);
++#endif /*CONFIG_KTAU_IRQ*/
+ 
+ 	return 1;
+ }
+diff -urN linux-2.6.14.3/arch/i386/kernel/setup.c linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/i386/kernel/setup.c
+--- linux-2.6.14.3/arch/i386/kernel/setup.c	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/i386/kernel/setup.c	2006-01-24 08:49:20.000000000 -0800
+@@ -152,6 +152,11 @@
+ extern void generic_apic_probe(char *);
+ extern int root_mountflags;
+ 
++#ifdef CONFIG_KTAU_BOOTOPT
++extern void ktau_bootopt_parse(char *);
++#endif /*CONFIG_KTAU_BOOTOPT*/
++
++
+ unsigned long saved_videomode;
+ 
+ #define RAMDISK_IMAGE_START_MASK  	0x07FF
+@@ -1612,6 +1617,10 @@
+ 	conswitchp = &dummy_con;
+ #endif
+ #endif
++
++#ifdef CONFIG_KTAU_BOOTOPT
++	ktau_bootopt_parse(*cmdline_p);
++#endif /* CONFIG_KTAU_BOOTOPT */
+ }
+ 
+ #include "setup_arch_post.h"
+diff -urN linux-2.6.14.3/arch/i386/kernel/signal.c linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/i386/kernel/signal.c
+--- linux-2.6.14.3/arch/i386/kernel/signal.c	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/i386/kernel/signal.c	2006-01-24 08:49:20.000000000 -0800
+@@ -27,6 +27,11 @@
+ #include <asm/i387.h>
+ #include "sigframe.h"
+ 
++#ifdef CONFIG_KTAU_SYSCALL
++#include <linux/ktau/ktau_inst.h>
++#include <linux/ktau/ktau_bootopt.h>
++#endif /*CONFIG_KTAU_SYSCALL*/
++
+ #define DEBUG_SIG 0
+ 
+ #define _BLOCKABLE (~(sigmask(SIGKILL) | sigmask(SIGSTOP)))
+@@ -226,7 +231,16 @@
+ 	current->blocked = set;
+ 	recalc_sigpending();
+ 	spin_unlock_irq(&current->sighand->siglock);
+-	
++
++#ifdef CONFIG_KTAU_SYSCALL
++        /* 
++         * We put the stop here to intercept the control before the
++         * registers are being restored. 
++         * Note that we are hardcoding the call number for sys_sigreturn here.
++         */
++	ktau_stop_prof(119,(unsigned int)&sys_sigreturn,KTAU_SYSCALL_MSK);
++#endif /*CONFIG_KTAU_SYSCALL*/
++
+ 	if (restore_sigcontext(regs, &frame->sc, &eax))
+ 		goto badframe;
+ 	return eax;
+@@ -253,6 +267,15 @@
+ 	current->blocked = set;
+ 	recalc_sigpending();
+ 	spin_unlock_irq(&current->sighand->siglock);
++
++#ifdef CONFIG_KTAU_SYSCALL
++        /* 
++         * We put the stop here to intercept the control before the
++         * registers are being restored. 
++         * Note that we are hardcoding the call number for sys_sigreturn here.
++         */
++	ktau_stop_prof(173,(unsigned int)&sys_rt_sigreturn,KTAU_SYSCALL_MSK);
++#endif /*CONFIG_KTAU_SYSCALL*/
+ 	
+ 	if (restore_sigcontext(regs, &frame->uc.uc_mcontext, &eax))
+ 		goto badframe;
+diff -urN linux-2.6.14.3/arch/i386/kernel/traps.c linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/i386/kernel/traps.c
+--- linux-2.6.14.3/arch/i386/kernel/traps.c	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/i386/kernel/traps.c	2006-01-24 08:49:20.000000000 -0800
+@@ -56,6 +56,15 @@
+ 
+ #include "mach_traps.h"
+ 
++#ifdef CONFIG_KTAU
++#include <linux/ktau/ktau_inst.h>
++#include <linux/ktau/ktau_hash.h>
++#define TAU_NAME "traps.h"
++#include <linux/ktau/ktau_print.h>
++#endif /* CONFIG_KTAU */
++
++
++
+ asmlinkage int system_call(void);
+ 
+ struct desc_struct default_ldt[] = { { 0, 0 }, { 0, 0 }, { 0, 0 },
+@@ -291,6 +300,81 @@
+ 	printk("Kernel BUG\n");
+ }
+ 
++#ifdef CONFIG_KTAU_SYSCALL 
++fastcall void ktau_syscall_entry(struct pt_regs *regs
++                                       , unsigned long addr
++                                       , unsigned long callno)
++{
++	
++		if(current->pid){
++		       /* 
++			* Call KTAU start:
++			*      We must make sure that the start of 
++			*      system call must be level 0 
++			*/
++#if 0
++		       if(current->ktau->cur_level != 0 || current->ktau->last_level !=0){
++			       printk(KERN_INFO "traps.c -- ERROR_START_SYSCALL: pid:%d\n\
++				       ------ addr:%lx cur:%u last:%u\n\
++				       ------ prev_start = %lx prev_stop = %lx\n",
++				       current->pid,
++				       addr,
++				       (unsigned int) current->ktau->cur_level,
++				       (unsigned int) current->ktau->last_level,
++				       (unsigned long)current->ktau->prev_start,
++				       (unsigned long)current->ktau->prev_stop);
++			       current->ktau->cur_level = 0; 
++			       current->ktau->last_level = 0;
++		       }
++#endif
++		       ktau_start_prof(callno,addr,KTAU_SYSCALL_MSK);
++		}
++}
++
++
++fastcall void ktau_syscall_exit(struct pt_regs *regs
++                                       , unsigned long addr
++                                       , unsigned long callno)
++{
++		if(current->pid){
++			/* 
++			* Call KTAU stop:
++			*      We must make sure that the stop of 
++			*      system call must be level 0 
++			*/
++			if(callno != 0xffffffff){
++			       ktau_stop_prof(callno,addr,KTAU_SYSCALL_MSK);
++#if 0
++			       if(current->ktau->cur_level != 0 || current->ktau->last_level !=0){
++				       printk(KERN_INFO "traps.c -- ERROR_STOP_SYSCALL: pid:%d addr:%lx callno:%lu cur:%u last:%u\n",
++					       current->pid,
++					       addr,
++					       callno,
++					       (unsigned int) current->ktau->cur_level,
++					       (unsigned int) current->ktau->last_level);
++				       
++			       }
++#endif
++			}else{
++			       /* This is the case when sys_sigreturn() is called.
++				* Syscall handler modified the ORIG_EAX to be -1
++				*/
++			       info("Warning: pid:%d has callno is -1, current->ktau->stackDepth = %u",current->pid,current->ktau->stackDepth);
++			       //current->ktau->cur_level = 0; 
++			       //current->ktau->last_level = 0;
++			       current->ktau->stackDepth = 0;
++
++			}
++			/* Check to see if the stackDepth is 0 when leaving the system call */
++			if(current->ktau->stackDepth != 0){
++				info("Warning: ktau_syscall_exit: stackDepth is not zero.\n\
++						stackDepth = %u, address = %x, callno =%lu",
++						current->ktau->stackDepth, addr, callno);
++			}
++		}
++}
++#endif /*CONFIG_KTAU_SYSCALL*/
++
+ /* This is gone through when something in the kernel
+  * has done something bad and is about to be terminated.
+ */
+@@ -400,13 +484,23 @@
+ 	}
+ }
+ 
++#ifdef CONFIG_KTAU_EXCEPTION
++#define ktau_start_exception(index,fnc_addr)    ktau_start_prof(KTAU_EXCEPTION_BASE+index,(unsigned int)fnc_addr,KTAU_EXCEPTION_MSK)
++#define ktau_stop_exception(index,fnc_addr)     ktau_stop_prof(KTAU_EXCEPTION_BASE+index,(unsigned int)fnc_addr,KTAU_EXCEPTION_MSK)
++#else /*CONFIG_KTAU_EXCEPTION*/
++#define ktau_start_exception(index,fnc_addr)
++#define ktau_stop_exception(index,fnc_addr)
++#endif /*CONFIG_KTAU_EXCEPTION*/
++
+ #define DO_ERROR(trapnr, signr, str, name) \
+ fastcall void do_##name(struct pt_regs * regs, long error_code) \
+ { \
+ 	if (notify_die(DIE_TRAP, str, regs, error_code, trapnr, signr) \
+ 						== NOTIFY_STOP) \
+ 		return; \
++	ktau_start_exception(trapnr , &do_##name);\
+ 	do_trap(trapnr, signr, str, 0, regs, error_code, NULL); \
++	ktau_stop_exception(trapnr , &do_##name);\
+ }
+ 
+ #define DO_ERROR_INFO(trapnr, signr, str, name, sicode, siaddr) \
+@@ -420,7 +514,9 @@
+ 	if (notify_die(DIE_TRAP, str, regs, error_code, trapnr, signr) \
+ 						== NOTIFY_STOP) \
+ 		return; \
++	ktau_start_exception(trapnr , &do_##name);\
+ 	do_trap(trapnr, signr, str, 0, regs, error_code, &info); \
++	ktau_stop_exception(trapnr , &do_##name);\
+ }
+ 
+ #define DO_VM86_ERROR(trapnr, signr, str, name) \
+@@ -429,7 +525,9 @@
+ 	if (notify_die(DIE_TRAP, str, regs, error_code, trapnr, signr) \
+ 						== NOTIFY_STOP) \
+ 		return; \
++	ktau_start_exception(trapnr , &do_##name);\
+ 	do_trap(trapnr, signr, str, 1, regs, error_code, NULL); \
++	ktau_stop_exception(trapnr , &do_##name);\
+ }
+ 
+ #define DO_VM86_ERROR_INFO(trapnr, signr, str, name, sicode, siaddr) \
+@@ -443,7 +541,9 @@
+ 	if (notify_die(DIE_TRAP, str, regs, error_code, trapnr, signr) \
+ 						== NOTIFY_STOP) \
+ 		return; \
++	ktau_start_exception(trapnr , &do_##name);\
+ 	do_trap(trapnr, signr, str, 1, regs, error_code, &info); \
++	ktau_stop_exception(trapnr , &do_##name);\
+ }
+ 
+ DO_VM86_ERROR_INFO( 0, SIGFPE,  "divide error", divide_error, FPE_INTDIV, regs->eip)
+@@ -509,7 +609,13 @@
+ 
+ gp_in_vm86:
+ 	local_irq_enable();
++#ifdef CONFIG_KTAU_EXCEPTION
++	ktau_start_prof(KTAU_EXCEPTION_BASE+13,(unsigned int)&do_general_protection,KTAU_EXCEPTION_MSK);
++#endif /*CONFIG_KTAU_EXCEPTION*/
+ 	handle_vm86_fault((struct kernel_vm86_regs *) regs, error_code);
++#ifdef CONFIG_KTAU_EXCEPTION
++	ktau_stop_prof(KTAU_EXCEPTION_BASE+13,(unsigned int)&do_general_protection,KTAU_EXCEPTION_MSK);
++#endif /*CONFIG_KTAU_EXCEPTION*/
+ 	return;
+ 
+ gp_in_kernel:
+@@ -658,8 +764,9 @@
+ 
+ 	++nmi_count(cpu);
+ 
+-	if (!rcu_dereference(nmi_callback)(regs, cpu))
++	if (!rcu_dereference(nmi_callback)(regs, cpu)){
+ 		default_do_nmi(regs);
++	}
+ 
+ 	nmi_exit();
+ }
+@@ -762,7 +869,13 @@
+ 	return;
+ 
+ debug_vm86:
++#ifdef CONFIG_KTAU_EXCEPTION
++	ktau_start_prof(KTAU_EXCEPTION_BASE+1,(unsigned int)&do_debug,KTAU_EXCEPTION_MSK);
++#endif /*CONFIG_KTAU_EXCEPTION*/
+ 	handle_vm86_trap((struct kernel_vm86_regs *) regs, error_code, 1);
++#ifdef CONFIG_KTAU_EXCEPTION
++	ktau_stop_prof(KTAU_EXCEPTION_BASE+1,(unsigned int)&do_debug,KTAU_EXCEPTION_MSK);
++#endif /*CONFIG_KTAU_EXCEPTION*/
+ 	return;
+ 
+ clear_TF_reenable:
+diff -urN linux-2.6.14.3/arch/i386/mm/fault.c linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/i386/mm/fault.c
+--- linux-2.6.14.3/arch/i386/mm/fault.c	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/i386/mm/fault.c	2006-01-24 08:49:20.000000000 -0800
+@@ -28,6 +28,10 @@
+ #include <asm/desc.h>
+ #include <asm/kdebug.h>
+ 
++#ifdef CONFIG_KTAU_EXCEPTION
++#include <linux/ktau/ktau_inst.h>
++#endif /*CONFIG_KTAU_EXCEPTION*/
++
+ extern void die(const char *,struct pt_regs *,long);
+ 
+ /*
+@@ -268,9 +272,18 @@
+ 		 * Don't take the mm semaphore here. If we fixup a prefetch
+ 		 * fault we could otherwise deadlock.
+ 		 */
++#ifdef CONFIG_KTAU_EXCEPTION
++	       /*if(current->pid != 0) printk(KERN_INFO "KTAU_EXCEPTION: do_page_fault on PID:%d, error_code %d\n",current->pid,error_code);*/
++	       if(current->pid != 0) ktau_start_prof(KTAU_EXCEPTION_BASE+14, (unsigned int) &do_page_fault, KTAU_EXCEPTION_MSK);
++#endif /*CONFIG_KTAU_EXCEPTION*/
+ 		goto bad_area_nosemaphore;
+ 	} 
+ 
++#ifdef CONFIG_KTAU_EXCEPTION
++       /*if(current->pid != 0) printk(KERN_INFO "KTAU_EXCEPTION: do_page_fault on PID:%d, error_code %d\n",current->pid,error_code);*/
++       if(current->pid != 0) ktau_start_prof(KTAU_EXCEPTION_BASE+14, (unsigned int) &do_page_fault, KTAU_EXCEPTION_MSK);
++#endif /*CONFIG_KTAU_EXCEPTION*/
++	
+ 	mm = tsk->mm;
+ 
+ 	/*
+@@ -377,6 +390,9 @@
+ 			tsk->thread.screen_bitmap |= 1 << bit;
+ 	}
+ 	up_read(&mm->mmap_sem);
++#ifdef CONFIG_KTAU_EXCEPTION
++	        if(current->pid != 0) ktau_stop_prof(KTAU_EXCEPTION_BASE+14, (unsigned int) &do_page_fault, KTAU_EXCEPTION_MSK);
++#endif /*CONFIG_KTAU_EXCEPTION*/
+ 	return;
+ 
+ /*
+@@ -393,14 +409,21 @@
+ 		 * Valid to do another page fault here because this one came 
+ 		 * from user space.
+ 		 */
+-		if (is_prefetch(regs, address, error_code))
++		if (is_prefetch(regs, address, error_code)){
++#ifdef CONFIG_KTAU_EXCEPTION
++			        if(current->pid != 0) ktau_stop_prof(KTAU_EXCEPTION_BASE+14, (unsigned int) &do_page_fault, KTAU_EXCEPTION_MSK);
++#endif /*CONFIG_KTAU_EXCEPTION*/
+ 			return;
++		}
+ 
+ 		tsk->thread.cr2 = address;
+ 		/* Kernel addresses are always protection faults */
+ 		tsk->thread.error_code = error_code | (address >= TASK_SIZE);
+ 		tsk->thread.trap_no = 14;
+ 		force_sig_info_fault(SIGSEGV, si_code, address, tsk);
++#ifdef CONFIG_KTAU_EXCEPTION
++		        if(current->pid != 0) ktau_stop_prof(KTAU_EXCEPTION_BASE+14, (unsigned int) &do_page_fault, KTAU_EXCEPTION_MSK);
++#endif /*CONFIG_KTAU_EXCEPTION*/
+ 		return;
+ 	}
+ 
+@@ -414,6 +437,9 @@
+ 		nr = (address - idt_descr.address) >> 3;
+ 
+ 		if (nr == 6) {
++#ifdef CONFIG_KTAU_EXCEPTION
++			if(current->pid != 0) ktau_stop_prof(KTAU_EXCEPTION_BASE+14, (unsigned int) &do_page_fault, KTAU_EXCEPTION_MSK);
++#endif /*CONFIG_KTAU_EXCEPTION*/
+ 			do_invalid_op(regs, 0);
+ 			return;
+ 		}
+@@ -421,17 +447,25 @@
+ #endif
+ 
+ no_context:
++#ifdef CONFIG_KTAU_EXCEPTION
++	if(current->pid != 0) ktau_stop_prof(KTAU_EXCEPTION_BASE+14, (unsigned int) &do_page_fault, KTAU_EXCEPTION_MSK);
++#endif /*CONFIG_KTAU_EXCEPTION*/
+ 	/* Are we prepared to handle this kernel fault?  */
+-	if (fixup_exception(regs))
++	if (fixup_exception(regs)){
+ 		return;
++	}
+ 
+ 	/* 
+ 	 * Valid to do another page fault here, because if this fault
+ 	 * had been triggered by is_prefetch fixup_exception would have 
+ 	 * handled it.
+ 	 */
+- 	if (is_prefetch(regs, address, error_code))
++ 	if (is_prefetch(regs, address, error_code)){
++#ifdef CONFIG_KTAU_EXCEPTION
++		if(current->pid != 0) ktau_stop_prof(KTAU_EXCEPTION_BASE+14, (unsigned int) &do_page_fault, KTAU_EXCEPTION_MSK);
++#endif /*CONFIG_KTAU_EXCEPTION*/
+  		return;
++	}
+ 
+ /*
+  * Oops. The kernel tried to access some bad page. We'll have to
+@@ -503,13 +537,20 @@
+ 		goto no_context;
+ 
+ 	/* User space => ok to do another page fault */
+-	if (is_prefetch(regs, address, error_code))
++	if (is_prefetch(regs, address, error_code)){
++#ifdef CONFIG_KTAU_EXCEPTION
++		if(current->pid != 0) ktau_stop_prof(KTAU_EXCEPTION_BASE+14, (unsigned int) &do_page_fault, KTAU_EXCEPTION_MSK);
++#endif /*CONFIG_KTAU_EXCEPTION*/
+ 		return;
++	}
+ 
+ 	tsk->thread.cr2 = address;
+ 	tsk->thread.error_code = error_code;
+ 	tsk->thread.trap_no = 14;
+ 	force_sig_info_fault(SIGBUS, BUS_ADRERR, address, tsk);
++#ifdef CONFIG_KTAU_EXCEPTION
++	if(current->pid != 0) ktau_stop_prof(KTAU_EXCEPTION_BASE+14, (unsigned int) &do_page_fault, KTAU_EXCEPTION_MSK);
++#endif /*CONFIG_KTAU_EXCEPTION*/
+ 	return;
+ 
+ vmalloc_fault:
+diff -urN linux-2.6.14.3/arch/i386/oprofile/Kconfig linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/i386/oprofile/Kconfig
+--- linux-2.6.14.3/arch/i386/oprofile/Kconfig	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/i386/oprofile/Kconfig	2006-01-24 08:49:20.000000000 -0800
+@@ -19,5 +19,134 @@
+ 
+ 	  If unsure, say N.
+ 
+-endmenu
++config KTAU
++	bool "KTAU Profiling (EXPERIMENTAL)"
++	depends on PROFILING
++	help
++	  KTAU is a Kernel Tuning Analysis Utilities providing 
++	  context-based (process/thread) profiling of the system.
++	  
++	  If unsure, say N.
++
++config KTAU_MERGE
++	bool "Merging KTAU Profile with TAU"
++	depends on KTAU
++	help
++	  Enable kernel-space and user-space profile merging using mmap.
++	  
++	  If unsure, say N.
++
++config KTAU_TRACE
++	bool "KTAU Tracing" 
++	depends on KTAU
++	help
++	  Enable KTAU tracing using circular buffer.
++
++	  If unsure, say N.
++
++config KTAU_TRACE_MAX_IN_K
++	int "Maximum number of KTAU trace entries (in K)"
++	default "5"
++	depends on KTAU_TRACE
++	help
++	  Please specify the size of the circular buffer used in KTAU tracing
++	
++	  If unsure, say N.
++
++config KTAU_BOOTOPT
++	bool "KTAU Kernel Boot Option"
++	depends on KTAU
++	help
++	  This option allows KTAU instrumentations to be enabled/disabled
++	  using the linux kernel boot options. Note that each instrumentation
++	  must be enabled in the kenel configuration phase. 
++	  
++	  Available options are:
++	  	- ktau_syscall
++		- ktau_irq
++		- ktau_bh
++		- ktau_sched
++		- ktau_exception
++		- ktau_signal
++		- ktau_tcp
++		- ktau_socket
++		- ktau_icmp
++		
++	  If unsure, say N.
++
++config KTAU_SYSCALL
++	bool "KTAU System Calls Instrumentation" 
++	depends on KTAU 
++	help
++	  Enable KTAU system calls instrumentation
++	  
++	  If unsure, say N.
++
++config KTAU_IRQ
++	bool "KTAU Interrupt Instrumentation" 
++	depends on KTAU
++	help
++	  Enable KTAU interrupt instrumentation
++	  
++	  If unsure, say N.
+ 
++config KTAU_BH
++	bool "KTAU Bottom Halves Instrumentation" 
++	depends on KTAU
++	help
++	  Enable KTAU bottom havles instrumentation including
++	  	- Softirq
++		- Tasklet
++		- Timer Interrupt
++		- Work Queue
++	  
++	  If unsure, say N.
++
++config KTAU_EXCEPTION
++        bool "KTAU Exception Instrumentation" 
++        depends on KTAU
++        help
++          Enable KTAU exception instrumentation
++
++          If unsure, say N.
++
++config KTAU_SIGNAL
++        bool "KTAU Signal Instrumentation" 
++        depends on KTAU
++        help
++          Enable KTAU signal instrumentation
++
++          If unsure, say N.
++
++config KTAU_SCHED
++	bool "KTAU Scheduling Instrumentation" 
++	depends on KTAU
++	help
++	  Enable KTAU scheduling instrumentation
++	  
++	  If unsure, say N.
++
++config KTAU_SOCKET
++	bool "KTAU Socket Instrumentation" 
++	depends on KTAU 
++	help
++	  Enable KTAU network socket instrumentation
++	  
++	  If unsure, say N.
++
++config KTAU_TCP
++	bool "KTAU TCP Instrumentation" 
++	depends on KTAU
++	help
++	  Enable KTAU  TCP protocol instrumentation
++	  
++	  If unsure, say N.
++
++config KTAU_ICMP
++	bool "KTAU  ICMP Instrumentation" 
++	depends on KTAU
++	help
++	  Enable KTAU ICMP protocol instrumentation
++	  
++	  If unsure, say N.
++endmenu
+diff -urN linux-2.6.14.3/arch/ppc/kernel/entry.S linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/ppc/kernel/entry.S
+--- linux-2.6.14.3/arch/ppc/kernel/entry.S	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/ppc/kernel/entry.S	2006-01-24 08:49:22.000000000 -0800
+@@ -35,6 +35,43 @@
+ #undef SHOW_SYSCALLS
+ #undef SHOW_SYSCALLS_TASK
+ 
++#ifdef CONFIG_KTAU_SYSCALL
++/* KTAU_SYSCALL Adapted from LTT(Linux Tracing Toolkit) stuff
++ *assumes
++ *      - r10 has syscall-handler address
++ *      - r8 has syscall number
++ */
++#define KTAU_SYSCALL_ENTRY      \
++        SAVE_NVGPRS(r1);                        /* Save Non-volatile GPRs (13-31) */    \
++        addi    r3,r1,STACK_FRAME_OVERHEAD;     /* Put pointer to registers into r3 */  \
++        ori     r4,r10,0;                       /* Save r10 for use by ktau_syscall_exit */ \
++        ori     r5,r8,0;                        /* Restore the call no */ \
++	REST_GPR(8,r1);				/* Restore GPR8 */ \
++        mflr    r29;                            /* Save LR */ \
++        bl      ppc_ktau_syscall_entry;     \
++        mtlr    r29;                            /* Restore LR */ \
++        lwz     r0,GPR0(r1);                    /* Restore original registers */ \
++        lwz     r3,GPR3(r1);    \
++        lwz     r4,GPR4(r1);    \
++        lwz     r5,GPR5(r1);    \
++        lwz     r6,GPR6(r1);    \
++        lwz     r7,GPR7(r1);    \
++        lwz     r8,GPR8(r1);    \
++        REST_NVGPRS(r1);
++
++#define KTAU_SYSCALL_EXIT \
++        addi    r3,r1,STACK_FRAME_OVERHEAD;     /* Put pointer to registers into r3 */  \
++        bl      ppc_ktau_syscall_exit; \
++        lwz     r0,GPR0(r1);                    /* Restore original registers */ \
++        lwz     r3,RESULT(r1); \
++        lwz     r4,GPR4(r1); \
++        lwz     r5,GPR5(r1); \
++        lwz     r6,GPR6(r1); \
++        lwz     r7,GPR7(r1); \
++        lwz     r8,GPR8(r1); \
++        addi    r9,r1,STACK_FRAME_OVERHEAD;
++
++#endif /* CONFIG_KTAU_SYSCALL */
+ /*
+  * MSR_KERNEL is > 0x10000 on 4xx/Book-E since it include MSR_CE.
+  */
+@@ -207,6 +244,11 @@
+ 	andi.	r11,r11,_TIF_SYSCALL_T_OR_A
+ 	bne-	syscall_dotrace
+ syscall_dotrace_cont:
++#ifdef CONFIG_KTAU_SYSCALL
++        SAVE_GPR(8,r1)
++        ori     r8,r0,0        /* to use by KTAU_SYSCALL_ENTRY */
++#endif /* CONFIG_KTAU_SYSCALL */
++
+ 	cmplwi	0,r0,NR_syscalls
+ 	lis	r10,sys_call_table@h
+ 	ori	r10,r10,sys_call_table@l
+@@ -214,11 +256,22 @@
+ 	bge-	66f
+ 	lwzx	r10,r10,r0	/* Fetch system call handler [ptr] */
+ 	mtlr	r10
++
++#ifdef CONFIG_KTAU_SYSCALL
++        KTAU_SYSCALL_ENTRY
++#endif /* CONFIG_KTAU_SYSCALL */
++
+ 	addi	r9,r1,STACK_FRAME_OVERHEAD
+ 	PPC440EP_ERR42
+ 	blrl			/* Call handler */
+ 	.globl	ret_from_syscall
+ ret_from_syscall:
++
++#ifdef CONFIG_KTAU_SYSCALL
++        stw     r3,RESULT(r1)   /* Save result */
++        KTAU_SYSCALL_EXIT
++#endif /* CONFIG_KTAU_SYSCALL */
++
+ #ifdef SHOW_SYSCALLS
+ 	bl	do_show_syscall_exit
+ #endif
+diff -urN linux-2.6.14.3/arch/ppc/kernel/irq.c linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/ppc/kernel/irq.c
+--- linux-2.6.14.3/arch/ppc/kernel/irq.c	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/ppc/kernel/irq.c	2006-01-24 08:49:22.000000000 -0800
+@@ -58,6 +58,10 @@
+ #include <asm/prom.h>
+ #include <asm/ptrace.h>
+ 
++#ifdef CONFIG_KTAU_IRQ
++#include <linux/ktau/ktau_inst.h>
++#endif /*CONFIG_KTAU_IRQ*/
++
+ #define NR_MASK_WORDS	((NR_IRQS + 31) / 32)
+ 
+ extern atomic_t ipi_recv;
+@@ -138,6 +142,12 @@
+ void do_IRQ(struct pt_regs *regs)
+ {
+ 	int irq, first = 1;
++
++#ifdef CONFIG_KTAU_IRQ
++        GET_KTAU_INDEX();
++        if(current->pid) ktau_start_timer((unsigned int) &do_IRQ, KTAU_IRQ_MSK);
++#endif /*CONFIG_KTAU_IRQ*/
++
+         irq_enter();
+ 
+ 	/*
+@@ -156,6 +166,11 @@
+ 		/* That's not SMP safe ... but who cares ? */
+ 		ppc_spurious_interrupts++;
+         irq_exit();
++
++#ifdef CONFIG_KTAU_IRQ
++        if(current->pid) ktau_stop_timer((unsigned int) &do_IRQ,KTAU_IRQ_MSK);
++#endif /*CONFIG_KTAU_IRQ*/
++
+ }
+ 
+ void __init init_IRQ(void)
+diff -urN linux-2.6.14.3/arch/ppc/kernel/setup.c linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/ppc/kernel/setup.c
+--- linux-2.6.14.3/arch/ppc/kernel/setup.c	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/ppc/kernel/setup.c	2006-01-24 08:49:23.000000000 -0800
+@@ -73,6 +73,10 @@
+ unsigned long ISA_DMA_THRESHOLD;
+ unsigned long DMA_MODE_READ, DMA_MODE_WRITE;
+ 
++#ifdef CONFIG_KTAU_BOOTOPT
++extern void ktau_bootopt_parse(char *);
++#endif /*CONFIG_KTAU_BOOTOPT*/
++
+ #ifdef CONFIG_PPC_MULTIPLATFORM
+ int _machine = 0;
+ 
+@@ -787,4 +791,8 @@
+ 
+ 	/* this is for modules since _machine can be a define -- Cort */
+ 	ppc_md.ppc_machine = _machine;
++
++#ifdef CONFIG_KTAU_BOOTOPT
++	ktau_bootopt_parse(*cmdline_p);
++#endif /* CONFIG_KTAU_BOOTOPT */
+ }
+diff -urN linux-2.6.14.3/arch/ppc/kernel/signal.c linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/ppc/kernel/signal.c
+--- linux-2.6.14.3/arch/ppc/kernel/signal.c	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/ppc/kernel/signal.c	2006-01-24 08:49:23.000000000 -0800
+@@ -34,6 +34,12 @@
+ #include <asm/pgtable.h>
+ #include <asm/cacheflush.h>
+ 
++#ifdef CONFIG_KTAU_SYSCALL
++#include <linux/ktau/ktau_inst.h>
++#include <linux/ktau/ktau_bootopt.h>
++#include <linux/ktau/ktau_hash.h>
++#endif /*CONFIG_KTAU_SYSCALL*/
++
+ #undef DEBUG_SIG
+ 
+ #define _BLOCKABLE (~(sigmask(SIGKILL) | sigmask(SIGSTOP)))
+@@ -53,6 +59,17 @@
+ {
+ 	sigset_t saveset;
+ 
++#ifdef CONFIG_KTAU_SYSCALL
++        /* 
++         * We put the stop here to intercept the control before the
++         * registers are being restored. 
++         * Note that we are hardcoding the call number here.
++         */
++	if(current->pid){
++		ppc_ktau_syscall_exit(NULL,(unsigned long)&sys_sigsuspend,72);
++	}
++#endif /*CONFIG_KTAU_SYSCALL*/
++
+ 	mask &= _BLOCKABLE;
+ 	spin_lock_irq(&current->sighand->siglock);
+ 	saveset = current->blocked;
+@@ -76,6 +93,16 @@
+ 		  int p6, int p7, struct pt_regs *regs)
+ {
+ 	sigset_t saveset, newset;
++#ifdef CONFIG_KTAU_SYSCALL
++        /* 
++         * We put the stop here to intercept the control before the
++         * registers are being restored. 
++         * Note that we are hardcoding the call number here.
++         */
++	if(current->pid){
++		ppc_ktau_syscall_exit(NULL,(unsigned long)&sys_rt_sigsuspend,178);
++	}
++#endif /*CONFIG_KTAU_SYSCALL*/
+ 
+ 	/* XXX: Don't preclude handling different sized sigset_t's.  */
+ 	if (sigsetsize != sizeof(sigset_t))
+@@ -483,6 +510,17 @@
+ {
+ 	struct rt_sigframe __user *rt_sf;
+ 
++#ifdef CONFIG_KTAU_SYSCALL
++        /* 
++         * We put the stop here to intercept the control before the
++         * registers are being restored. 
++         * Note that we are hardcoding the call number here.
++         */
++	if(current->pid){
++		ppc_ktau_syscall_exit(NULL,(unsigned long)&sys_rt_sigreturn,172);
++	}
++#endif /*CONFIG_KTAU_SYSCALL*/
++
+ 	/* Always make any pending restarted system calls return -EINTR */
+ 	current_thread_info()->restart_block.fn = do_no_restart_syscall;
+ 
+@@ -669,6 +707,17 @@
+ 	struct mcontext __user *sr;
+ 	sigset_t set;
+ 
++#ifdef CONFIG_KTAU_SYSCALL
++        /* 
++         * We put the stop here to intercept the control before the
++         * registers are being restored. 
++         * Note that we are hardcoding the call number here.
++         */
++	if(current->pid){
++		ppc_ktau_syscall_exit(NULL,(unsigned long)&sys_sigreturn,119);
++	}
++#endif /*CONFIG_KTAU_SYSCALL*/
++
+ 	/* Always make any pending restarted system calls return -EINTR */
+ 	current_thread_info()->restart_block.fn = do_no_restart_syscall;
+ 
+diff -urN linux-2.6.14.3/arch/ppc/kernel/time.c linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/ppc/kernel/time.c
+--- linux-2.6.14.3/arch/ppc/kernel/time.c	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/ppc/kernel/time.c	2006-01-24 08:49:23.000000000 -0800
+@@ -66,6 +66,10 @@
+ 
+ #include <asm/time.h>
+ 
++#ifdef CONFIG_KTAU_IRQ
++#include <linux/ktau/ktau_inst.h>
++#endif /* CONFIG_KTAU_IRQ */
++
+ /* XXX false sharing with below? */
+ u64 jiffies_64 = INITIAL_JIFFIES;
+ 
+@@ -133,6 +137,11 @@
+ 	unsigned jiffy_stamp = last_jiffy_stamp(cpu);
+ 	extern void do_IRQ(struct pt_regs *);
+ 
++#ifdef CONFIG_KTAU_IRQ
++        GET_KTAU_INDEX();
++        if(current->pid) ktau_start_timer((unsigned int) &timer_interrupt,KTAU_IRQ_MSK);
++#endif /*CONFIG_KTAU_IRQ*/
++
+ 	if (atomic_read(&ppc_n_lost_interrupts) != 0)
+ 		do_IRQ(regs);
+ 
+@@ -188,6 +197,11 @@
+ 		ppc_md.heartbeat();
+ 
+ 	irq_exit();
++
++#ifdef CONFIG_KTAU_IRQ
++        if(current->pid) ktau_stop_timer((unsigned int) &timer_interrupt,KTAU_IRQ_MSK);
++#endif /*CONFIG_KTAU_IRQ*/
++
+ }
+ 
+ /*
+diff -urN linux-2.6.14.3/arch/ppc/kernel/traps.c linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/ppc/kernel/traps.c
+--- linux-2.6.14.3/arch/ppc/kernel/traps.c	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/ppc/kernel/traps.c	2006-01-24 08:49:23.000000000 -0800
+@@ -43,6 +43,26 @@
+ #endif
+ #include <asm/perfmon.h>
+ 
++#ifdef CONFIG_KTAU
++#include <linux/ktau/ktau_inst.h>
++#include <linux/ktau/ktau_hash.h>
++#define TAU_NAME "traps.h"
++#define PFX TAU_NAME
++//#define TAU_DEBUG     1
++#include <linux/ktau/ktau_print.h>
++/* SUPER-HACK: NR_syscalls isnt defined here. so defining own */
++#define KTAU_MAX_SYSCALL                299
++extern void *sys_call_table; //SUPER_HACK
++#endif /* CONFIG_KTAU */
++
++#ifdef CONFIG_KTAU_EXCEPTION
++#define ktau_start_exception(index,fnc_addr)    ktau_start_prof(KTAU_EXCEPTION_BASE+index,(unsigned int)fnc_addr,KTAU_EXCEPTION_MSK)
++#define ktau_stop_exception(index,fnc_addr)     ktau_stop_prof(KTAU_EXCEPTION_BASE+index,(unsigned int)fnc_addr,KTAU_EXCEPTION_MSK)
++#else /*CONFIG_KTAU_EXCEPTION*/
++#define ktau_start_exception(index,fnc_addr)
++#define ktau_stop_exception(index,fnc_addr)
++#endif /*CONFIG_KTAU_EXCEPTION*/
++
+ #ifdef CONFIG_XMON
+ void (*debugger)(struct pt_regs *regs) = xmon;
+ int (*debugger_bpt)(struct pt_regs *regs) = xmon_bpt;
+@@ -950,3 +970,130 @@
+ void __init trap_init(void)
+ {
+ }
++
++#ifdef CONFIG_KTAU_SYSCALL
++void ktau_syscall_entry(struct pt_regs *regs , unsigned long addr , unsigned long callno)
++{
++        if(current->pid){
++                if((callno < 0) || (callno >= KTAU_MAX_SYSCALL)) {
++                        err("ktau_syscall_entry: Bad Syscall-No detected: (Possibly restarted-syscall) pid: %d  callno: %lu  addr: %lx\n", 
++					current->pid, callno, addr);
++                        show_regs(regs);
++                        return;
++                }
++                ktau_start_prof(callno,addr,KTAU_SYSCALL_MSK);
++        }
++}
++
++void ktau_syscall_exit(struct pt_regs *regs , unsigned long addr , unsigned long callno)
++{
++        if(current->pid){
++                if((callno < 0) || (callno >= KTAU_MAX_SYSCALL)) {
++                        err("ktau_syscall_exit: Bad Syscall-No detected: (Possibly restarted-syscall) pid: %d  callno: %lu  addr: %lx\n", 
++					current->pid, callno, addr);
++                        show_regs(regs);
++                        err("Trying to instead use GPR0: %lu\n",regs->gpr[0]);
++                        if((regs->gpr[0] < 0) || (regs->gpr[0] >= KTAU_MAX_SYSCALL) ) {
++                                err("FAILED: GPRS0 also bad?\n");
++                                return;
++                        } else {
++                                callno = regs->gpr[0];
++                                addr = *((unsigned long*)sys_call_table + callno);
++                                err("Using GPRS0:  callno: %lu   addr: %lx\n", callno, addr);
++                        }
++                }
++                
++		/*
++                * Call KTAU stop:
++                */
++                if(callno != 0xffffffff){
++                       ktau_stop_prof(callno,addr,KTAU_SYSCALL_MSK);
++                }else{
++                       /* This is the case when sys_sigreturn() is called.
++                        * Syscall handler modified the ORIG_EAX to be -1
++                        */
++                       info("Warning: pid:%d has callno is -1",current->pid);
++                       current->ktau->stackDepth = 0;
++                }
++               /* Check to see if the stackDepth is 0 when leaving the system call */
++               if(current->ktau->stackDepth != 0){
++                       info("Warning: ktau_syscall_exit: stackDepth is not zero.\nstackDepth = %u, address = %x, callno =%lu\n",
++                                       current->ktau->stackDepth, addr, callno);
++               }
++        }
++}
++
++/* 
++ * PPC syscall instrumetation
++ */
++extern void ppc_ktau_syscall_entry(struct pt_regs *regs , unsigned long addr , unsigned long callno);
++extern void ppc_ktau_syscall_exit(struct pt_regs *regs , unsigned long addr , unsigned long callno);
++
++void ppc_ktau_syscall_entry(struct pt_regs *regs , unsigned long addr , unsigned long callno)
++{
++	int i;
++	if(current->pid){
++		if(current->ktau->syscall_depth <  KTAU_NESTED_SYSCALL_LEVEL ){
++			current->ktau->syscall_addr[current->ktau->syscall_depth] = addr;
++			current->ktau->syscall_stack[current->ktau->syscall_depth] = callno;
++			current->ktau->syscall_depth += 1;
++
++			/* DEBUG */
++			if(current->ktau->syscall_depth > 1){
++				printk("Warning: ppc_ktau_syscall_entry: pid: %d has nested syscall, callno: %lu\n",current->pid,callno);
++				for(i=0;i< KTAU_NESTED_SYSCALL_LEVEL ;i++){
++					printk("syscall_depth = %d is %lu\n",i,current->ktau->syscall_stack[i]);
++				}
++			}
++
++			/* Call real KTAU exit for syscall */
++			ktau_syscall_entry(regs,addr,callno);
++		}else{
++			printk("ppc_ktau_syscall_entry: pid: %d, callno %lu exceed MAX syscall_depth\n",current->pid,callno);
++			for(i=0;i< KTAU_NESTED_SYSCALL_LEVEL ;i++){
++				printk("syscall_depth = %d is %lu\n",i,current->ktau->syscall_stack[i]);
++			}
++
++			/* Reset syscall_depth */
++			current->ktau->syscall_depth = 0;
++		}
++	}
++}
++
++void ppc_ktau_syscall_exit(struct pt_regs *regs , unsigned long addr , unsigned long callno)
++{
++	unsigned long cur_addr= 0;
++	unsigned long cur_callno = 0;
++	int i = 0;
++	if(current->pid){
++		/* Once a process is forked, it will see the exit system call first.
++		 * The syscall_depth is initialized to a number (100) which indicate the 
++		 * first time it see the exit instrumentation point. Then it will reinitialized
++		 * to 0
++		 */
++		if(current->ktau->syscall_depth == 100){
++			current->ktau->syscall_depth = 0;
++		}
++		else if(current->ktau->syscall_depth > 0){
++			current->ktau->syscall_depth -= 1;
++			/* Pop the function addr and callno off the stack */
++			cur_addr	= current->ktau->syscall_addr[current->ktau->syscall_depth];
++			cur_callno 	= current->ktau->syscall_stack[current->ktau->syscall_depth];
++			
++			/* DEBUG */
++			if(current->ktau->syscall_depth > 0){
++				printk("Warning: ppc_ktau_syscall_exit: pid: %d has nested syscall, cur_callno: %lu\n",current->pid,cur_callno);
++				for(i=0;i< KTAU_NESTED_SYSCALL_LEVEL ;i++){
++					printk("syscall_depth = %d is %lu\n",i,current->ktau->syscall_stack[i]);
++				}
++			}
++
++			/* Call real KTAU entry for syscall */
++			ktau_syscall_exit(regs,cur_addr,cur_callno);
++		}else{
++			printk("ppc_ktau_syscall_exit: pid: %d, callno %lu exceed MIN syscall_depth\n",current->pid,callno);
++		}
++	}
++}
++
++#endif /*CONFIG_KTAU_SYSCALL*/
+diff -urN linux-2.6.14.3/arch/ppc/mm/fault.c linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/ppc/mm/fault.c
+--- linux-2.6.14.3/arch/ppc/mm/fault.c	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/ppc/mm/fault.c	2006-01-24 08:49:23.000000000 -0800
+@@ -37,6 +37,10 @@
+ #include <asm/uaccess.h>
+ #include <asm/tlbflush.h>
+ 
++#ifdef CONFIG_KTAU_EXCEPTION
++#include <linux/ktau/ktau_inst.h>
++#endif /*CONFIG_KTAU_EXCEPTION*/
++
+ #if defined(CONFIG_XMON) || defined(CONFIG_KGDB)
+ extern void (*debugger)(struct pt_regs *);
+ extern void (*debugger_fault_handler)(struct pt_regs *);
+@@ -116,22 +120,39 @@
+ 		is_write = error_code & 0x02000000;
+ #endif /* CONFIG_4xx || CONFIG_BOOKE */
+ 
++#ifdef CONFIG_KTAU_EXCEPTION
++       if(current->pid != 0) ktau_start_prof(KTAU_EXCEPTION_BASE+11, (unsigned int) &do_page_fault, KTAU_EXCEPTION_MSK);
++#endif /*CONFIG_KTAU_EXCEPTION*/
++
+ #if defined(CONFIG_XMON) || defined(CONFIG_KGDB)
+ 	if (debugger_fault_handler && TRAP(regs) == 0x300) {
+ 		debugger_fault_handler(regs);
++#ifdef CONFIG_KTAU_EXCEPTION
++                if(current->pid != 0) ktau_stop_prof(KTAU_EXCEPTION_BASE+11, (unsigned int) &do_page_fault, KTAU_EXCEPTION_MSK);
++#endif /*CONFIG_KTAU_EXCEPTION*/
+ 		return 0;
+ 	}
+ #if !(defined(CONFIG_4xx) || defined(CONFIG_BOOKE))
+ 	if (error_code & 0x00400000) {
+ 		/* DABR match */
+ 		if (debugger_dabr_match(regs))
++		{
++#ifdef CONFIG_KTAU_EXCEPTION
++                        if(current->pid != 0) ktau_stop_prof(KTAU_EXCEPTION_BASE+11, (unsigned int) &do_page_fault, KTAU_EXCEPTION_MSK);
++#endif /*CONFIG_KTAU_EXCEPTION*/
+ 			return 0;
++		}
+ 	}
+ #endif /* !(CONFIG_4xx || CONFIG_BOOKE)*/
+ #endif /* CONFIG_XMON || CONFIG_KGDB */
+ 
+ 	if (in_atomic() || mm == NULL)
++	{
++#ifdef CONFIG_KTAU_EXCEPTION
++                if(current->pid != 0) ktau_stop_prof(KTAU_EXCEPTION_BASE+11, (unsigned int) &do_page_fault, KTAU_EXCEPTION_MSK);
++#endif /*CONFIG_KTAU_EXCEPTION*/
+ 		return SIGSEGV;
++	}
+ 
+ 	down_read(&mm->mmap_sem);
+ 	vma = find_vma(mm, address);
+@@ -228,6 +249,9 @@
+ 			_tlbie(address);
+ 			pte_unmap(ptep);
+ 			up_read(&mm->mmap_sem);
++#ifdef CONFIG_KTAU_EXCEPTION
++                        if(current->pid != 0) ktau_stop_prof(KTAU_EXCEPTION_BASE+11, (unsigned int) &do_page_fault, KTAU_EXCEPTION_MSK);
++#endif /*CONFIG_KTAU_EXCEPTION*/
+ 			return 0;
+ 		}
+ 		if (ptep != NULL)
+@@ -270,12 +294,19 @@
+ 	 * -- Cort
+ 	 */
+ 	pte_misses++;
++#ifdef CONFIG_KTAU_EXCEPTION
++	if(current->pid != 0) ktau_stop_prof(KTAU_EXCEPTION_BASE+11, (unsigned int) &do_page_fault, KTAU_EXCEPTION_MSK);
++#endif /*CONFIG_KTAU_EXCEPTION*/
+ 	return 0;
+ 
+ bad_area:
+ 	up_read(&mm->mmap_sem);
+ 	pte_errors++;
+ 
++#ifdef CONFIG_KTAU_EXCEPTION
++	if(current->pid != 0) ktau_stop_prof(KTAU_EXCEPTION_BASE+11, (unsigned int) &do_page_fault, KTAU_EXCEPTION_MSK);
++#endif /*CONFIG_KTAU_EXCEPTION*/
++
+ 	/* User mode accesses cause a SIGSEGV */
+ 	if (user_mode(regs)) {
+ 		_exception(SIGSEGV, regs, code, address);
+@@ -296,12 +327,19 @@
+ 		goto survive;
+ 	}
+ 	printk("VM: killing process %s\n", current->comm);
++#ifdef CONFIG_KTAU_EXCEPTION
++	if(current->pid != 0) ktau_stop_prof(KTAU_EXCEPTION_BASE+11, (unsigned int) &do_page_fault, KTAU_EXCEPTION_MSK);
++#endif /*CONFIG_KTAU_EXCEPTION*/
+ 	if (user_mode(regs))
+ 		do_exit(SIGKILL);
+ 	return SIGKILL;
+ 
+ do_sigbus:
+ 	up_read(&mm->mmap_sem);
++#ifdef CONFIG_KTAU_EXCEPTION
++	if(current->pid != 0) ktau_stop_prof(KTAU_EXCEPTION_BASE+11, (unsigned int) &do_page_fault, KTAU_EXCEPTION_MSK);
++#endif /*CONFIG_KTAU_EXCEPTION*/
++
+ 	info.si_signo = SIGBUS;
+ 	info.si_errno = 0;
+ 	info.si_code = BUS_ADRERR;
+diff -urN linux-2.6.14.3/arch/ppc/oprofile/Kconfig linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/ppc/oprofile/Kconfig
+--- linux-2.6.14.3/arch/ppc/oprofile/Kconfig	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/arch/ppc/oprofile/Kconfig	2006-01-24 08:49:24.000000000 -0800
+@@ -19,5 +19,135 @@
+ 
+ 	  If unsure, say N.
+ 
++config KTAU
++	bool "KTAU Profiling (EXPERIMENTAL)"
++	depends on PROFILING
++	help
++	  KTAU is a Kernel Tuning Analysis Utilities providing 
++	  context-based (process/thread) profiling of the system.
++	  
++	  If unsure, say N.
++
++config KTAU_MERGE
++	bool "Merging KTAU Profile with TAU"
++	depends on KTAU
++	help
++	  Enable kernel-space and user-space profile merging using mmap.
++	  
++	  If unsure, say N.
++
++config KTAU_TRACE
++	bool "KTAU Tracing" 
++	depends on KTAU
++	help
++	  Enable KTAU tracing using circular buffer.
++
++	  If unsure, say N.
++
++config KTAU_TRACE_MAX_IN_K
++	int "Maximum number of KTAU trace entries (in K)"
++	default "5"
++	depends on KTAU_TRACE
++	help
++	  Please specify the size of the circular buffer used in KTAU tracing
++	
++	  If unsure, say N.
++
++config KTAU_BOOTOPT
++	bool "KTAU Kernel Boot Option"
++	depends on KTAU
++	help
++	  This option allows KTAU instrumentations to be enabled/disabled
++	  using the linux kernel boot options. Note that each instrumentation
++	  must be enabled in the kenel configuration phase. 
++	  
++	  Available options are:
++	  	- ktau_syscall
++		- ktau_irq
++		- ktau_bh
++		- ktau_sched
++		- ktau_exception
++		- ktau_signal
++		- ktau_tcp
++		- ktau_socket
++		- ktau_icmp
++		
++	  If unsure, say N.
++
++config KTAU_SYSCALL
++	bool "KTAU System Calls Instrumentation" 
++	depends on KTAU 
++	help
++	  Enable KTAU system calls instrumentation
++	  
++	  If unsure, say N.
++
++config KTAU_IRQ
++	bool "KTAU Interrupt Instrumentation" 
++	depends on KTAU
++	help
++	  Enable KTAU interrupt instrumentation
++	  
++	  If unsure, say N.
++
++config KTAU_BH
++	bool "KTAU Bottom Halves Instrumentation" 
++	depends on KTAU
++	help
++	  Enable KTAU bottom havles instrumentation including
++	  	- Softirq
++		- Tasklet
++		- Timer Interrupt
++		- Work Queue
++	  
++	  If unsure, say N.
++
++config KTAU_EXCEPTION
++        bool "KTAU Exception Instrumentation" 
++        depends on KTAU
++        help
++          Enable KTAU exception instrumentation
++
++          If unsure, say N.
++
++config KTAU_SIGNAL
++        bool "KTAU Signal Instrumentation" 
++        depends on KTAU
++        help
++          Enable KTAU signal instrumentation
++
++          If unsure, say N.
++
++config KTAU_SCHED
++	bool "KTAU Scheduling Instrumentation" 
++	depends on KTAU
++	help
++	  Enable KTAU scheduling instrumentation
++	  
++	  If unsure, say N.
++
++config KTAU_SOCKET
++	bool "KTAU Socket Instrumentation" 
++	depends on KTAU 
++	help
++	  Enable KTAU network socket instrumentation
++	  
++	  If unsure, say N.
++
++config KTAU_TCP
++	bool "KTAU TCP Instrumentation" 
++	depends on KTAU
++	help
++	  Enable KTAU  TCP protocol instrumentation
++	  
++	  If unsure, say N.
++
++config KTAU_ICMP
++	bool "KTAU  ICMP Instrumentation" 
++	depends on KTAU
++	help
++	  Enable KTAU ICMP protocol instrumentation
++	  
++	  If unsure, say N.
+ endmenu
+ 
+diff -urN linux-2.6.14.3/include/linux/sched.h linux-2.6.14.3-ktau-1.7.3-ppc-i386/include/linux/sched.h
+--- linux-2.6.14.3/include/linux/sched.h	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/include/linux/sched.h	2006-01-24 08:49:55.000000000 -0800
+@@ -37,6 +37,10 @@
+ 
+ #include <linux/auxvec.h>	/* For AT_VECTOR_SIZE */
+ 
++#ifdef CONFIG_KTAU
++struct _ktau_prof;
++#endif /*CONFIG_KTAU*/
++
+ struct exec_domain;
+ 
+ /*
+@@ -586,6 +590,7 @@
+ 	unsigned long ttwu_move_affine;
+ 	unsigned long ttwu_move_balance;
+ #endif
++
+ };
+ 
+ extern void partition_sched_domains(cpumask_t *partition1,
+@@ -813,6 +818,11 @@
+ 	int cpuset_mems_generation;
+ #endif
+ 	atomic_t fs_excl;	/* holding fs exclusive resources */
++
++#ifdef CONFIG_KTAU
++        struct _ktau_prof *ktau;
++#endif /*CONFIG_KTAU*/
++
+ };
+ 
+ static inline pid_t process_group(struct task_struct *tsk)
+diff -urN linux-2.6.14.3/init/main.c linux-2.6.14.3-ktau-1.7.3-ppc-i386/init/main.c
+--- linux-2.6.14.3/init/main.c	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/init/main.c	2006-01-24 08:50:02.000000000 -0800
+@@ -101,6 +101,12 @@
+ static inline void acpi_early_init(void) { }
+ #endif
+ 
++#ifdef CONFIG_KTAU
++extern void ktau_init(void);      /* KTAU initialization */
++#endif /*CONFIG_KTAU*/
++
++
++
+ #ifdef CONFIG_TC
+ extern void tc_init(void);
+ #endif
+@@ -542,6 +548,10 @@
+ 
+ 	acpi_early_init(); /* before LAPIC and SMP init */
+ 
++#ifdef CONFIG_KTAU
++	ktau_init();
++#endif /*CONFIG_KTAU */
++
+ 	/* Do the rest non-__init'ed, we're now alive */
+ 	rest_init();
+ }
+diff -urN linux-2.6.14.3/kernel/Makefile linux-2.6.14.3-ktau-1.7.3-ppc-i386/kernel/Makefile
+--- linux-2.6.14.3/kernel/Makefile	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/kernel/Makefile	2006-01-24 08:50:02.000000000 -0800
+@@ -32,6 +32,7 @@
+ obj-$(CONFIG_GENERIC_HARDIRQS) += irq/
+ obj-$(CONFIG_CRASH_DUMP) += crash_dump.o
+ obj-$(CONFIG_SECCOMP) += seccomp.o
++obj-$(CONFIG_KTAU) += ktau/
+ 
+ ifneq ($(CONFIG_SCHED_NO_NO_OMIT_FRAME_POINTER),y)
+ # According to Alan Modra <alan@linuxcare.com.au>, the -fno-omit-frame-pointer is
+diff -urN linux-2.6.14.3/kernel/fork.c linux-2.6.14.3-ktau-1.7.3-ppc-i386/kernel/fork.c
+--- linux-2.6.14.3/kernel/fork.c	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/kernel/fork.c	2006-01-24 08:50:02.000000000 -0800
+@@ -50,6 +50,10 @@
+ #include <asm/cacheflush.h>
+ #include <asm/tlbflush.h>
+ 
++#ifdef CONFIG_KTAU
++#include <linux/ktau/ktau_hash.h>
++#endif /* CONFIG_KTAU */
++
+ /*
+  * Protected counters by write_lock_irq(&tasklist_lock)
+  */
+@@ -101,6 +105,15 @@
+ 
+ void free_task(struct task_struct *tsk)
+ {
++
++#ifdef CONFIG_KTAU
++	/* 
++	 * This must be done before task_struct
++	 * is free. 
++	 */
++        remove_task_profile(tsk);
++#endif /*CONFIG_KTAU*/
++
+ 	free_thread_info(tsk->thread_info);
+ 	free_task_struct(tsk);
+ }
+@@ -1032,12 +1045,16 @@
+ 	   These must match for thread signalling to apply */
+ 	   
+ 	p->parent_exec_id = p->self_exec_id;
+-
++ 
+ 	/* ok, now we should be set up.. */
+ 	p->exit_signal = (clone_flags & CLONE_THREAD) ? -1 : (clone_flags & CSIGNAL);
+ 	p->pdeath_signal = 0;
+ 	p->exit_state = 0;
+ 
++#ifdef CONFIG_KTAU
++        create_task_profile(p);
++#endif /*CONFIG_KTAU*/
++
+ 	/*
+ 	 * Ok, make it visible to the rest of the system.
+ 	 * We dont wake it up yet.
+diff -urN linux-2.6.14.3/kernel/irq/handle.c linux-2.6.14.3-ktau-1.7.3-ppc-i386/kernel/irq/handle.c
+--- linux-2.6.14.3/kernel/irq/handle.c	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/kernel/irq/handle.c	2006-01-24 08:50:02.000000000 -0800
+@@ -12,6 +12,10 @@
+ #include <linux/interrupt.h>
+ #include <linux/kernel_stat.h>
+ 
++#ifdef CONFIG_KTAU_IRQ
++#include <linux/ktau/ktau_inst.h>
++#endif /*CONFIG_KTAU_IRQ*/
++
+ #include "internals.h"
+ 
+ /*
+@@ -109,6 +113,10 @@
+ 	irq_desc_t *desc = irq_desc + irq;
+ 	struct irqaction * action;
+ 	unsigned int status;
++#ifdef CONFIG_KTAU_IRQ
++	GET_KTAU_INDEX();
++	if(current->pid) ktau_start_timer((unsigned int) &__do_IRQ, KTAU_IRQ_MSK);
++#endif /*CONFIG_KTAU_IRQ*/
+ 
+ 	kstat_this_cpu.irqs[irq]++;
+ 	if (CHECK_IRQ_PER_CPU(desc->status)) {
+@@ -120,6 +128,9 @@
+ 		desc->handler->ack(irq);
+ 		action_ret = handle_IRQ_event(irq, regs, desc->action);
+ 		desc->handler->end(irq);
++#ifdef CONFIG_KTAU_IRQ
++		if(current->pid) ktau_stop_timer((unsigned int) &__do_IRQ, KTAU_IRQ_MSK);
++#endif /*CONFIG_KTAU_IRQ*/
+ 		return 1;
+ 	}
+ 
+@@ -187,6 +198,9 @@
+ 	desc->handler->end(irq);
+ 	spin_unlock(&desc->lock);
+ 
++#ifdef CONFIG_KTAU_IRQ
++	if(current->pid) ktau_stop_timer((unsigned int) &__do_IRQ, KTAU_IRQ_MSK);
++#endif /*CONFIG_KTAU_IRQ*/
+ 	return 1;
+ }
+ 
+diff -urN linux-2.6.14.3/kernel/sched.c linux-2.6.14.3-ktau-1.7.3-ppc-i386/kernel/sched.c
+--- linux-2.6.14.3/kernel/sched.c	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/kernel/sched.c	2006-01-24 08:50:02.000000000 -0800
+@@ -51,6 +51,10 @@
+ 
+ #include <asm/unistd.h>
+ 
++#ifdef CONFIG_KTAU_SCHED
++#include <linux/ktau/ktau_inst.h>
++#endif /*CONFIG_KTAU_SCHED*/
++
+ /*
+  * Convert user-nice values [ -20 ... 0 ... 19 ]
+  * to static priority [ MAX_RT_PRIO..MAX_PRIO-1 ],
+@@ -2855,6 +2859,10 @@
+ 	unsigned long run_time;
+ 	int cpu, idx, new_prio;
+ 
++#ifdef CONFIG_KTAU_SCHED
++	GET_KTAU_INDEX();
++#endif /*CONFIG_KTAU_SCHED*/
++
+ 	/*
+ 	 * Test if we are atomic.  Since do_exit() needs to call into
+ 	 * schedule() atomically, we ignore that path for now.
+@@ -3007,9 +3015,16 @@
+ 		rq->curr = next;
+ 		++*switch_count;
+ 
++#ifdef CONFIG_KTAU_SCHED
++		if(current->pid) ktau_start_timer((unsigned int) &schedule,KTAU_SCHED_MSK);
++#endif /*CONFIG_KTAU_SCHED*/
+ 		prepare_task_switch(rq, next);
+ 		prev = context_switch(rq, prev, next);
+ 		barrier();
++#ifdef CONFIG_KTAU_SCHED
++		if(current->pid) ktau_stop_timer((unsigned int) &schedule,KTAU_SCHED_MSK);
++#endif /*CONFIG_KTAU_SCHED*/
++
+ 		/*
+ 		 * this_rq must be evaluated again because prev may have moved
+ 		 * CPUs since it called schedule(), thus the 'rq' on its stack
+diff -urN linux-2.6.14.3/kernel/softirq.c linux-2.6.14.3-ktau-1.7.3-ppc-i386/kernel/softirq.c
+--- linux-2.6.14.3/kernel/softirq.c	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/kernel/softirq.c	2006-01-24 08:50:02.000000000 -0800
+@@ -18,6 +18,11 @@
+ #include <linux/rcupdate.h>
+ 
+ #include <asm/irq.h>
++
++#ifdef CONFIG_KTAU_BH
++#include <linux/ktau/ktau_inst.h>
++#endif /*CONFIG_KTAU_BH*/
++
+ /*
+    - No shared variables, all the data are CPU local.
+    - If a softirq needs serialization, let it serialize itself
+@@ -78,9 +83,18 @@
+ 	int max_restart = MAX_SOFTIRQ_RESTART;
+ 	int cpu;
+ 
++#ifdef CONFIG_KTAU_BH
++	GET_KTAU_INDEX();
++#endif /*CONFIG_KTAU_BH*/
++
+ 	pending = local_softirq_pending();
+ 
++#ifdef CONFIG_KTAU_BH
++	if(current->pid)ktau_start_timer(&__do_softirq, KTAU_BH_MSK);
++#endif /*CONFIG_KTAU_BH*/
++
+ 	local_bh_disable();
++
+ 	cpu = smp_processor_id();
+ restart:
+ 	/* Reset the pending bitmask before enabling irqs */
+@@ -93,6 +107,9 @@
+ 	do {
+ 		if (pending & 1) {
+ 			h->action(h);
++#ifdef CONFIG_KTAU_BH
++//			if(current->pid)ktau_event_prof(KTAU_EVENT_SOFTIRQ,(unsigned int)&__do_softirq);
++#endif /*CONFIG_KTAU_BH*/
+ 			rcu_bh_qsctr_inc(cpu);
+ 		}
+ 		h++;
+@@ -109,6 +126,10 @@
+ 		wakeup_softirqd();
+ 
+ 	__local_bh_enable();
++
++#ifdef CONFIG_KTAU_BH
++	if(current->pid)ktau_stop_timer(&__do_softirq, KTAU_BH_MSK);
++#endif /*CONFIG_KTAU_BH*/
+ }
+ 
+ #ifndef __ARCH_HAS_DO_SOFTIRQ
+@@ -249,12 +270,19 @@
+ static void tasklet_action(struct softirq_action *a)
+ {
+ 	struct tasklet_struct *list;
++#ifdef CONFIG_KTAU_BH
++	GET_KTAU_INDEX();
++#endif /*CONFIG_KTAU_BH*/
+ 
+ 	local_irq_disable();
+ 	list = __get_cpu_var(tasklet_vec).list;
+ 	__get_cpu_var(tasklet_vec).list = NULL;
+ 	local_irq_enable();
+ 
++#ifdef CONFIG_KTAU_BH
++	if(current->pid)ktau_start_timer(&tasklet_action, KTAU_BH_MSK);
++#endif /*CONFIG_KTAU_BH*/
++
+ 	while (list) {
+ 		struct tasklet_struct *t = list;
+ 
+@@ -264,6 +292,9 @@
+ 			if (!atomic_read(&t->count)) {
+ 				if (!test_and_clear_bit(TASKLET_STATE_SCHED, &t->state))
+ 					BUG();
++#ifdef CONFIG_KTAU_BH
++//				if(current->pid)ktau_event_prof(KTAU_EVENT_TASKLET,(unsigned int)&tasklet_action);
++#endif /*CONFIG_KTAU_BH*/
+ 				t->func(t->data);
+ 				tasklet_unlock(t);
+ 				continue;
+@@ -277,17 +308,27 @@
+ 		__raise_softirq_irqoff(TASKLET_SOFTIRQ);
+ 		local_irq_enable();
+ 	}
++#ifdef CONFIG_KTAU_BH
++	if(current->pid)ktau_stop_timer(&tasklet_action, KTAU_BH_MSK);
++#endif /*CONFIG_KTAU_BH*/
+ }
+ 
+ static void tasklet_hi_action(struct softirq_action *a)
+ {
+ 	struct tasklet_struct *list;
++#ifdef CONFIG_KTAU_BH
++	GET_KTAU_INDEX();
++#endif /*CONFIG_KTAU_BH*/
+ 
+ 	local_irq_disable();
+ 	list = __get_cpu_var(tasklet_hi_vec).list;
+ 	__get_cpu_var(tasklet_hi_vec).list = NULL;
+ 	local_irq_enable();
+ 
++#ifdef CONFIG_KTAU_BH
++	if(current->pid)ktau_start_timer(&tasklet_hi_action, KTAU_BH_MSK);
++#endif /*CONFIG_KTAU_BH*/
++
+ 	while (list) {
+ 		struct tasklet_struct *t = list;
+ 
+@@ -297,6 +338,9 @@
+ 			if (!atomic_read(&t->count)) {
+ 				if (!test_and_clear_bit(TASKLET_STATE_SCHED, &t->state))
+ 					BUG();
++#ifdef CONFIG_KTAU_BH
++//				if(current->pid)ktau_event_prof(KTAU_EVENT_HI_TASKLET,(unsigned int)&tasklet_action);
++#endif /*CONFIG_KTAU_BH*/
+ 				t->func(t->data);
+ 				tasklet_unlock(t);
+ 				continue;
+@@ -310,6 +354,9 @@
+ 		__raise_softirq_irqoff(HI_SOFTIRQ);
+ 		local_irq_enable();
+ 	}
++#ifdef CONFIG_KTAU_BH
++	if(current->pid)ktau_stop_timer(&tasklet_hi_action, KTAU_BH_MSK);
++#endif /*CONFIG_KTAU_BH*/
+ }
+ 
+ 
+diff -urN linux-2.6.14.3/kernel/timer.c linux-2.6.14.3-ktau-1.7.3-ppc-i386/kernel/timer.c
+--- linux-2.6.14.3/kernel/timer.c	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/kernel/timer.c	2006-01-24 08:50:02.000000000 -0800
+@@ -34,12 +34,18 @@
+ #include <linux/cpu.h>
+ #include <linux/syscalls.h>
+ 
++#ifdef CONFIG_KTAU_BH
++#include <linux/ktau/ktau_inst.h>
++#endif /*CONFIG_KTAU_BH*/
++
+ #include <asm/uaccess.h>
+ #include <asm/unistd.h>
+ #include <asm/div64.h>
+ #include <asm/timex.h>
+ #include <asm/io.h>
+ 
++#include <linux/ktau/ktau_hash.h>
++
+ #ifdef CONFIG_TIME_INTERPOLATION
+ static void time_interpolator_update(long delta_nsec);
+ #else
+@@ -460,6 +466,10 @@
+ static inline void __run_timers(tvec_base_t *base)
+ {
+ 	struct timer_list *timer;
++#ifdef CONFIG_KTAU_BH
++	GET_KTAU_INDEX();
++	if(current->pid) ktau_start_timer((unsigned int)&__run_timers, KTAU_BH_MSK);
++#endif /*CONFIG_KTAU_BH*/
+ 
+ 	spin_lock_irq(&base->t_base.lock);
+ 	while (time_after_eq(jiffies, base->timer_jiffies)) {
+@@ -505,6 +515,9 @@
+ 	}
+ 	set_running_timer(base, NULL);
+ 	spin_unlock_irq(&base->t_base.lock);
++#ifdef CONFIG_KTAU_BH
++	if(current->pid) ktau_stop_timer((unsigned int)&__run_timers, KTAU_BH_MSK);
++#endif /*CONFIG_KTAU_BH*/
+ }
+ 
+ #ifdef CONFIG_NO_IDLE_HZ
+diff -urN linux-2.6.14.3/kernel/workqueue.c linux-2.6.14.3-ktau-1.7.3-ppc-i386/kernel/workqueue.c
+--- linux-2.6.14.3/kernel/workqueue.c	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/kernel/workqueue.c	2006-01-24 08:50:02.000000000 -0800
+@@ -26,6 +26,10 @@
+ #include <linux/notifier.h>
+ #include <linux/kthread.h>
+ 
++#ifdef CONFIG_KTAU_BH
++#include <linux/ktau/ktau_inst.h>
++#endif /*CONFIG_KTAU_BH*/
++
+ /*
+  * The per-CPU workqueue (if single thread, we always use cpu 0's).
+  *
+@@ -145,7 +149,10 @@
+ static inline void run_workqueue(struct cpu_workqueue_struct *cwq)
+ {
+ 	unsigned long flags;
+-
++#ifdef CONFIG_KTAU_BH
++	GET_KTAU_INDEX();
++	ktau_start_timer(&run_workqueue,KTAU_BH_MSK);
++#endif /*CONFIG_KTAU_BH*/
+ 	/*
+ 	 * Keep taking off work from the queue until
+ 	 * done.
+@@ -169,6 +176,9 @@
+ 
+ 		BUG_ON(work->wq_data != cwq);
+ 		clear_bit(0, &work->pending);
++#ifdef CONFIG_KTAU_BH
++	//	ktau_event_prof(KTAU_EVENT_WORKQUEUE,(unsigned int) &run_workqueue);
++#endif /*CONFIG_KTAU_BH*/
+ 		f(data);
+ 
+ 		spin_lock_irqsave(&cwq->lock, flags);
+@@ -177,6 +187,9 @@
+ 	}
+ 	cwq->run_depth--;
+ 	spin_unlock_irqrestore(&cwq->lock, flags);
++#ifdef CONFIG_KTAU_BH
++	ktau_stop_timer(&run_workqueue,KTAU_BH_MSK);
++#endif /*CONFIG_KTAU_BH*/
+ }
+ 
+ static int worker_thread(void *__cwq)
+diff -urN linux-2.6.14.3/net/ipv4/icmp.c linux-2.6.14.3-ktau-1.7.3-ppc-i386/net/ipv4/icmp.c
+--- linux-2.6.14.3/net/ipv4/icmp.c	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/net/ipv4/icmp.c	2006-01-24 08:50:04.000000000 -0800
+@@ -93,6 +93,10 @@
+ #include <asm/uaccess.h>
+ #include <net/checksum.h>
+ 
++#ifdef CONFIG_KTAU_ICMP
++#include <linux/ktau/ktau_inst.h>
++#endif /*CONFIG_KTAU_ICMP*/
++
+ /*
+  *	Build xmit assembly blocks
+  */
+@@ -383,11 +387,21 @@
+ 	struct rtable *rt = (struct rtable *)skb->dst;
+ 	u32 daddr;
+ 
++#ifdef CONFIG_KTAU_ICMP
++        GET_KTAU_INDEX();
++        if(current->pid)ktau_start_timer(&icmp_reply,KTAU_ICMP_MSK);
++#endif /*CONFIG_KTAU_ICMP*/
++
+ 	if (ip_options_echo(&icmp_param->replyopts, skb))
+ 		goto out;
+ 
+ 	if (icmp_xmit_lock())
++	{
++#ifdef CONFIG_KTAU_ICMP
++                if(current->pid)ktau_stop_timer(&icmp_reply,KTAU_ICMP_MSK);
++#endif /*CONFIG_KTAU_ICMP*/
+ 		return;
++	}
+ 
+ 	icmp_param->data.icmph.checksum = 0;
+ 	icmp_out_count(icmp_param->data.icmph.type);
+@@ -416,9 +430,11 @@
+ out_unlock:
+ 	icmp_xmit_unlock();
+ out:;
++#ifdef CONFIG_KTAU_ICMP
++	if(current->pid)ktau_stop_timer(&icmp_reply,KTAU_ICMP_MSK);
++#endif /*CONFIG_KTAU_ICMP*/
+ }
+ 
+-
+ /*
+  *	Send an ICMP message in response to a situation
+  *
+@@ -440,6 +456,11 @@
+ 	u32 saddr;
+ 	u8  tos;
+ 
++#ifdef CONFIG_KTAU_ICMP
++        GET_KTAU_INDEX();
++        if(current->pid)ktau_start_timer(&icmp_send,KTAU_ICMP_MSK);
++#endif /*CONFIG_KTAU_ICMP*/
++
+ 	if (!rt)
+ 		goto out;
+ 
+@@ -505,7 +526,12 @@
+ 	}
+ 
+ 	if (icmp_xmit_lock())
++	{
++#ifdef CONFIG_KTAU_ICMP
++                if(current->pid)ktau_stop_timer(&icmp_send,KTAU_ICMP_MSK);
++#endif /*CONFIG_KTAU_ICMP*/
+ 		return;
++	}
+ 
+ 	/*
+ 	 *	Construct source address and options.
+@@ -587,6 +613,9 @@
+ out_unlock:
+ 	icmp_xmit_unlock();
+ out:;
++#ifdef CONFIG_KTAU_ICMP
++                if(current->pid)ktau_stop_timer(&icmp_send,KTAU_ICMP_MSK);
++#endif /*CONFIG_KTAU_ICMP*/
+ }
+ 
+ 
+@@ -717,6 +746,7 @@
+ 
+ out:
+ 	return;
++
+ out_err:
+ 	ICMP_INC_STATS_BH(ICMP_MIB_INERRORS);
+ 	goto out;
+@@ -928,6 +958,11 @@
+ 	struct icmphdr *icmph;
+ 	struct rtable *rt = (struct rtable *)skb->dst;
+ 
++#ifdef CONFIG_KTAU_ICMP
++        GET_KTAU_INDEX();
++        if(current->pid)ktau_start_timer(&icmp_rcv,KTAU_ICMP_MSK);
++#endif /*CONFIG_KTAU_ICMP*/
++
+ 	ICMP_INC_STATS_BH(ICMP_MIB_INMSGS);
+ 
+ 	switch (skb->ip_summed) {
+@@ -985,6 +1020,9 @@
+ 
+ drop:
+ 	kfree_skb(skb);
++#ifdef CONFIG_KTAU_ICMP
++        if(current->pid)ktau_stop_timer(&icmp_rcv,KTAU_ICMP_MSK);
++#endif /*CONFIG_KTAU_ICMP*/
+ 	return 0;
+ error:
+ 	ICMP_INC_STATS_BH(ICMP_MIB_INERRORS);
+diff -urN linux-2.6.14.3/net/ipv4/tcp.c linux-2.6.14.3-ktau-1.7.3-ppc-i386/net/ipv4/tcp.c
+--- linux-2.6.14.3/net/ipv4/tcp.c	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/net/ipv4/tcp.c	2006-01-24 08:50:05.000000000 -0800
+@@ -267,6 +267,10 @@
+ #include <asm/uaccess.h>
+ #include <asm/ioctls.h>
+ 
++#ifdef CONFIG_KTAU_TCP
++#include <linux/ktau/ktau_inst.h>
++#endif /*CONFIG_KTAU_TCP*/
++
+ int sysctl_tcp_fin_timeout = TCP_FIN_TIMEOUT;
+ 
+ DEFINE_SNMP_STAT(struct tcp_mib, tcp_statistics) __read_mostly;
+@@ -670,6 +674,11 @@
+ 	int err, copied;
+ 	long timeo;
+ 
++#ifdef CONFIG_KTAU_TCP
++        GET_KTAU_INDEX();
++	if(current->pid)ktau_start_timer(&tcp_sendmsg,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
++
+ 	lock_sock(sk);
+ 	TCP_CHECK_TIMER(sk);
+ 
+@@ -859,6 +868,9 @@
+ 		tcp_push(sk, tp, flags, mss_now, tp->nonagle);
+ 	TCP_CHECK_TIMER(sk);
+ 	release_sock(sk);
++#ifdef CONFIG_KTAU_TCP
++	if(current->pid)ktau_stop_timer(&tcp_sendmsg,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
+ 	return copied;
+ 
+ do_fault:
+@@ -876,6 +888,9 @@
+ 	err = sk_stream_error(sk, flags, err);
+ 	TCP_CHECK_TIMER(sk);
+ 	release_sock(sk);
++#ifdef CONFIG_KTAU_TCP
++	if(current->pid)ktau_stop_timer(&tcp_sendmsg,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
+ 	return err;
+ }
+ 
+diff -urN linux-2.6.14.3/net/ipv4/tcp_input.c linux-2.6.14.3-ktau-1.7.3-ppc-i386/net/ipv4/tcp_input.c
+--- linux-2.6.14.3/net/ipv4/tcp_input.c	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/net/ipv4/tcp_input.c	2006-01-24 08:50:05.000000000 -0800
+@@ -72,6 +72,10 @@
+ #include <linux/ipsec.h>
+ #include <asm/unaligned.h>
+ 
++#ifdef CONFIG_KTAU_TCP
++#include <linux/ktau/ktau_inst.h>
++#endif /*CONFIG_KTAU_TCP*/
++
+ int sysctl_tcp_timestamps = 1;
+ int sysctl_tcp_window_scaling = 1;
+ int sysctl_tcp_sack = 1;
+@@ -2930,6 +2934,10 @@
+ 	struct tcphdr *th = skb->h.th;
+ 	struct tcp_sock *tp = tcp_sk(sk);
+ 	int eaten = -1;
++#ifdef CONFIG_KTAU_TCP
++	GET_KTAU_INDEX();
++	if(current->pid)ktau_start_timer(&tcp_data_queue,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
+ 
+ 	if (TCP_SKB_CB(skb)->seq == TCP_SKB_CB(skb)->end_seq)
+ 		goto drop;
+@@ -3008,6 +3016,9 @@
+ 			__kfree_skb(skb);
+ 		else if (!sock_flag(sk, SOCK_DEAD))
+ 			sk->sk_data_ready(sk, 0);
++#ifdef CONFIG_KTAU_TCP
++	if(current->pid)ktau_stop_timer(&tcp_data_queue,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
+ 		return;
+ 	}
+ 
+@@ -3021,6 +3032,9 @@
+ 		inet_csk_schedule_ack(sk);
+ drop:
+ 		__kfree_skb(skb);
++#ifdef CONFIG_KTAU_TCP
++		if(current->pid)ktau_stop_timer(&tcp_data_queue,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
+ 		return;
+ 	}
+ 
+@@ -3089,6 +3103,9 @@
+ 
+ 			/* Common case: data arrive in order after hole. */
+ 			tp->selective_acks[0].end_seq = end_seq;
++#ifdef CONFIG_KTAU_TCP
++			if(current->pid)ktau_stop_timer(&tcp_data_queue,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
+ 			return;
+ 		}
+ 
+@@ -3134,6 +3151,9 @@
+ 		if (tp->rx_opt.sack_ok)
+ 			tcp_sack_new_ofo_skb(sk, seq, end_seq);
+ 	}
++#ifdef CONFIG_KTAU_TCP
++	if(current->pid)ktau_stop_timer(&tcp_data_queue,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
+ }
+ 
+ /* Collapse contiguous sequence of skbs head..tail with
+@@ -3626,6 +3646,11 @@
+ int tcp_rcv_established(struct sock *sk, struct sk_buff *skb,
+ 			struct tcphdr *th, unsigned len)
+ {
++#ifdef CONFIG_KTAU_TCP
++	GET_KTAU_INDEX();
++        if(current->pid)ktau_start_timer(&tcp_rcv_established,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
++	
+ 	struct tcp_sock *tp = tcp_sk(sk);
+ 
+ 	/*
+@@ -3709,6 +3734,9 @@
+ 				tcp_ack(sk, skb, 0);
+ 				__kfree_skb(skb); 
+ 				tcp_data_snd_check(sk, tp);
++#ifdef CONFIG_KTAU_TCP
++				if(current->pid)ktau_stop_timer(&tcp_rcv_established,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
+ 				return 0;
+ 			} else { /* Header too small */
+ 				TCP_INC_STATS_BH(TCP_MIB_INERRS);
+@@ -3785,11 +3813,18 @@
+ 				__kfree_skb(skb);
+ 			else
+ 				sk->sk_data_ready(sk, 0);
++#ifdef CONFIG_KTAU_TCP
++			if(current->pid)ktau_stop_timer(&tcp_rcv_established,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
+ 			return 0;
+ 		}
+ 	}
+ 
+ slow_path:
++#ifdef CONFIG_KTAU_TCP
++	//if(current->pid)ktau_event_prof(KTAU_EVENT_TCP_SLOWPATH,(unsigned int)&tcp_rcv_established,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
++
+ 	if (len < (th->doff<<2) || tcp_checksum_complete_user(sk, skb))
+ 		goto csum_error;
+ 
+@@ -3837,6 +3872,9 @@
+ 		TCP_INC_STATS_BH(TCP_MIB_INERRS);
+ 		NET_INC_STATS_BH(LINUX_MIB_TCPABORTONSYN);
+ 		tcp_reset(sk);
++#ifdef CONFIG_KTAU_TCP
++		if(current->pid)ktau_stop_timer(&tcp_rcv_established,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
+ 		return 1;
+ 	}
+ 
+@@ -3854,6 +3892,9 @@
+ 
+ 	tcp_data_snd_check(sk, tp);
+ 	tcp_ack_snd_check(sk);
++#ifdef CONFIG_KTAU_TCP
++	if(current->pid)ktau_stop_timer(&tcp_rcv_established,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
+ 	return 0;
+ 
+ csum_error:
+@@ -3861,6 +3902,9 @@
+ 
+ discard:
+ 	__kfree_skb(skb);
++#ifdef CONFIG_KTAU_TCP
++	if(current->pid)ktau_stop_timer(&tcp_rcv_established,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
+ 	return 0;
+ }
+ 
+diff -urN linux-2.6.14.3/net/ipv4/tcp_ipv4.c linux-2.6.14.3-ktau-1.7.3-ppc-i386/net/ipv4/tcp_ipv4.c
+--- linux-2.6.14.3/net/ipv4/tcp_ipv4.c	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/net/ipv4/tcp_ipv4.c	2006-01-24 08:50:05.000000000 -0800
+@@ -77,6 +77,10 @@
+ #include <linux/proc_fs.h>
+ #include <linux/seq_file.h>
+ 
++#ifdef CONFIG_KTAU_TCP
++#include <linux/ktau/ktau_inst.h>
++#endif /*CONFIG_KTAU_TCP*/
++
+ int sysctl_tcp_tw_reuse;
+ int sysctl_tcp_low_latency;
+ 
+@@ -1146,11 +1150,19 @@
+  */
+ int tcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb)
+ {
++#ifdef CONFIG_KTAU_TCP
++	GET_KTAU_INDEX();
++	if(current->pid)ktau_start_timer(&tcp_v4_do_rcv,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
++
+ 	if (sk->sk_state == TCP_ESTABLISHED) { /* Fast path */
+ 		TCP_CHECK_TIMER(sk);
+ 		if (tcp_rcv_established(sk, skb, skb->h.th, skb->len))
+ 			goto reset;
+ 		TCP_CHECK_TIMER(sk);
++#ifdef CONFIG_KTAU_TCP
++		if(current->pid)ktau_stop_timer(&tcp_v4_do_rcv,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
+ 		return 0;
+ 	}
+ 
+@@ -1165,6 +1177,9 @@
+ 		if (nsk != sk) {
+ 			if (tcp_child_process(sk, nsk, skb))
+ 				goto reset;
++#ifdef CONFIG_KTAU_TCP
++			if(current->pid)ktau_stop_timer(&tcp_v4_do_rcv,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
+ 			return 0;
+ 		}
+ 	}
+@@ -1173,6 +1188,9 @@
+ 	if (tcp_rcv_state_process(sk, skb, skb->h.th, skb->len))
+ 		goto reset;
+ 	TCP_CHECK_TIMER(sk);
++#ifdef CONFIG_KTAU_TCP
++	if(current->pid)ktau_stop_timer(&tcp_v4_do_rcv,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
+ 	return 0;
+ 
+ reset:
+@@ -1184,6 +1202,9 @@
+ 	 * might be destroyed here. This current version compiles correctly,
+ 	 * but you have been warned.
+ 	 */
++#ifdef CONFIG_KTAU_TCP
++	if(current->pid)ktau_stop_timer(&tcp_v4_do_rcv,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
+ 	return 0;
+ 
+ csum_err:
+@@ -1200,6 +1221,10 @@
+ 	struct tcphdr *th;
+ 	struct sock *sk;
+ 	int ret;
++#ifdef CONFIG_KTAU_TCP
++	GET_KTAU_INDEX();
++	if(current->pid)ktau_start_timer(&tcp_v4_rcv,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
+ 
+ 	if (skb->pkt_type != PACKET_HOST)
+ 		goto discard_it;
+@@ -1264,6 +1289,9 @@
+ 
+ 	sock_put(sk);
+ 
++#ifdef CONFIG_KTAU_TCP
++	if(current->pid)ktau_stop_timer(&tcp_v4_rcv,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
+ 	return ret;
+ 
+ no_tcp_socket:
+@@ -1280,6 +1308,9 @@
+ discard_it:
+ 	/* Discard frame. */
+ 	kfree_skb(skb);
++#ifdef CONFIG_KTAU_TCP
++	if(current->pid)ktau_stop_timer(&tcp_v4_rcv,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
+   	return 0;
+ 
+ discard_and_relse:
+diff -urN linux-2.6.14.3/net/ipv4/tcp_output.c linux-2.6.14.3-ktau-1.7.3-ppc-i386/net/ipv4/tcp_output.c
+--- linux-2.6.14.3/net/ipv4/tcp_output.c	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/net/ipv4/tcp_output.c	2006-01-24 08:50:05.000000000 -0800
+@@ -42,6 +42,10 @@
+ #include <linux/module.h>
+ #include <linux/smp_lock.h>
+ 
++#ifdef CONFIG_KTAU_TCP
++#include <linux/ktau/ktau_inst.h>
++#endif /*CONFIG_KTAU_TCP*/
++
+ /* People can turn this off for buggy TCP's found in printers etc. */
+ int sysctl_tcp_retrans_collapse = 1;
+ 
+@@ -1360,18 +1364,33 @@
+  	unsigned int cur_mss = tcp_current_mss(sk, 0);
+ 	int err;
+ 
++#ifdef CONFIG_KTAU_TCP
++	        GET_KTAU_INDEX();
++		if(current->pid)ktau_start_timer(&tcp_retransmit_skb,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
++
+ 	/* Do not sent more than we queued. 1/4 is reserved for possible
+ 	 * copying overhead: frgagmentation, tunneling, mangling etc.
+ 	 */
+ 	if (atomic_read(&sk->sk_wmem_alloc) >
+ 	    min(sk->sk_wmem_queued + (sk->sk_wmem_queued >> 2), sk->sk_sndbuf))
++	{
++#ifdef CONFIG_KTAU_TCP
++		if(current->pid)ktau_stop_timer(&tcp_retransmit_skb,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
+ 		return -EAGAIN;
++	}
+ 
+ 	if (before(TCP_SKB_CB(skb)->seq, tp->snd_una)) {
+ 		if (before(TCP_SKB_CB(skb)->end_seq, tp->snd_una))
+ 			BUG();
+ 		if (tcp_trim_head(sk, skb, tp->snd_una - TCP_SKB_CB(skb)->seq))
++		{
++#ifdef CONFIG_KTAU_TCP
++			if(current->pid)ktau_stop_timer(&tcp_retransmit_skb,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
+ 			return -ENOMEM;
++		}
+ 	}
+ 
+ 	/* If receiver has shrunk his window, and skb is out of
+@@ -1381,11 +1400,21 @@
+ 	 */
+ 	if (!before(TCP_SKB_CB(skb)->seq, tp->snd_una+tp->snd_wnd)
+ 	    && TCP_SKB_CB(skb)->seq != tp->snd_una)
++	{		
++#ifdef CONFIG_KTAU_TCP
++		if(current->pid)ktau_stop_timer(&tcp_retransmit_skb,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
+ 		return -EAGAIN;
++	}
+ 
+ 	if (skb->len > cur_mss) {
+ 		if (tcp_fragment(sk, skb, cur_mss, cur_mss))
++		{
++#ifdef CONFIG_KTAU_TCP
++			if(current->pid)ktau_stop_timer(&tcp_retransmit_skb,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
+ 			return -ENOMEM; /* We'll try again later. */
++		}
+ 	}
+ 
+ 	/* Collapse two adjacent packets if worthwhile and we can. */
+@@ -1399,7 +1428,12 @@
+ 		tcp_retrans_try_collapse(sk, skb, cur_mss);
+ 
+ 	if(tp->af_specific->rebuild_header(sk))
++	{
++#ifdef CONFIG_KTAU_TCP
++		if(current->pid)ktau_stop_timer(&tcp_retransmit_skb,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
+ 		return -EHOSTUNREACH; /* Routing failure or similar. */
++	}
+ 
+ 	/* Some Solaris stacks overoptimize and ignore the FIN on a
+ 	 * retransmit when old data is attached.  So strip it off
+@@ -1452,6 +1486,9 @@
+ 		 */
+ 		TCP_SKB_CB(skb)->ack_seq = tp->snd_nxt;
+ 	}
++#ifdef CONFIG_KTAU_TCP
++	if(current->pid)ktau_stop_timer(&tcp_retransmit_skb,KTAU_TCP_MSK);
++#endif /*CONFIG_KTAU_TCP*/
+ 	return err;
+ }
+ 
+diff -urN linux-2.6.14.3/net/socket.c linux-2.6.14.3-ktau-1.7.3-ppc-i386/net/socket.c
+--- linux-2.6.14.3/net/socket.c	2005-11-24 14:10:21.000000000 -0800
++++ linux-2.6.14.3-ktau-1.7.3-ppc-i386/net/socket.c	2006-01-24 08:50:06.000000000 -0800
+@@ -97,6 +97,10 @@
+ #include <net/sock.h>
+ #include <linux/netfilter.h>
+ 
++#ifdef CONFIG_KTAU_SOCKET
++#include <linux/ktau/ktau_inst.h>
++#endif /*CONFIG_KTAU_SOCKET*/
++
+ static int sock_no_open(struct inode *irrelevant, struct file *dontcare);
+ static ssize_t sock_aio_read(struct kiocb *iocb, char __user *buf,
+ 			 size_t size, loff_t pos);
+@@ -555,12 +559,19 @@
+ 	struct kiocb iocb;
+ 	struct sock_iocb siocb;
+ 	int ret;
++#ifdef CONFIG_KTAU_SOCKET
++	GET_KTAU_INDEX();
++	ktau_start_timer(&sock_sendmsg,KTAU_SOCKET_MSK);
++#endif /*CONFIG_KTAU_SOCKET*/
+ 
+ 	init_sync_kiocb(&iocb, NULL);
+ 	iocb.private = &siocb;
+ 	ret = __sock_sendmsg(&iocb, sock, msg, size);
+ 	if (-EIOCBQUEUED == ret)
+ 		ret = wait_on_sync_kiocb(&iocb);
++#ifdef CONFIG_KTAU_SOCKET
++	ktau_stop_timer(&sock_sendmsg,KTAU_SOCKET_MSK);
++#endif /*CONFIG_KTAU_SOCKET*/
+ 	return ret;
+ }
+ 
+@@ -607,12 +618,19 @@
+ 	struct kiocb iocb;
+ 	struct sock_iocb siocb;
+ 	int ret;
++#ifdef CONFIG_KTAU_SOCKET
++	GET_KTAU_INDEX();
++	ktau_start_timer(&sock_recvmsg,KTAU_SOCKET_MSK);
++#endif /*CONFIG_KTAU_SOCKET*/
+ 
+         init_sync_kiocb(&iocb, NULL);
+ 	iocb.private = &siocb;
+ 	ret = __sock_recvmsg(&iocb, sock, msg, size, flags);
+ 	if (-EIOCBQUEUED == ret)
+ 		ret = wait_on_sync_kiocb(&iocb);
++#ifdef CONFIG_KTAU_SOCKET
++	ktau_stop_timer(&sock_recvmsg,KTAU_SOCKET_MSK);
++#endif /*CONFIG_KTAU_SOCKET*/
+ 	return ret;
+ }
+ 

@@ -1,0 +1,22 @@
+--- fs/Makefile.orig	2004-02-28 23:10:02.000000000 +0000
++++ fs/Makefile	2004-03-03 13:20:53.000000000 +0000
+@@ -91,6 +91,7 @@
+ obj-$(CONFIG_ADFS_FS)		+= adfs/
+ obj-$(CONFIG_FUSE_FS)		+= fuse/
+ obj-$(CONFIG_UDF_FS)		+= udf/
++obj-$(CONFIG_CDFS_FS)		+= cdfs/
+ obj-$(CONFIG_RELAYFS_FS)	+= relayfs/
+ obj-$(CONFIG_SUN_OPENPROMFS)	+= openpromfs/
+ obj-$(CONFIG_JFS_FS)		+= jfs/
+--- fs/Kconfig.orig	2004-02-28 23:10:02.000000000 +0000
++++ fs/Kconfig	2004-03-03 13:10:55.000000000 +0000
+@@ -759,6 +759,9 @@
+ 
+ 	  It is perfectly safe to say N here.
+ 
++config CDFS_FS
++	tristate "CDFS file system support"
++
+ endmenu
+ 
+ menu "DOS/FAT/NT Filesystems"

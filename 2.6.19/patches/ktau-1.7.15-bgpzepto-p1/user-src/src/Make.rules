@@ -1,0 +1,8 @@
+
+#BGP_KERNEL_INC=/home/anataraj/ZeptoReleases/BGP/kernel/work/linux-2.6.19.2-BGP-V1R3/include/
+BGP_CROSS_PFX=/bgsys/drivers/ppcfloor//gnu-linux/bin/powerpc-bgp-linux-
+CC=$(BGP_CROSS_PFX)gcc
+CXX=$(BGP_CROSS_PFX)g++
+LD=$(BGP_CROSS_PFX)ld
+AR=$(BGP_CROSS_PFX)ar
+RANLIB=$(BGP_CROSS_PFX)ranlib

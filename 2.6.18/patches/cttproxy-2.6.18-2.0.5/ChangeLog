@@ -1,0 +1,709 @@
+2006-09-12  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* version 2.0.5 released
+
+2006-09-07  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* kernel/iptable_tproxy.c (ip_tproxy_setup_nat_bidir): do not
+	  declare mr as static, as it's not protected by any locks and
+	  thus not SMP safe
+
+2006-08-28  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* kernel/iptable_tproxy.c (ip_tproxy_fn): don't check if the sockref
+	  has the TF_NAT_ONCE flag set before NAT-ting the new connection:
+	  the same TCP connection can be in NEW state more than once, and
+	  it's an error not to NAT all of them
+
+2006-08-09  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* kernel/iptable_tproxy.c (ip_tproxy_setsockopt_flags): fix
+	  typo leading to NAT reservations not being allocated
+	  for outbound connections
+
+2006-04-12  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* kernel/iptable_tproxy.c (ip_tproxy_print_sockref): don't grab the
+	  tproxy lock again
+
+	* kernel/iptable_tproxy.c: fix compilation problem with newer gcc
+	  versions
+
+2006-02-09  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* version 2.0.4 released
+
+        * kernel/iptable_tproxy.c (ip_tproxy_confirm, ip_tproxy_fn): fix
+          related list corruption for broadcast packets 
+
+2005-11-02  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* version 2.0.3 released
+
+	* ugly SMP deadlock on Linux >= 2.6.11 fixed
+
+	* updated for Linux 2.6.14
+
+2005-07-22  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* version 2.0.2 released
+
+	* don't add non-UDP conntracks to the related list of the sockref;
+	  after all it's not strictly necessary for TCP and this way we can
+	  avoid conntrack leaks for sure
+
+	* updated for Linux 2.6.12
+
+2005-04-11  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* version 2.0.1 released
+
+2005-04-08  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* kernel/iptable_tproxy.c (ip_tproxy_get_sk_proto): fix compilation
+	  problems
+
+	* kernel/patches/210-net-protocol_callbacks.patch: call tproxy unhash
+          callback from tcp_timewait_kill(), the callback functions now have
+          a proto argument
+
+	* kernel/iptable_tproxy.c (ip_tproxy_close): add proto argument and
+          don't do a lookup
+
+	* kernel/iptable_tproxy.c (init_or_cleanup, ip_tproxy_setup_nat_unidir):
+	  skb->nfct was reorganized in 2.6.10, keep up with changes
+
+2005-03-31  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* kernel/iptable_tproxy.c (init_or_cleanup): print copyright
+	  information when loading the module (fixes #5606)
+
+	* kernel/iptable_tproxy.c (ip_tproxy_setsockopt_assign): return
+	  with -EEXIST instead of -EINVAL if a sockref is already assigned
+	  to the same local address
+
+	* kernel/iptable_tproxy.c (ip_tproxy_get_sk_proto): check if
+	  sk->prot is valid before dereferencing
+
+2005-01-10  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* kernel/patch/nat_delete.patch: resync with conntrack and nat code
+	  changes in current linux kernels, __death_by_timeout() does not free
+	  conntrack entry unconditionally anymore
+
+2004-11-16  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* kernel/patch/220-net-ip_sockglue.patch: don't return IP_ORIGADDRS
+	  CMSG if entries in IPCB were not set
+
+2004-10-06  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* version 2.0.0 released
+
+	* README: updated, added warning message about incompatibility with
+	  any former stable TProxy version
+
+2004-10-04  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* README: updated to cover the new setsockopt API
+
+	* kernel/patch/220-net-ip_sockglue.patch: extend skb cb size
+
+2004-09-30  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* kernel/iptable_tproxy.c: bumped version number to 2.0.0
+
+	* kernel/*.{c,h}: added GPL and copyright headers
+
+	* kernel/patch/*.patch: added #ifdefs around core patches, so that
+	  if TProxy is disabled in the kernel config no significant changes
+	  are made
+
+2004-06-03  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* development version 1.9.6 released
+
+2004-05-28  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* iptable_tproxy.c (ip_tproxy_setup_nat_unidir): create a copy of
+	  cloned skbs before modifying the packet (fixes #4002)
+
+2004-05-26  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* kernel/iptable_tproxy.c (ip_tproxy_print_sockref): print number of
+	  socket which share the sockref
+
+2004-05-18  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* kernel/patch/nat_delete.patch: fix a deadlock in
+	  __destroy_conntrack()
+
+2004-05-13  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* development version 1.9.5 released
+
+	* iptable_tproxy.c (sockref_listen_cmp): omit checking of remote
+	  endpoint if it is zero
+
+	* iptable_tproxy.c (ip_tproxy_setsockopt_unassign): fix debug message
+
+	* kernel/patch/271-netfilter-confirm_hook.patch: add description to the
+	  diff
+
+	* iptable_tproxy.c (ip_tproxy_setsockopt_unassign): free NAT
+	  reservations only if unhashing the sockref is necessary
+
+	* iptable_tproxy.c (ip_tproxy_nat_reserved_free): new function, checks
+	  if the sockref has any NAT reservations allocated and frees them
+
+	* iptable_tproxy.c (ip_tproxy_setsockopt_unassign): handle mark-only
+	  sockrefs separately, based on the socket count: decrease socket
+	  counter, and unhash if there are no sockets left
+
+	* iptable_tproxy.c (ip_tproxy_setsockopt_assign): increase socket
+	  count if sharing the sockref
+
+	* iptable_tproxy.c: rewrap long lines
+
+2004-05-03  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* development version 1.9.4 released
+
+	* iptable_tproxy.c (init_or_cleanup): initialize confirm and destroy
+	  hooks
+
+	* patches/*: created an exported callback function pointer to make
+	  it possible to hook conntrack confirmation
+
+	* iptable_tproxy.c (ip_tproxy_fn): don't add the conntrack entry to
+	  the related list of the matching sockref, now this is done after
+	  the conntrack entry has been confirmed
+
+	* iptable_tproxy.c (ip_tproxy_setup_nat_bidir): flags argument added
+
+	* iptable_tproxy.c (ip_tproxy_setup_nat): the last argument is no more
+	  a boolean, but a bitmask field; TN_BIDIR (same as the old bidir
+	  argument) and TN_STOREREF (store a reference to the sockref in the
+	  conntrack entry if NAT setup was successful) are the possible flags
+
+	* iptable_tproxy.c (ip_tproxy_conntrack_destroyed): new function,
+	  called when a conntrack entry is destroyed; checks if the conntrack
+	  has a reference to a sockref, and unrefs if necessary
+
+	* iptable_tproxy.c (ip_tproxy_confirmed): new function, adds the
+	  confirmed conntrack to the related list of the sockref (tproxy_fn now
+	  stores a reference to the sockref in the conntrack entry instead of
+	  adding the conntrack to the related list)
+
+2004-04-14  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* ip_tproxy.h: renamed struct _in_tproxy_addr to in_tproxy_addr
+
+2004-04-09  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* iptable_tproxy.c (init_or_cleanup): removed unnecessary clean_preops
+	  label
+
+	* iptable_tproxy.c (ip_tproxy_sockref_table_free): use macros for
+	  traversing hash chains
+
+	* iptable_tproxy.c (ip_tproxy_sockref_find_foreign): use macros for
+	  list traversal
+
+	* iptable_tproxy.c (ip_tproxy_sockref_find_local): use macros for list
+	  traversal
+
+	* iptable_tproxy.c (ip_tproxy_kill_related): use macros for list
+	  traversal, make safety checks in debug version only
+
+	* iptable_tproxy.c (ip_tproxy_relatedct_add): use macros for list
+	  traversal, changed order of checking the IPS_TPROXY_RELATED flag and
+	  checking if it's already present in the same list
+
+2004-04-07  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* development version 1.9.3 released
+
+	* mkdiff.sh: updated to handle split patchtree
+
+2004-04-05  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* patch/04-netfilter-ip_nat_setup_info_flags.patch: remove unused
+	  IP_NAT_TPROXY flag
+
+	* patch/0?-*.patch: split tproxy.diff into multiple parts, and add
+	  some comment to each of them
+
+	* iptable_tproxy.c (ip_tproxy_kill_related): call the conntrack
+	  entry's timeout function instead of death_by_timeout()
+
+	* patch/nat_reserved.patch: added const qualifiers to new arguments of
+	  ip_nat_used_tuple()
+
+2004-03-30  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* iptable_tproxy.c (ip_tproxy_setsockopt_flags): do allocation of
+	  NAT reservation after successfully checking and setting the new
+	  flags
+
+	* iptable_tproxy.c (init_or_cleanup): register Netfilter hooks after
+	  registering the table, the kernel may call ipt_do_table() on an
+	  uninitialized table otherwise
+
+	* patch/nat_reserved.patch: the NAT reservation code uses a new hash
+	  function, and now destroys the "nat_reserved" slab cache at module
+	  unload
+
+	* patch/nat_delete.patch: adapted to the tcp-window-tracking code,
+	  did not work well with original TCP conntrack code
+	
+2004-03-04  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* tproxy.diff: fixed include/linux/net.h, now compiles on non-SMP
+	  configs
+
+2004-02-27  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* development version 1.9.2 released
+
+	* ip_tproxy.h: added definition of IP_RECVORIGADDRS, IP_ORIGADDRS and
+	  struct in_origaddrs (only for userspace)
+
+	* tests/*.c: updated to use setsockopt() instead of getsockopt() for
+	  version compatibility detection
+
+2004-02-26  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* nat_reserved.patch: added
+
+	* nat_reserved_tproxy_exports.patch: added
+
+	* nat_delete.patch: added
+
+	* ipt_TPROXY.c: ported to Linux 2.6
+
+	* ipt_tproxy.c: ported to Linux 2.6
+
+	* iptable_tproxy.c: ported to Linux 2.6
+
+	* tproxy.diff: removed unused code, changed value of IP_RECVORIGADDRS
+	  and IP_ORIGADDRS (these are the same now) (causes binary
+	  incompatibility), ported to Linux 2.6
+
+	* iptable_tproxy.c: made NAT reservation support optional, now should
+	  compile without NAT reservation support in the kernel
+
+	* ip_tproxy.h: changed value of IP_TPROXY (causes binary
+	  incompatibility)
+
+2004-02-25  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* ipt_tproxy.c (fini): decrease reference count only for kernels <=
+	  2.4.24
+	
+	* ipt_tproxy.c (init): decrease reference count only for kernels <=
+	  2.4.24
+
+	* iptable_tproxy.c (ip_tproxy_setsockopt_version): don't check for
+	  CAP_NET_ADMIN
+
+	* iptable_tproxy.c (ip_tproxy_getsockopt_version): don't check for
+	  CAP_NET_ADMIN
+
+2004-02-23  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* iptable_tproxy.c (ip_tproxy_getsockopt_query): don't check for
+	  CAP_NET_ADMIN
+
+	* iptable_tproxy.c (ip_tproxy_getsockopt_flags): don't check for
+	  CAP_NET_ADMIN
+
+	* iptable_tproxy.c (ip_tproxy_setsockopt): add
+	  ip_tproxy_setsockopt_version(), which checks if TProxy is compatible
+	  with the specified version. getsockopt(TPROXY_VERSION) now does not
+	  perform compatibility checks, only returns the version number.
+	
+2004-01-29  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* development version 1.9.1 released
+
+	* iptable_tproxy.c (ip_tproxy_setsockopt_assign): fix a few
+	  typos in the comments
+
+	* iptable_tproxy.c (ip_tproxy_sockref_uniq): fix typos in the
+	  comments
+
+2004-01-26  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* iptable_tproxy.c: corrected duplicate macro problems, version
+	  checking works
+
+	* iptable_tproxy.c (ip_tproxy_getsockopt_version): fixed typo in
+	  function name
+
+	* iptable_tproxy.c (ip_tproxy_getsockopt): fixed typo, len is a
+	  pointer
+
+	* tests/*: rewrote examples to use the new interface
+
+2004-01-23  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* iptable_tproxy.c, ip_tproxy.h: implemented new userspace interface
+
+2004-01-16  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* tproxy.diff: removed ip_nat_update_hashes() from patch, refreshed to
+	  apply clean on a NAT reservation patched kernel
+
+	* iptable_tproxy.c (ip_tproxy_setsockopt_assign): allow assigning
+	  multiple mark-only sockrefs on a single local address
+	
+	* iptable_tproxy.c (ip_tproxy_sockref_uniq): fix setting of
+	  TF_NAT_PEER flag if peer address is known
+
+2004-01-15  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* iptable_tproxy.c (ip_tproxy_setsockopt_assign): do not set connect
+	  only flag if clashing sockref is mark only
+	
+2004-01-13  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* iptable_tproxy.c (ip_tproxy_getsockopt): added a few debug messages
+      
+	* iptable_tproxy.c (ip_tproxy_setsockopt_connect): don't do anything
+	  in case of mark only sockrefs
+
+	* iptable_tproxy.c (ip_tproxy_setsockopt_alloc): don't do anything in
+	  case of mark only sockrefs
+      
+	* iptable_tproxy.c (ip_tproxy_setsockopt_flags): don't set anything in
+	  case of mark only sockrefs
+
+	* iptable_tproxy.c (ip_tproxy_setsockopt_assign): set connect only
+	  only if the sockref with the same foreign address does not have its
+	  remote endpoint specified
+
+	* iptable_tproxy.c (ip_tproxy_sockref_uniq): change arguments, now it
+	  accepts a sockref, moved NAT reservation and foreign port rehashing
+	  inside the function (so it needs ip_tproxy_lock write locked)
+      
+	* iptable_tproxy.c (ip_tproxy_setup_nat_bidir): set
+	  IP_NAT_RANGE_USE_RESERVED flag for every sockref where
+	  TF_NAT_RESERVED flag is true
+      
+2004-01-09  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* iptable_tproxy.c (ip_tproxy_nat_reserve): added ntohs() to port
+	  display correct port numbers in debug message
+
+	* iptable_tproxy.c (ip_tproxy_setsockopt_assign): added a few useful
+	  debug messages
+
+	* iptable_tproxy.c (ip_tproxy_setsockopt_assign): do not allocate NAT
+	  reservation if exact foreign port is not given
+
+	* iptable_tproxy.c (ip_tproxy_setsockopt_connect): new debug message
+	  to display new raddr:rport pair
+
+	* iptable_tproxy.c (ip_tproxy_sockopts): added IP_TPROXY_CONNECT to
+	  the range of registered sockopts
+
+2004-01-08  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* iptable_tproxy.c (ip_tproxy_setsockopt_flags): clear user-settable
+	  flags before setting new bits
+
+	* iptable_tproxy.c (ip_tproxy_setsockopt): split
+	  ip_tproxy_setsockopt(), now every operation has its own function
+	  called by ip_tproxy_setsockopt()
+
+2004-01-07  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* iptable_tproxy.c (ip_tproxy_setsockopt): clear TF_NAT_RESERVED and
+	  TF_NAT_PEER flags when unassigning socket
+
+	* iptable_tproxy.c (ip_tproxy_setsockopt): fix setting of sr->flags
+	  in IP_TPROXY_FLAGS handler, added a debug message for invalid
+	  combinations of flags
+
+	* iptable_tproxy.c (ip_tproxy_fn): drop packet if
+	  ip_tproxy_setup_nat() fails after the tproxy table lookup
+
+2003-12-18  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* iptable_tproxy.c (ip_tproxy_setsockopt): new NAT reservation
+	  handling, reservations are now registered at ASSIGN, FLAGS, or
+	  CONNECT, based on SO_REUSEADDR and the type of the sockref
+
+	* iptable_tproxy.c (ip_tproxy_setsockopt): implemented new
+	  IP_TPROXY_CONNECT sockopt, semantics for setting the ITP_ESTABLISHED
+	  flag has changed, instead of connect()-ing before setting the flag
+	  the sockref has to be explicitly connected using IP_TPROXY_CONNECT
+
+	* ip_tproxy.h: added new sockopt, to be able to set remote address
+	  explicitly (IP_TPROXY_CONNECT)
+
+2003-12-08  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* iptable_tproxy.c (ip_tproxy_setup_nat_bidir): removed call to 
+	ip_nat_update_hashes(), kernel > 2.4.22 does not need it
+
+2003-12-05  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* iptable_tproxy.c (ip_tproxy_setsockopt): ASSIGN locking fix, avoid a
+	possible race
+
+2003-12-03  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* iptable_tproxy.c (ip_tproxy_seq_*): cleaned up, _start does not
+	allocate memory now
+
+	* iptable_tproxy.c (ip_tproxy_seq_*): proc interface rewritten to use
+	seq_file
+
+	* iptable_tproxy.c (ip_tproxy_setup_nat_bidir): allow use of reserved
+	NAT manips
+
+	* iptable_tproxy.c (ip_tproxy_sockref_uniq): byte order conversion
+	when reserving manip added
+
+	* iptable_tproxy.c (ip_tproxy_setsockopt): free NAT reservation at
+	UNASSIGN
+
+	* iptable_tproxy.c (ip_tproxy_sockopts): register new IP_TPROXY_ALLOC
+	sockopt
+
+	* tproxy.diff: sysctl_local_port_range is exported now
+
+	* tests: updated Makefile, added foreign-udp-connect-alloc.c
+
+2003-12-02  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* iptable_tproxy.c (ip_tproxy_sockref_uniq): if a unique entry is
+	found, reserve the port in NAT
+
+	* iptable_tproxy.c (ip_tproxy_setsockopt): added IP_TPROXY_ALLOC
+	socket option, which causes immediate allocation (and reservation in
+	the NAT core) of foreign port
+
+	* iptable_tproxy.c (ip_tproxy_setsockopt): foreign port is not
+	allocated automatically if the TF_LISTEN flag is set on a sockref
+
+2003-11-25  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* iptable_tproxy.c (ip_tproxy_rehash_fport): changed list_prepend() to
+	list_append(), this way the _oldest_ matching entry is found first
+	
+	* iptable_tproxy.c (ip_tproxy_hash): changed list_prepend() to
+	list_append(), this way the _oldest_ matching entry is found first
+
+	* iptable_tproxy.c (ip_tproxy_fn): drop packet and do not set
+	TF_NAT_APPLIED when applying the NAT mapping failed
+
+	* iptable_tproxy.c (ip_tproxy_setup_nat): set IPS_TPROXY only if
+	applying the mapping succeeded
+
+	* iptable_tproxy.c (ip_tproxy_fn): drops the packet if skb_copy_bits()
+	fails
+
+2003-11-21  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* changed setting and clearing of IPS_TPROXY_RELATED to use atomic bit
+	operations
+
+	* ip_tproxy_setup_nat_bidir(): fixed a possible deadlock (between
+	ip_nat_lock and ip_tproxy_lock)
+
+	* ip_tproxy_print_sockref(): changed format of the proc entry lines
+
+2003-11-13  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* ip_tproxy_setsockopt(): readded ip_tproxy_sockref_uniq() to make it
+	possible to autobind a foreign port on a "listening" sockref
+
+	* ip_tproxy_find_local(): changed raddr and rport arguments to u32 and
+	u16
+
+	* ip_tproxy_save_orig_addrs(): uses skb_copy_bits() to get original
+	addresses and ports
+
+2003-10-28  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* version 1.1.3 released
+
+2003-10-27  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* updated README, when installing the iptables patch, one has to make
+	.tproxy-test executable
+
+	* added a few comments to iptable_tproxy.c
+
+	* introduced new conntrack entry flag IPS_TPROXY_RELATED, it means
+	that the conntrack entry was already added to the related list of a
+	sockref
+
+	* changed sockref's relatedlock to spinlock instead of rwlock, as it
+	was locked for writing only anyway
+
+	* ip_tproxy_fn(): fixed a possible conntrack entry leak, add conntrack
+	entry to the related list only if it's not unidirectionally mapped,
+	since it would not get dereferenced by ip_nat_setup_unidir()
+
+	* ip_tproxy_sockref_table_free(): fixed a possible conntrack entry
+	leak, now related connections are dereferenced
+
+	* ip_tproxy_fn(): fixed handling of TF_NAT_ONCE
+
+2003-10-20  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* changed log messages: every message begins with 'IP_TPROXY' now
+
+	* development version 1.1.2 released
+
+2003-10-17  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* fixed while loop in ip_tproxy_relatedct_add(), caused system hangs
+
+	* changed ip_tproxy_kill_related() to ignore cmp function if NULL,
+	thus cmp functions always returning true are not needed
+
+	* fix UDP and TCP connect conntrack entry deletion: all related
+	entries are deleted
+
+2003-10-10  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* development version 1.1.1 released
+
+2003-10-09  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* added check to ip_tproxy_relatedct_add() to avoid adding the same
+	conntrack to the list more than once
+
+	* added assigned_to field to sockref, contains pointer to socket to
+	which the sockref was assigned (solves problem with TCP listen
+	and mark-only sockets)
+
+2003-10-08  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* removed nf_sock_release() facility, added two ugly callbacks instead
+	(was necessary because inet_release() was not the right place to
+	unassign the socket)
+
+2003-09-29  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* fixed foreign port rehashing: it did not work if TF_NAT_ONCE was not
+	set
+
+	* fixed assignment of addresses with unspecified foreign port
+
+2003-09-23  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* added and fixed debug messages
+
+2003-09-22  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* fixed UNASSIGN, mark-only sockrefs were not freed
+
+	* added a new column to the proc interface, containing the number of
+	related conntrack entries
+
+	* rewrote header check of ip_tproxy_fn() to be compatible with
+	nonlinear skbs
+
+2003-09-18  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* when rehashing sockref, get new foreign port from conntrack tuple
+	instead of last nat manip entry
+
+2003-09-17  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* faster conntrack deletion, related connection tracking entries are 
+	collected in sockrefs, deletion is based on that list
+
+	* added rehashing of sockref entries after source port assignment
+	(fixes problems related to removing own port allocation mechanism)
+
+	* added mkdiff.sh, which generates all-in-one diff
+
+2003-09-10  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* removed source port allocation, source ports are now allocated
+	by ip_nat_setup_info(), based on the local source port
+
+2003-09-09  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* removed flags entry from ip_conntrack, added a IPS_TPROXY
+	instead
+
+2003-09-08  Krisztian Kovacs  <hidden@balabit.hu>
+
+	* added proc interface for tproxy hash table
+
+	* added tv_hashed field to sockrefs, which contains the timeval
+	when the entry was added to the hash
+
+2003-08-10  Balazs Scheidler  <bazsi@balabit.balabit>
+
+	* released version #23
+
+	* do not add NAT hash entries when ip_nat_setup_info() returns
+	failure, fixes a possible infinite loop in interrupt context
+
+2003-08-06  Balazs Scheidler  <bazsi@balabit.balabit>
+
+	* released version #22
+
+	* fixed a port allocation problem which sometimes caused EAGAINs
+
+2003-08-05  Balazs Scheidler  <bazsi@balabit.balabit>
+
+	* released version #21
+
+	* fixed unresolved external reference problem
+
+2003-08-01  Balazs Scheidler  <bazsi@balabit.balabit>
+
+	* released version #20
+
+	* fixed port allocation race (the famous IP_TPROXY: socket already
+	assigned problem)
+
+	* fixed tproxy entry deletion problem
+
+2003-07-26  Balazs Scheidler  <bazsi@balabit.balabit>
+
+	* released version #18 
+
+	* fixed a NAT setup bug, which sometimes caused problems with
+	retransmitted frames (nat_info->initialized was not properly
+	checked)
+
+	* fixed a close() race which caused tproxy mapping errors (the
+	entry from the TCP hash was removed first, thus the userspace
+	proxy might grab a port which was still used in the tproxy hash)
+
+	* removed ip_tproxy_kill_conntracks() call for TCP connections as
+	it was _very_ slow, a better solution might be needed
+
+2003-07-09  Balazs Scheidler  <bazsi@balabit.balabit>
+
+	* changed tproxy hook priorities to run _after_ mangle
+
+	* ip_nat_tftp.c and ip_nat_amanda.c were added in 2.4.21 and
+	previous release missed the ip_nat_setup_info() patch in these
+	files
+
+2003-06-20  Balazs Scheidler  <bazsi@balabit.balabit>
+
+	* updated to kernel 2.4.21 (use IPS_CONFIRMED_BIT instead of the
+	list pointers to indiciate that our conntrack entry is already in
+	the hash)
+
+2003-05-26  bazsi  <bazsi@balabit.hu>
+
+	* updated kernel patch to version #14, which removes colliding
+	conntrack entries
+
+	* updated iptables patch to use IPTABLES_VERSION instead of
+	NETFILTER_VERSION (to make it compile on 1.2.7a or later)
+

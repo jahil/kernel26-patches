@@ -1,0 +1,41 @@
+From: jbeulich@novell.com
+Subject: blktap: fix cleanup after unclean application exit #2
+References: bnc#569194
+Patch-mainline: n/a
+
+When an application using blktap devices doesn't close the or mmap-s
+of /dev/xen/blktapN and the frontend driver never connects, we cannot
+defer the mmput() on the stored mm until blktap_release() or the exit
+path of the worker thread, as the former will never be called without
+the mm's reference count dropping to zero, and the worker thread
+would never get started.
+
+--- sle11sp1-2010-04-12.orig/drivers/xen/blktap/blktap.c	2010-04-21 13:43:49.000000000 +0200
++++ sle11sp1-2010-04-12/drivers/xen/blktap/blktap.c	2010-04-20 18:21:03.000000000 +0200
+@@ -553,6 +553,7 @@ void signal_tapdisk(int idx) 
+ {
+ 	tap_blkif_t *info;
+ 	struct task_struct *ptask;
++	struct mm_struct *mm;
+ 
+ 	/*
+ 	 * if the userland tools set things up wrong, this could be negative;
+@@ -573,7 +574,9 @@ void signal_tapdisk(int idx) 
+ 	}
+ 	info->blkif = NULL;
+ 
+-	return;
++	mm = xchg(&info->mm, NULL);
++	if (mm)
++		mmput(mm);
+ }
+ 
+ static int blktap_open(struct inode *inode, struct file *filp)
+@@ -653,7 +656,6 @@ static int blktap_release(struct inode *
+ 	mm = xchg(&info->mm, NULL);
+ 	if (mm)
+ 		mmput(mm);
+-	info->mm = NULL;
+ 	kfree(info->foreign_map.map);
+ 	info->foreign_map.map = NULL;
+ 

@@ -1,0 +1,2809 @@
+diff --git a/include/linux/in.h b/include/linux/in.h
+index 2619859..d056fc7 100644
+--- a/include/linux/in.h
++++ b/include/linux/in.h
+@@ -78,6 +78,10 @@ #define IP_PASSSEC	18
+ /* BSD compatibility */
+ #define IP_RECVRETOPTS	IP_RETOPTS
+ 
++/* TProxy original addresses */
++#define IP_ORIGADDRS	11273
++#define IP_RECVORIGADDRS	IP_ORIGADDRS
++
+ /* IP_MTU_DISCOVER values */
+ #define IP_PMTUDISC_DONT		0	/* Never send DF frames */
+ #define IP_PMTUDISC_WANT		1	/* Use per route hints	*/
+@@ -174,6 +178,13 @@ struct in_pktinfo
+ 	struct in_addr	ipi_addr;
+ };
+ 
++struct in_origaddrs {
++        struct in_addr ioa_srcaddr;
++        struct in_addr ioa_dstaddr;
++        unsigned short int ioa_srcport;
++        unsigned short int ioa_dstport;
++};
++
+ /* Structure describing an Internet (IP) socket address. */
+ #define __SOCK_SIZE__	16		/* sizeof(struct sockaddr)	*/
+ struct sockaddr_in {
+diff --git a/include/linux/net.h b/include/linux/net.h
+index 15c733b..d000417 100644
+--- a/include/linux/net.h
++++ b/include/linux/net.h
+@@ -223,6 +223,11 @@ extern int kernel_sendpage(struct socket
+ 			   size_t size, int flags);
+ extern int kernel_sock_ioctl(struct socket *sock, int cmd, unsigned long arg);
+ 
++#if defined(CONFIG_IP_NF_TPROXY) || defined (CONFIG_IP_NF_TPROXY_MODULE)
++extern void (*ip_tproxy_tcp_unhashed)(struct sock *, int proto);
++extern void (*ip_tproxy_udp_unhashed)(struct sock *, int proto);
++#endif
++
+ #ifndef CONFIG_SMP
+ #define SOCKOPS_WRAPPED(name) name
+ #define SOCKOPS_WRAP(name, fam)
+diff --git a/include/linux/netfilter/nf_conntrack_common.h b/include/linux/netfilter/nf_conntrack_common.h
+index 9e0dae0..6ca30ce 100644
+--- a/include/linux/netfilter/nf_conntrack_common.h
++++ b/include/linux/netfilter/nf_conntrack_common.h
+@@ -73,6 +73,15 @@ enum ip_conntrack_status {
+ 	/* Connection has fixed timeout. */
+ 	IPS_FIXED_TIMEOUT_BIT = 10,
+ 	IPS_FIXED_TIMEOUT = (1 << IPS_FIXED_TIMEOUT_BIT),
++
++#if defined(CONFIG_IP_NF_TPROXY) || defined (CONFIG_IP_NF_TPROXY_MODULE)
++	/* Connection is tproxy-ed */
++	IPS_TPROXY_BIT = 11,
++	IPS_TPROXY = (1 << IPS_TPROXY_BIT),
++
++	IPS_TPROXY_RELATED_BIT = 12,
++	IPS_TPROXY_RELATED = (1 << IPS_TPROXY_RELATED_BIT),
++#endif
+ };
+ 
+ /* Connection tracking event bits */
+diff --git a/include/linux/netfilter_ipv4/ip_conntrack.h b/include/linux/netfilter_ipv4/ip_conntrack.h
+index 4e54794..2cf207b 100644
+--- a/include/linux/netfilter_ipv4/ip_conntrack.h
++++ b/include/linux/netfilter_ipv4/ip_conntrack.h
+@@ -114,6 +114,14 @@ #if defined(CONFIG_IP_NF_TARGET_MASQUERA
+ 		int masq_index;
+ #endif
+ 	} nat;
++
++#if defined(CONFIG_IP_NF_TPROXY) || defined (CONFIG_IP_NF_TPROXY_MODULE)
++	union _tproxy_data {
++		void *sockref;
++		struct list_head related;
++	} tproxy;
++#endif /* CONFIG_IP_NF_TPROXY */
++
+ #endif /* CONFIG_IP_NF_NAT_NEEDED */
+ 
+ #if defined(CONFIG_IP_NF_CONNTRACK_MARK)
+@@ -249,6 +257,11 @@ #ifdef CONFIG_IP_NF_NAT_NRES
+ extern void (*ip_conntrack_expect_destroyed)(struct ip_conntrack_expect *exp);
+ #endif
+ 
++#if defined(CONFIG_IP_NF_TPROXY) || defined (CONFIG_IP_NF_TPROXY_MODULE)
++/* Call me when a conntrack is confirmed. */
++extern void (*ip_conntrack_confirmed)(struct ip_conntrack *conntrack);
++#endif
++
+ /* Fake conntrack entry for untracked connections */
+ extern struct ip_conntrack ip_conntrack_untracked;
+ 
+diff --git a/include/linux/netfilter_ipv4/ip_nat.h b/include/linux/netfilter_ipv4/ip_nat.h
+index ce11962..c07bb57 100644
+--- a/include/linux/netfilter_ipv4/ip_nat.h
++++ b/include/linux/netfilter_ipv4/ip_nat.h
+@@ -16,6 +16,7 @@ #define HOOK2MANIP(hooknum) ((hooknum) !
+ 
+ #define IP_NAT_RANGE_MAP_IPS 1
+ #define IP_NAT_RANGE_PROTO_SPECIFIED 2
++#define IP_NAT_RANGE_BYPASS_HELPERS 4
+ 
+ #ifdef CONFIG_IP_NF_NAT_NRES
+ #define IP_NAT_RANGE_USE_RESERVED 8
+@@ -55,6 +56,9 @@ struct ip_nat_multi_range_compat
+ #ifdef __KERNEL__
+ #include <linux/list.h>
+ 
++/* call this to signal dependency on the NAT hooks */
++extern void need_nat_hooks(void);
++
+ /* Protects NAT hash tables, and NAT-private part of conntracks. */
+ extern rwlock_t ip_nat_lock;
+ 
+diff --git a/include/linux/netfilter_ipv4/ip_nat_core.h b/include/linux/netfilter_ipv4/ip_nat_core.h
+index 60566f9..cc4d937 100644
+--- a/include/linux/netfilter_ipv4/ip_nat_core.h
++++ b/include/linux/netfilter_ipv4/ip_nat_core.h
+@@ -15,4 +15,13 @@ extern int ip_nat_icmp_reply_translation
+ 					 enum ip_conntrack_info ctinfo,
+ 					 unsigned int hooknum,
+ 					 struct sk_buff **pskb);
++
++#if defined(CONFIG_IP_NF_TPROXY) || defined (CONFIG_IP_NF_TPROXY_MODULE)
++extern int ip_nat_manip_pkt(u_int16_t proto,
++			    struct sk_buff **pskb,
++			    unsigned int iphdroff,
++			    const struct ip_conntrack_tuple *target,
++			    enum ip_nat_manip_type maniptype);
++#endif
++
+ #endif /* _IP_NAT_CORE_H */
+diff --git a/include/linux/netfilter_ipv4/ip_tproxy.h b/include/linux/netfilter_ipv4/ip_tproxy.h
+new file mode 100644
+index 0000000..49f6fd8
+--- /dev/null
++++ b/include/linux/netfilter_ipv4/ip_tproxy.h
+@@ -0,0 +1,78 @@
++/*
++ * Transparent proxy support for Linux/iptables
++ *
++ * Copyright (c) 2002-2004 BalaBit IT Ltd.
++ * Author: Balázs Scheidler
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ */
++
++#ifndef _IP_TPROXY_H
++#define _IP_TPROXY_H
++
++#ifdef __KERNEL__
++#include <linux/types.h>
++#include <linux/in.h>
++#else
++#include <netinet/in.h>
++#ifndef IP_RECVORIGADDRS
++#define IP_RECVORIGADDRS	11273
++#define IP_ORIGADDRS	IP_RECVORIGADDRS
++struct in_origaddrs {
++        struct in_addr ioa_srcaddr;
++        struct in_addr ioa_dstaddr;
++        unsigned short int ioa_srcport;
++        unsigned short int ioa_dstport;
++};
++#endif
++#endif
++
++/*
++ * used in setsockopt(SOL_IP, IP_TPROXY) should not collide
++ * with values in <linux/in.h>
++ */
++
++#define IP_TPROXY	11274
++
++/* tproxy operations */
++enum {
++	TPROXY_VERSION = 0,
++	TPROXY_ASSIGN,
++	TPROXY_UNASSIGN,
++	TPROXY_QUERY,
++	TPROXY_FLAGS,
++	TPROXY_ALLOC,
++	TPROXY_CONNECT
++};
++
++/* bitfields in IP_TPROXY_FLAGS */
++#define ITP_CONNECT     0x00000001
++#define ITP_LISTEN      0x00000002
++#define ITP_ESTABLISHED 0x00000004
++
++#define ITP_ONCE        0x00010000
++#define ITP_MARK        0x00020000
++#define ITP_APPLIED     0x00040000
++#define ITP_UNIDIR      0x00080000
++
++struct in_tproxy_addr{
++	struct in_addr	faddr;
++	u_int16_t	fport;
++};
++
++struct in_tproxy {
++	/* fixed part, should not change between versions */
++	u_int32_t op;
++	/* extensible part */
++	union _in_args {
++		u_int32_t		version;
++		struct in_tproxy_addr	addr;
++		u_int32_t		flags;
++	} v;
++};
++
++#endif
++
+diff --git a/include/linux/netfilter_ipv4/ipt_TPROXY.h b/include/linux/netfilter_ipv4/ipt_TPROXY.h
+new file mode 100644
+index 0000000..ff19b9a
+--- /dev/null
++++ b/include/linux/netfilter_ipv4/ipt_TPROXY.h
+@@ -0,0 +1,22 @@
++/*
++ * Transparent proxy support for Linux/iptables
++ *
++ * Copyright (c) 2002-2004 BalaBit IT Ltd.
++ * Author: Balázs Scheidler
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ */
++
++#ifndef _IPT_TPROXY_H_target
++#define _IPT_TPROXY_H_target
++
++struct ipt_tproxy_target_info {
++	u_int16_t lport;
++	u_int32_t laddr;
++};
++
++#endif /*_IPT_TPROXY_H_target*/
++
+diff --git a/include/linux/netfilter_ipv4/iptable_tproxy.h b/include/linux/netfilter_ipv4/iptable_tproxy.h
+new file mode 100644
+index 0000000..9433a0e
+--- /dev/null
++++ b/include/linux/netfilter_ipv4/iptable_tproxy.h
+@@ -0,0 +1,66 @@
++#ifndef _IPTABLE_TPROXY_H
++#define _IPTABLE_TPROXY_H
++
++#include <linux/list.h>
++#include <linux/spinlock.h>
++#include <linux/time.h>
++#include <asm/atomic.h>
++#include <net/sock.h>
++
++struct ip_tproxy_sockref;
++
++struct ip_tproxy_hash
++{
++	struct list_head list;
++	struct ip_tproxy_sockref *sockref;
++};
++
++struct ip_tproxy_sockref
++{
++	int flags;
++	atomic_t references;
++
++	u8 proto;
++
++	/* foreign address associated with a local socket */
++	u32 faddr;
++	u16 fport;
++
++	/* local socket address */
++	u32 laddr;
++	u16 lport;
++
++	/* remote addresses, needed for datagram protocols when the peer
++	 * sends the packet triggering the NAT translation. (as there might
++	 * be multiple sockrefs on the same foreign address).
++	 */
++	u32 raddr;
++	u16 rport;
++
++	/* hash chains indexed by local and foreign addresses */
++	struct ip_tproxy_hash bylocal, byforeign;
++
++	/* lock protecting access to related list */
++	spinlock_t relatedlock;
++	/* number of related connections */
++	atomic_t related;
++	/* list of related connections */
++	struct list_head relatedct;
++
++	/* socket which we were assigned to */
++	struct sock *assigned_to;
++
++	/* How many sockets use this sockref? Used for mark-only sockrefs,
++	 * which can be shared between multiple sockets bound to the same local
++	 * address */
++	atomic_t socket_count;
++
++	/* when was this entry inserted in hash */
++	struct timespec tv_hashed;
++};
++
++extern int
++ip_tproxy_setup_nat(struct sk_buff **pskb, int hooknum,
++		    struct ip_tproxy_sockref *sr, unsigned int flags);
++
++#endif
+diff --git a/include/net/ip.h b/include/net/ip.h
+index b6d95e5..64e95ff 100644
+--- a/include/net/ip.h
++++ b/include/net/ip.h
+@@ -41,6 +41,17 @@ #define IPSKB_XFRM_TUNNEL_SIZE	2
+ #define IPSKB_XFRM_TRANSFORMED	4
+ #define IPSKB_FRAG_COMPLETE	8
+ #define IPSKB_REROUTED		16
++
++#if defined(CONFIG_IP_NF_TPROXY) || defined (CONFIG_IP_NF_TPROXY_MODULE)
++
++	/* these fields unfortunately do not fit into the 40 bytes of
++	 * allocated cb space... we have to allocate at least 48 bytes */
++
++	u32 orig_srcaddr;
++	u32 orig_dstaddr;
++	u16 orig_srcport;
++	u16 orig_dstport;
++#endif
+ };
+ 
+ struct ipcm_cookie
+diff --git a/net/ipv4/inet_hashtables.c b/net/ipv4/inet_hashtables.c
+index 244c4f4..19df0d6 100644
+--- a/net/ipv4/inet_hashtables.c
++++ b/net/ipv4/inet_hashtables.c
+@@ -61,6 +61,10 @@ void inet_bind_hash(struct sock *sk, str
+ 	inet_csk(sk)->icsk_bind_hash = tb;
+ }
+ 
++#if defined(CONFIG_IP_NF_TPROXY) || defined (CONFIG_IP_NF_TPROXY_MODULE)
++void (*ip_tproxy_tcp_unhashed)(struct sock *sk, int proto) = NULL;
++#endif
++
+ /*
+  * Get rid of any references to a local port held by the given sock.
+  */
+@@ -70,6 +74,13 @@ static void __inet_put_port(struct inet_
+ 	struct inet_bind_hashbucket *head = &hashinfo->bhash[bhash];
+ 	struct inet_bind_bucket *tb;
+ 
++#if defined(CONFIG_IP_NF_TPROXY) || defined (CONFIG_IP_NF_TPROXY_MODULE)
++	/* ugly tproxy unassign hook
++         * FIXME: now DCCP also uses this code */
++	if (ip_tproxy_tcp_unhashed)
++		ip_tproxy_tcp_unhashed(sk, IPPROTO_TCP);
++#endif
++
+ 	spin_lock(&head->lock);
+ 	tb = inet_csk(sk)->icsk_bind_hash;
+ 	__sk_del_bind_node(sk);
+diff --git a/net/ipv4/inet_timewait_sock.c b/net/ipv4/inet_timewait_sock.c
+index cdd8053..c2d1bfc 100644
+--- a/net/ipv4/inet_timewait_sock.c
++++ b/net/ipv4/inet_timewait_sock.c
+@@ -30,6 +30,13 @@ void __inet_twsk_kill(struct inet_timewa
+ 	sk_node_init(&tw->tw_node);
+ 	write_unlock(&ehead->lock);
+ 
++#if defined(CONFIG_IP_NF_TPROXY) || defined (CONFIG_IP_NF_TPROXY_MODULE)
++	/* ugly tproxy unassign hook
++	 * FIXME: now DCCP also uses this code */
++	if (ip_tproxy_tcp_unhashed)
++		ip_tproxy_tcp_unhashed((struct sock *)tw, IPPROTO_TCP);
++#endif
++
+ 	/* Disassociate with bind bucket. */
+ 	bhead = &hashinfo->bhash[inet_bhashfn(tw->tw_num, hashinfo->bhash_size)];
+ 	spin_lock(&bhead->lock);
+diff --git a/net/ipv4/ip_sockglue.c b/net/ipv4/ip_sockglue.c
+index 4b13295..22e4cfa 100644
+--- a/net/ipv4/ip_sockglue.c
++++ b/net/ipv4/ip_sockglue.c
+@@ -50,6 +50,7 @@ #define IP_CMSG_TOS		4
+ #define IP_CMSG_RECVOPTS	8
+ #define IP_CMSG_RETOPTS		16
+ #define IP_CMSG_PASSSEC		32
++#define IP_CMSG_ORIGADDRS	64
+ 
+ /*
+  *	SOL_IP control messages.
+@@ -127,6 +128,25 @@ static void ip_cmsg_recv_security(struct
+ 	security_release_secctx(secdata, seclen);
+ }
+ 
++#if defined(CONFIG_IP_NF_TPROXY) || defined (CONFIG_IP_NF_TPROXY_MODULE)
++
++void ip_cmsg_recv_origaddrs(struct msghdr *msg, struct sk_buff *skb)
++{
++        struct in_origaddrs ioa;
++
++	/* don't return original addresses if they were not set by tproxy*/
++	if (IPCB(skb)->orig_dstaddr == 0 || IPCB(skb)->orig_dstport == 0)
++		return;
++
++        ioa.ioa_srcaddr.s_addr = IPCB(skb)->orig_srcaddr;
++        ioa.ioa_srcport = IPCB(skb)->orig_srcport;
++        ioa.ioa_dstaddr.s_addr = IPCB(skb)->orig_dstaddr;
++        ioa.ioa_dstport = IPCB(skb)->orig_dstport;
++
++        put_cmsg(msg, SOL_IP, IP_ORIGADDRS, sizeof(ioa), &ioa);
++}
++
++#endif
+ 
+ void ip_cmsg_recv(struct msghdr *msg, struct sk_buff *skb)
+ {
+@@ -161,6 +181,13 @@ void ip_cmsg_recv(struct msghdr *msg, st
+ 
+ 	if (flags & 1)
+ 		ip_cmsg_recv_security(msg, skb);
++
++#if defined(CONFIG_IP_NF_TPROXY) || defined (CONFIG_IP_NF_TPROXY_MODULE)
++	if ((flags>>=1) == 0)
++		return;
++	if (flags & 1)
++		ip_cmsg_recv_origaddrs(msg, skb);
++#endif
+ }
+ 
+ int ip_cmsg_send(struct msghdr *msg, struct ipcm_cookie *ipc)
+@@ -416,6 +443,9 @@ static int do_ip_setsockopt(struct sock
+ 			    (1<<IP_MTU_DISCOVER) | (1<<IP_RECVERR) | 
+ 			    (1<<IP_ROUTER_ALERT) | (1<<IP_FREEBIND) |
+ 			    (1<<IP_PASSSEC))) ||
++#if defined(CONFIG_IP_NF_TPROXY) || defined (CONFIG_IP_NF_TPROXY_MODULE)
++				optname == IP_RECVORIGADDRS ||
++#endif
+ 				optname == IP_MULTICAST_TTL || 
+ 				optname == IP_MULTICAST_LOOP) { 
+ 		if (optlen >= sizeof(int)) {
+@@ -506,6 +536,14 @@ #endif
+ 			else
+ 				inet->cmsg_flags &= ~IP_CMSG_PASSSEC;
+ 			break;
++#if defined(CONFIG_IP_NF_TPROXY) || defined (CONFIG_IP_NF_TPROXY_MODULE)
++                case IP_RECVORIGADDRS:
++                        if (val)
++                                inet->cmsg_flags |= IP_CMSG_ORIGADDRS;
++                        else
++                                inet->cmsg_flags &= ~IP_CMSG_ORIGADDRS;
++                        break;
++#endif
+ 		case IP_TOS:	/* This sets both TOS and Precedence */
+ 			if (sk->sk_type == SOCK_STREAM) {
+ 				val &= ~3;
+@@ -1014,6 +1052,11 @@ #endif
+ 		case IP_PASSSEC:
+ 			val = (inet->cmsg_flags & IP_CMSG_PASSSEC) != 0;
+ 			break;
++#if defined(CONFIG_IP_NF_TPROXY) || defined (CONFIG_IP_NF_TPROXY_MODULE)
++                case IP_RECVORIGADDRS:
++			val = (inet->cmsg_flags & IP_CMSG_ORIGADDRS) != 0;
++                        break;
++#endif
+ 		case IP_TOS:
+ 			val = inet->tos;
+ 			break;
+diff --git a/net/ipv4/netfilter/Kconfig b/net/ipv4/netfilter/Kconfig
+index 3259652..7126f4f 100644
+--- a/net/ipv4/netfilter/Kconfig
++++ b/net/ipv4/netfilter/Kconfig
+@@ -215,6 +215,33 @@ config IP_NF_SIP
+ 
+ 	  To compile it as a module, choose M here.  If unsure, say Y.
+ 
++config IP_NF_TPROXY
++	tristate "Transparent proxying"
++	depends on IP_NF_NAT
++	help
++	  Transparent proxying. For more information see
++	  http://www.balabit.com/downloads/tproxy.
++
++	  To compile it as a module, choose M here.  If unsure, say Y.
++
++config IP_NF_MATCH_TPROXY
++	tristate "tproxy match support"
++	depends on IP_NF_TPROXY
++	help
++	  Match transparently proxied connections.
++
++	  To compile it as a module, choose M here.  If unsure, say N.
++
++config IP_NF_TARGET_TPROXY
++	tristate "TPROXY target support"
++	depends on IP_NF_TPROXY
++	help
++	  This option adds a `TPROXY' target, which is almost the same as REDIRECT.
++	  It can only be used in the tproxy table, and is useful to redirect
++	  traffic to a transparent proxy.
++
++	  To compile it as a module, choose M here.  If unsure, say N.
++
+ config IP_NF_QUEUE
+ 	tristate "IP Userspace queueing via NETLINK (OBSOLETE)"
+ 	help
+diff --git a/net/ipv4/netfilter/Makefile b/net/ipv4/netfilter/Makefile
+index 09aaed1..c4556b2 100644
+--- a/net/ipv4/netfilter/Makefile
++++ b/net/ipv4/netfilter/Makefile
+@@ -51,6 +51,7 @@ obj-$(CONFIG_IP_NF_FILTER) += iptable_fi
+ obj-$(CONFIG_IP_NF_MANGLE) += iptable_mangle.o
+ obj-$(CONFIG_IP_NF_NAT) += iptable_nat.o
+ obj-$(CONFIG_IP_NF_RAW) += iptable_raw.o
++obj-$(CONFIG_IP_NF_TPROXY) += iptable_tproxy.o
+ 
+ # matches
+ obj-$(CONFIG_IP_NF_MATCH_HASHLIMIT) += ipt_hashlimit.o
+@@ -62,6 +63,7 @@ obj-$(CONFIG_IP_NF_MATCH_ECN) += ipt_ecn
+ obj-$(CONFIG_IP_NF_MATCH_AH) += ipt_ah.o
+ obj-$(CONFIG_IP_NF_MATCH_TTL) += ipt_ttl.o
+ obj-$(CONFIG_IP_NF_MATCH_ADDRTYPE) += ipt_addrtype.o
++obj-$(CONFIG_IP_NF_MATCH_TPROXY) += ipt_tproxy.o
+ 
+ # targets
+ obj-$(CONFIG_IP_NF_TARGET_REJECT) += ipt_REJECT.o
+@@ -77,6 +79,7 @@ obj-$(CONFIG_IP_NF_TARGET_ULOG) += ipt_U
+ obj-$(CONFIG_IP_NF_TARGET_TCPMSS) += ipt_TCPMSS.o
+ obj-$(CONFIG_IP_NF_TARGET_CLUSTERIP) += ipt_CLUSTERIP.o
+ obj-$(CONFIG_IP_NF_TARGET_TTL) += ipt_TTL.o
++obj-$(CONFIG_IP_NF_TARGET_TPROXY) += ipt_TPROXY.o
+ 
+ # generic ARP tables
+ obj-$(CONFIG_IP_NF_ARPTABLES) += arp_tables.o
+diff --git a/net/ipv4/netfilter/ip_conntrack_core.c b/net/ipv4/netfilter/ip_conntrack_core.c
+index d6df7e9..dcf64bb 100644
+--- a/net/ipv4/netfilter/ip_conntrack_core.c
++++ b/net/ipv4/netfilter/ip_conntrack_core.c
+@@ -78,6 +78,10 @@ unsigned int ip_ct_log_invalid __read_mo
+ static LIST_HEAD(unconfirmed);
+ static int ip_conntrack_vmalloc __read_mostly;
+ 
++#if defined(CONFIG_IP_NF_TPROXY) || defined (CONFIG_IP_NF_TPROXY_MODULE)
++void (*ip_conntrack_confirmed)(struct ip_conntrack *conntrack) = NULL;
++#endif
++
+ static unsigned int ip_conntrack_next_id;
+ static unsigned int ip_conntrack_expect_next_id;
+ #ifdef CONFIG_IP_NF_CONNTRACK_EVENTS
+@@ -492,6 +496,13 @@ __ip_conntrack_confirm(struct sk_buff **
+ 	set_bit(IPS_CONFIRMED_BIT, &ct->status);
+ 	CONNTRACK_STAT_INC(insert);
+ 	write_unlock_bh(&ip_conntrack_lock);
++
++#if defined(CONFIG_IP_NF_TPROXY) || defined (CONFIG_IP_NF_TPROXY_MODULE)
++	/* Call confirmed hook */
++	if (ip_conntrack_confirmed)
++		ip_conntrack_confirmed(ct);
++#endif
++
+ 	if (ct->helper)
+ 		ip_conntrack_event_cache(IPCT_HELPER, *pskb);
+ #ifdef CONFIG_IP_NF_NAT_NEEDED
+diff --git a/net/ipv4/netfilter/ip_conntrack_standalone.c b/net/ipv4/netfilter/ip_conntrack_standalone.c
+index 46985bc..29a358c 100644
+--- a/net/ipv4/netfilter/ip_conntrack_standalone.c
++++ b/net/ipv4/netfilter/ip_conntrack_standalone.c
+@@ -917,6 +917,9 @@ EXPORT_SYMBOL(ip_ct_get_tuple);
+ EXPORT_SYMBOL(invert_tuplepr);
+ EXPORT_SYMBOL(ip_conntrack_alter_reply);
+ EXPORT_SYMBOL(ip_conntrack_destroyed);
++#if defined(CONFIG_IP_NF_TPROXY) || defined (CONFIG_IP_NF_TPROXY_MODULE)
++EXPORT_SYMBOL_GPL(ip_conntrack_confirmed);
++#endif
+ EXPORT_SYMBOL(need_conntrack);
+ EXPORT_SYMBOL(ip_conntrack_helper_register);
+ EXPORT_SYMBOL(ip_conntrack_helper_unregister);
+diff --git a/net/ipv4/netfilter/ip_nat_core.c b/net/ipv4/netfilter/ip_nat_core.c
+index a191f5e..1a7956e 100644
+--- a/net/ipv4/netfilter/ip_nat_core.c
++++ b/net/ipv4/netfilter/ip_nat_core.c
+@@ -40,6 +40,7 @@ #define DEBUGP(format, args...)
+ #endif
+ 
+ DEFINE_RWLOCK(ip_nat_lock);
++EXPORT_SYMBOL_GPL(ip_nat_lock);
+ 
+ /* Calculated at init based on memory size */
+ static unsigned int ip_nat_htable_size;
+@@ -735,8 +736,8 @@ ip_nat_setup_info(struct ip_conntrack *c
+ EXPORT_SYMBOL(ip_nat_setup_info);
+ 
+ /* Returns true if succeeded. */
+-static int
+-manip_pkt(u_int16_t proto,
++int
++ip_nat_manip_pkt(u_int16_t proto,
+ 	  struct sk_buff **pskb,
+ 	  unsigned int iphdroff,
+ 	  const struct ip_conntrack_tuple *target,
+@@ -771,6 +772,7 @@ manip_pkt(u_int16_t proto,
+ 	}
+ 	return 1;
+ }
++EXPORT_SYMBOL_GPL(ip_nat_manip_pkt);
+ 
+ /* Do packet manipulations according to ip_nat_setup_info. */
+ unsigned int ip_nat_packet(struct ip_conntrack *ct,
+@@ -798,7 +800,7 @@ unsigned int ip_nat_packet(struct ip_con
+ 		/* We are aiming to look like inverse of other direction. */
+ 		invert_tuplepr(&target, &ct->tuplehash[!dir].tuple);
+ 
+-		if (!manip_pkt(target.dst.protonum, pskb, 0, &target, mtype))
++		if (!ip_nat_manip_pkt(target.dst.protonum, pskb, 0, &target, mtype))
+ 			return NF_DROP;
+ 	}
+ 	return NF_ACCEPT;
+@@ -861,7 +863,7 @@ int ip_nat_icmp_reply_translation(struct
+ 	   pass all hooks (locally-generated ICMP).  Consider incoming
+ 	   packet: PREROUTING (DST manip), routing produces ICMP, goes
+ 	   through POSTROUTING (which must correct the DST manip). */
+-	if (!manip_pkt(inside->ip.protocol, pskb,
++	if (!ip_nat_manip_pkt(inside->ip.protocol, pskb,
+ 		       (*pskb)->nh.iph->ihl*4
+ 		       + sizeof(inside->icmp),
+ 		       &ct->tuplehash[!dir].tuple,
+@@ -890,7 +892,7 @@ int ip_nat_icmp_reply_translation(struct
+ 
+ 	if (ct->status & statusbit) {
+ 		invert_tuplepr(&target, &ct->tuplehash[!dir].tuple);
+-		if (!manip_pkt(0, pskb, 0, &target, manip))
++		if (!ip_nat_manip_pkt(0, pskb, 0, &target, manip))
+ 			return 0;
+ 	}
+ 
+diff --git a/net/ipv4/netfilter/ip_nat_standalone.c b/net/ipv4/netfilter/ip_nat_standalone.c
+index d85d2de..55b3f80 100644
+--- a/net/ipv4/netfilter/ip_nat_standalone.c
++++ b/net/ipv4/netfilter/ip_nat_standalone.c
+@@ -290,6 +290,13 @@ ip_nat_adjust(unsigned int hooknum,
+ 	return NF_ACCEPT;
+ }
+ 
++/* Modules depending on the NAT hooks but not using symbols from this module
++   should call this */
++void need_nat_hooks(void)
++{
++}
++EXPORT_SYMBOL_GPL(need_nat_hooks);
++
+ /* We must be after connection tracking and before packet filtering. */
+ 
+ static struct nf_hook_ops ip_nat_ops[] = {
+diff --git a/net/ipv4/netfilter/ipt_TPROXY.c b/net/ipv4/netfilter/ipt_TPROXY.c
+new file mode 100644
+index 0000000..d8da6cc
+--- /dev/null
++++ b/net/ipv4/netfilter/ipt_TPROXY.c
+@@ -0,0 +1,136 @@
++/*
++ * Transparent proxy support for Linux/iptables
++ *
++ * Copyright (c) 2002-2004 BalaBit IT Ltd.
++ * Author: Balázs Scheidler
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ */
++
++#include <linux/module.h>
++#include <linux/skbuff.h>
++#include <linux/ip.h>
++#include <linux/inetdevice.h>
++#include <net/checksum.h>
++
++#include <linux/netfilter_ipv4/ip_tables.h>
++#include <linux/netfilter_ipv4/ipt_TPROXY.h>
++#include <linux/netfilter_ipv4/iptable_tproxy.h>
++
++/* determine ip address of the interface the packet came in */
++static u32
++determine_local_ip(struct sk_buff *skb, int hooknum)
++{
++	struct in_device *indev;
++	u32 ip;
++
++	if (hooknum == NF_IP_LOCAL_OUT)
++		return htonl(0x7f000001);
++
++	indev = in_dev_get(skb->dev);
++
++	if (!indev) {
++		printk(KERN_WARNING "IP_TPROXY: No IP protocol on incoming "
++		       "interface during redirect, dropping packet.\n");
++		return 0;
++	}
++	if (!indev->ifa_list) {
++		printk(KERN_WARNING "IP_TPROXY: No IP address on incoming "
++		       "interface during redirect, dropping packet.\n");
++		in_dev_put(indev);
++		return 0;
++	}
++
++	ip = indev->ifa_list->ifa_local;
++	in_dev_put(indev);
++
++	return ip;
++}
++
++static unsigned int
++target(struct sk_buff **pskb,
++       const struct net_device *in,
++       const struct net_device *out,
++       unsigned int hooknum,
++       const struct xt_target *target,
++       const void *targinfo)
++{
++	const struct ipt_tproxy_target_info *info = targinfo;
++	struct ip_tproxy_sockref sr;
++	u16 *ports, _ports[2];
++	struct iphdr *iph = (*pskb)->nh.iph;
++
++	/* TCP/UDP only */
++	if ((iph->protocol != IPPROTO_TCP) &&
++	    (iph->protocol != IPPROTO_UDP))
++		return NF_ACCEPT;
++
++	/* get ports */
++	ports = skb_header_pointer(*pskb, iph->ihl * 4,
++				   sizeof(_ports), &_ports);
++	if (ports == NULL)
++		return NF_DROP;
++
++	/* set up fake sockref */
++	memset(&sr, 0, sizeof(sr));
++	sr.proto = iph->protocol;
++
++	/* use the original address/port if none is specified in the rule */
++	if (info->laddr)
++		sr.laddr = info->laddr;
++	else
++		sr.laddr = determine_local_ip(*pskb, hooknum);
++
++	if (info->lport)
++		sr.lport = info->lport;
++	else
++		sr.lport = ports[1];
++
++	/* set up mapping */
++	return ip_tproxy_setup_nat(pskb, hooknum, &sr, 0);
++}
++
++static int
++checkentry(const char *tablename,
++	   const void *e,
++	   const struct xt_target *target,
++           void *targinfo,
++           unsigned int hook_mask)
++{
++	if (strcmp(tablename, "tproxy") != 0) {
++		printk(KERN_WARNING "TPROXY: can only be called from \"tproxy\" table, not \"%s\"\n", tablename);
++		return 0;
++	}
++
++	return 1;
++}
++
++static struct ipt_target ipt_tproxy_reg = {
++	.name		= "TPROXY",
++	.target		= target,
++	.targetsize	= sizeof(struct ipt_tproxy_target_info),
++	.checkentry	= checkentry,
++	.me		= THIS_MODULE,
++};
++
++static int __init init(void)
++{
++	if (ipt_register_target(&ipt_tproxy_reg))
++		return -EINVAL;
++
++	return 0;
++}
++
++static void __exit fini(void)
++{
++	ipt_unregister_target(&ipt_tproxy_reg);
++}
++
++module_init(init);
++module_exit(fini);
++MODULE_LICENSE("GPL");
++MODULE_AUTHOR("Balázs Scheidler <bazsi@balabit.hu>");
++MODULE_DESCRIPTION("Netfilter transparent proxy TPROXY target module.");
+diff --git a/net/ipv4/netfilter/ipt_tproxy.c b/net/ipv4/netfilter/ipt_tproxy.c
+new file mode 100644
+index 0000000..8dd379c
+--- /dev/null
++++ b/net/ipv4/netfilter/ipt_tproxy.c
+@@ -0,0 +1,71 @@
++/*
++ * Transparent proxy support for Linux/iptables
++ *
++ * Copyright (c) 2002-2004 BalaBit IT Ltd.
++ * Author: Balázs Scheidler
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ */
++
++#include <linux/module.h>
++#include <linux/types.h>
++#include <linux/netfilter.h>
++#include <linux/netfilter_ipv4/ip_conntrack.h>
++#include <linux/netfilter_ipv4/ip_tables.h>
++
++static int
++match(const struct sk_buff *skb,
++      const struct net_device *in,
++      const struct net_device *out,
++      const struct xt_match *match,
++      const void *matchinfo,
++      int offset,
++      unsigned int protoff,
++      int *hotdrop)
++{
++	enum ip_conntrack_info ctinfo;
++	struct ip_conntrack *ct;
++
++	ct = ip_conntrack_get((struct sk_buff *)skb, &ctinfo);
++	if (ct)
++		return ct->status & IPS_TPROXY;
++	else
++		return 0;
++}
++
++static int check(const char *tablename,
++		 const void *ip_void,
++		 const struct xt_match *match,
++		 void *matchinfo,
++		 unsigned int hook_mask)
++{
++	return 1;
++}
++
++static struct ipt_match tproxy_match = {
++	.name		= "tproxy",
++	.match		= &match,
++	.matchsize	= 0,
++	.checkentry	= &check,
++	.me		= THIS_MODULE,
++};
++
++static int __init init(void)
++{
++	return ipt_register_match(&tproxy_match);
++}
++
++static void __exit fini(void)
++{
++	ipt_unregister_match(&tproxy_match);
++}
++
++module_init(init);
++module_exit(fini);
++MODULE_LICENSE("GPL");
++MODULE_AUTHOR("Balázs Scheidler <bazsi@balabit.hu>");
++MODULE_DESCRIPTION("Netfilter transparent proxy iptables match module.");
++
+diff --git a/net/ipv4/netfilter/iptable_tproxy.c b/net/ipv4/netfilter/iptable_tproxy.c
+new file mode 100644
+index 0000000..4bc2c43
+--- /dev/null
++++ b/net/ipv4/netfilter/iptable_tproxy.c
+@@ -0,0 +1,1860 @@
++/*
++ * Transparent proxy support for Linux/iptables
++ *
++ * Copyright (c) 2002-2004 BalaBit IT Ltd.
++ * Author: Balázs Scheidler, Krisztián Kovács
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ */
++
++#include <linux/version.h>
++#include <linux/module.h>
++
++#include <linux/sysctl.h>
++#include <linux/vmalloc.h>
++#include <linux/net.h>
++#include <linux/slab.h>
++#include <linux/if.h>
++#include <linux/proc_fs.h>
++#include <linux/seq_file.h>
++#include <linux/netdevice.h>
++#include <linux/time.h>
++#include <net/tcp.h>
++#include <net/udp.h>
++#include <net/sock.h>
++#include <asm/uaccess.h>
++#include <net/inet_timewait_sock.h>
++
++#include <linux/netfilter.h>
++#include <linux/netfilter_ipv4.h>
++#include <linux/netfilter_ipv4/ip_tables.h>
++#include <linux/netfilter_ipv4/ipt_TPROXY.h>
++#include <linux/netfilter_ipv4/ip_conntrack.h>
++#include <linux/netfilter_ipv4/ip_nat.h>
++#include <linux/netfilter_ipv4/ip_nat_core.h>
++
++#include <linux/netfilter_ipv4/ip_tproxy.h>
++#include <linux/netfilter_ipv4/iptable_tproxy.h>
++
++#define ASSERT_READ_LOCK(x)
++#define ASSERT_WRITE_LOCK(x)
++DEFINE_RWLOCK(ip_tproxy_lock);
++
++#define TPROXY_VALID_HOOKS ((1 << NF_IP_PRE_ROUTING) | (1 << NF_IP_LOCAL_OUT))
++
++#if 0
++#define DEBUGP printk
++#else
++#define DEBUGP(args...)
++#endif
++
++#define TPROXY_MAJOR_VERSION 2
++#define TPROXY_MINOR_VERSION 0
++#define TPROXY_PATCH_VERSION 6
++
++#define TPROXY_FULL_VERSION ((TPROXY_MAJOR_VERSION << 24) | \
++			     (TPROXY_MINOR_VERSION << 16) | \
++			     TPROXY_PATCH_VERSION)
++
++#define MAJOR_VERSION(x) ((x >> 24) & 0xff)
++#define MINOR_VERSION(x) ((x >> 16) & 0xff)
++#define PATCH_VERSION(x) (x & 0xffff)
++
++/* simple and buggy, but enough for us */
++#define MIN(a,b) ((a < b) ? a : b)
++
++static struct
++{
++	struct ipt_replace repl;
++	struct ipt_standard entries[2];
++	struct ipt_error term;
++} initial_table
++= { { "tproxy", TPROXY_VALID_HOOKS, 3,
++      sizeof(struct ipt_standard) * 2 + sizeof(struct ipt_error),
++      { [NF_IP_PRE_ROUTING] 0,
++	[NF_IP_LOCAL_OUT] sizeof(struct ipt_standard) },
++      { [NF_IP_PRE_ROUTING] 0,
++	[NF_IP_LOCAL_OUT] sizeof(struct ipt_standard) },
++      0, NULL, { } },
++    {
++	    /* PRE_ROUTING */
++	    { { { { 0 }, { 0 }, { 0 }, { 0 }, "", "", { 0 }, { 0 }, 0, 0, 0 },
++		0,
++		sizeof(struct ipt_entry),
++		sizeof(struct ipt_standard),
++		0, { 0, 0 }, { } },
++	      { { { { IPT_ALIGN(sizeof(struct ipt_standard_target)), "" } }, { } },
++		-NF_ACCEPT - 1 } },
++	    /* LOCAL_OUT */
++	    { { { { 0 }, { 0 }, { 0 }, { 0 }, "", "", { 0 }, { 0 }, 0, 0, 0 },
++		0,
++		sizeof(struct ipt_entry),
++		sizeof(struct ipt_standard),
++		0, { 0, 0 }, { } },
++	      { { { { IPT_ALIGN(sizeof(struct ipt_standard_target)), "" } }, { } },
++		-NF_ACCEPT - 1 } }
++    },
++    /* ERROR */
++    { { { { 0 }, { 0 }, { 0 }, { 0 }, "", "", { 0 }, { 0 }, 0, 0, 0 },
++	0,
++	sizeof(struct ipt_entry),
++	sizeof(struct ipt_error),
++	0, { 0, 0 }, { } },
++      { { { { IPT_ALIGN(sizeof(struct ipt_error_target)), IPT_ERROR_TARGET } },
++	  { } },
++	"ERROR"
++      }
++    }
++};
++
++static struct ipt_table tproxy_table = {
++	.name		= "tproxy",
++	.valid_hooks	= TPROXY_VALID_HOOKS,
++	.lock		= RW_LOCK_UNLOCKED,
++	.me		= THIS_MODULE,
++	.af		= AF_INET,
++};
++
++static void (*ip_conntrack_destroyed_old)(struct ip_conntrack *ct) = NULL;
++
++/* NAT entry setup flags */
++#define TN_BIDIR	1
++#define TN_STOREREF	2
++
++/* user settable flags */
++#define TF_NAT_ONCE	  0x00000001 /* this entry is applied only once */
++#define TF_LISTEN	  0x00000002 /* this entry is meant for listening */
++#define TF_CONNECT	  0x00000004 /* this entry is meant for connecting */
++#define TF_UNIDIR	  0x00000008 /* this entry is a listening UDP socket,
++					and only an unidirectional nat is to be applied */
++
++/* state flags */
++#define TF_HASHED	  0x00010000 /* entry hashed in hashtable */
++#define TF_CONNECT_ONLY	  0x00020000 /* conflicting foreign address */
++#define TF_MARK_ONLY	  0x00040000 /* have packets in this session mark as tproxy but don't apply translation */
++#define TF_NAT_APPLIED	  0x00080000 /* NAT already applied, ignore this entry during NAT search */
++#define TF_ORPHAN	  0x00100000 /* Parent (listening) socket was closed */
++
++#ifdef CONFIG_IP_NF_NAT_NRES
++#define TF_NAT_RESERVED	  0x00200000 /* a NAT reservation was allocated for the sockref's foreign address */
++#define TF_NAT_PEER	  0x00400000 /* raddr was also specified at NAT reservation */
++#endif
++
++#define TF_STATE_MASK	  0xffff0000
++
++static int hashsize = 0;
++module_param(hashsize, uint, 0600);
++
++int ip_tproxy_htable_size = 127;
++struct list_head *ip_tproxy_bylocal;
++struct list_head *ip_tproxy_byforeign;
++kmem_cache_t *ip_tproxy_sockref_table;
++int ip_tproxy_htable_count = 0;
++struct ip_conntrack ip_tproxy_fake_ct;
++
++static u32
++ip_tproxy_hash_fn(u32 addr, u16 port, u8 proto)
++{
++	return ntohl(addr + (port<<8) + proto) % ip_tproxy_htable_size;
++}
++
++/* allocate memory and initialize a sockref structure */
++static struct ip_tproxy_sockref *
++ip_tproxy_sockref_new(void)
++{
++	struct ip_tproxy_sockref *sr;
++
++	sr = kmem_cache_zalloc(ip_tproxy_sockref_table, GFP_ATOMIC);
++	if (!sr)
++		return NULL;
++
++	atomic_set(&sr->references, 1);
++	sr->bylocal.sockref = sr;
++	sr->byforeign.sockref = sr;
++	sr->relatedlock = SPIN_LOCK_UNLOCKED;
++	INIT_LIST_HEAD(&sr->relatedct);
++	atomic_set(&sr->socket_count, 1);
++
++	return sr;
++}
++
++/* increase reference count for a sockref entry */
++static inline void
++ip_tproxy_sockref_ref(struct ip_tproxy_sockref *sr)
++{
++	atomic_inc(&sr->references);
++}
++
++/* decrease refcount for the entry, and free the structure if needed */
++static inline void
++ip_tproxy_sockref_unref(struct ip_tproxy_sockref *sr)
++{
++	if (atomic_dec_and_test(&sr->references)) {
++		kmem_cache_free(ip_tproxy_sockref_table, sr);
++	}
++}
++
++/* put a sockref entry in the hash tables */
++static void
++ip_tproxy_hash(struct ip_tproxy_sockref *sr)
++{
++	u32 fhash = ip_tproxy_hash_fn(sr->faddr, sr->fport, sr->proto);
++	u32 lhash = ip_tproxy_hash_fn(sr->laddr, sr->lport, sr->proto);
++
++	sr->flags |= TF_HASHED;
++	sr->tv_hashed = xtime;
++
++	DEBUGP(KERN_DEBUG "IP_TPROXY: ip_tproxy_hash(): hashing sockref, "
++	       "lhash=%d, fhash=%d, %p, %02x, %08x:%04x -> %08x:%04x\n",
++	       lhash, fhash, sr, sr->proto, sr->laddr,
++	       sr->lport, sr->faddr, sr->fport);
++
++	ip_tproxy_sockref_ref(sr);
++
++	list_add_tail(&sr->bylocal.list, &ip_tproxy_bylocal[lhash]);
++	list_add_tail(&sr->byforeign.list, &ip_tproxy_byforeign[fhash]);
++	ip_tproxy_htable_count++;
++}
++
++/* delete sockref from the hash tables */
++static void
++ip_tproxy_unhash(struct ip_tproxy_sockref *sr)
++{
++	DEBUGP(KERN_DEBUG "IP_TPROXY: ip_tproxy_hash(): unhashing sockref, "
++	       "%p, %02x, %08x:%04x -> %08x:%04x\n",
++	       sr, sr->proto, sr->laddr, sr->lport, sr->faddr, sr->fport);
++
++	if (sr->flags & TF_HASHED) {
++		list_del(&sr->bylocal.list);
++		list_del(&sr->byforeign.list);
++		sr->flags &= ~TF_HASHED;
++		ip_tproxy_sockref_unref(sr);
++		ip_tproxy_htable_count--;
++	}
++	else {
++		printk(KERN_WARNING "IP_TPROXY: unhashing a sockref which was "
++		       "not hashed before, %p, flags=%x\n",
++		       sr, sr->flags);
++	}
++}
++
++/* change the fport of the sockref to the specified value, and modify foreign hash
++ * accordingly (used when not specifying an exact foreign port, and NAT allocates a
++ * free port number for the sockref) */
++static void
++ip_tproxy_rehash_fport(struct ip_tproxy_sockref *sr, u16 fport)
++{
++	u32 fhash = ip_tproxy_hash_fn(sr->faddr, fport, sr->proto);
++
++	DEBUGP(KERN_DEBUG "IP_TPROXY: ip_tproxy_rehash_fport(): rehashing sockref, "
++	       "%p, %02x, %08x:%04x -> %08x:%04x, new fport %04x\n",
++	       sr, sr->proto, sr->laddr, sr->lport,
++	       sr->faddr, sr->fport, fport);
++
++	if (sr->flags & TF_HASHED) {
++		list_del(&sr->byforeign.list);
++		sr->fport = fport;
++		list_add_tail(&sr->byforeign.list, &ip_tproxy_byforeign[fhash]);
++	}
++}
++
++/* add a conntrack entry to the related list of the sockref */
++static void
++ip_tproxy_relatedct_add(struct ip_tproxy_sockref *sr, struct ip_conntrack *ct)
++{
++#ifdef IP_TPROXY_DEBUG
++	struct ip_conntrack *p;
++#endif
++
++	if (test_and_set_bit(IPS_TPROXY_RELATED_BIT, &ct->status)) {
++		/* this conntrack is already related to another sockref! */
++		return;
++	}
++
++	spin_lock_bh(&sr->relatedlock);
++
++#ifdef IP_TPROXY_DEBUG
++	/* check if it's already in the list */
++	list_for_each_entry(p, &sr->relatedct, tproxy.related) {
++		if (ct == p)
++			goto out;
++	}
++#endif
++
++	/* each related conntrack adds one to the reference count of the sockref */
++	ip_tproxy_sockref_ref(sr);
++	atomic_inc(&sr->related);
++	/* since we store a pointer to the conntrack, we should get a reference */
++	atomic_inc(&ct->ct_general.use);
++	list_add(&ct->tproxy.related, &sr->relatedct);
++
++#ifdef IP_TPROXY_DEBUG
++out:
++#endif
++	spin_unlock_bh(&sr->relatedlock);
++}
++
++/* called by conntrack when a connection is confirmed */
++static void
++ip_tproxy_confirmed(struct ip_conntrack *ct)
++{
++	struct ip_tproxy_sockref *sr = (struct ip_tproxy_sockref *)ct->tproxy.sockref;
++
++	/* check if it was marked by tproxy and not yet a related sockref */
++	if (test_bit(IPS_TPROXY_BIT, &ct->status) &&
++	    !test_bit(IPS_TPROXY_RELATED_BIT, &ct->status) &&
++	    sr) {
++		ct->tproxy.sockref = NULL;
++
++		/* put it on the sockref's related list */
++		if (sr->proto == IPPROTO_UDP)
++			ip_tproxy_relatedct_add(sr, ct);
++
++		/* drop reference to sockref */
++		ip_tproxy_sockref_unref(sr);
++	}
++}
++
++/* called by conntrack when a connection is destroyed */
++static void
++ip_tproxy_conntrack_destroyed(struct ip_conntrack *ct)
++{
++	/* check if it's not confirmed, but marked by tproxy */
++	if (!is_confirmed(ct) &&
++	    !test_bit(IPS_TPROXY_RELATED_BIT, &ct->status) &&
++	    test_and_clear_bit(IPS_TPROXY_BIT, &ct->status) &&
++	    ct->tproxy.sockref != NULL) {
++		/* drop reference */
++		ip_tproxy_sockref_unref((struct ip_tproxy_sockref *)ct->tproxy.sockref);
++		ct->tproxy.sockref = NULL;
++	}
++
++	if (ip_conntrack_destroyed_old)
++		ip_conntrack_destroyed_old(ct);
++}
++
++static int
++sockref_listen_cmp(const struct ip_tproxy_sockref *sr, const u32 raddr, const u16 rport,
++		   const struct ip_conntrack *ct)
++{
++	return (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.ip == sr->faddr) &&
++	       (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all == sr->fport) &&
++	       (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.protonum == sr->proto) &&
++	       ((raddr == 0) || (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.ip == raddr)) &&
++	       ((rport == 0) || (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all == rport));
++}
++
++/* delete matching related connections from the sockref's list and delete them from
++ * the conntrack hash if requested */
++static void
++ip_tproxy_kill_related(struct ip_tproxy_sockref *sr, u32 raddr, u16 rport,
++		       int cmpfn(const struct ip_tproxy_sockref *, const u32 raddr,
++				 const u16 rport, const struct ip_conntrack *),
++		       int delete)
++{
++	struct ip_conntrack *ct, *p;
++
++	spin_lock_bh(&sr->relatedlock);
++
++	list_for_each_entry_safe(ct, p, &sr->relatedct, tproxy.related) {
++		/* if a compare function was given, don't delete unmatched entries */
++		if (cmpfn && !cmpfn(sr, raddr, rport, ct))
++			continue;
++
++		/* delete the conntrack entry from our related list, update related counter */
++		list_del(&ct->tproxy.related);
++		atomic_dec(&sr->related);
++
++#ifdef CONFIG_NETFILTER_DEBUG
++		/* clear IPS_TPROXY_RELATED flag from the conntrack */
++		if (!test_and_clear_bit(IPS_TPROXY_RELATED_BIT, &ct->status)) {
++			/* this is a bug: IPS_TPROXY_RELATED is not set for a conntrack? */
++			printk(KERN_WARNING "IP_TPROXY: IPS_TPROXY_RELATED not set "
++			       "for a related conntrack\n");
++		}
++#endif
++
++		/* should we delete the entry from the conntrack hash? */
++		if (delete && del_timer(&ct->timeout))
++			ct->timeout.function((unsigned long)ct);
++
++		/* unreference conntrack and sockref */
++		ip_conntrack_put(ct);
++		ip_tproxy_sockref_unref(sr);
++	}
++
++	spin_unlock_bh(&sr->relatedlock);
++}
++
++/* remove/kill related connections for the given sockref */
++static void
++ip_tproxy_kill_conntracks(struct ip_tproxy_sockref *sr,
++			  u32 raddr, u16 rport, int delete)
++{
++	if (sr->flags & TF_CONNECT) {
++		/* this is an established UDP "connection" or a CONNECT-ed
++		 * sockref, we delete all related connections from our list */
++		ip_tproxy_kill_related(sr, raddr, rport, NULL, delete);
++	} else if (sr->flags & TF_LISTEN) {
++		/* for listening sockrefs, we have to delete one specific
++		 * connection only, with both endpoints matching */
++		ip_tproxy_kill_related(sr, raddr, rport, sockref_listen_cmp, delete);
++	}
++}
++
++static void *ip_tproxy_seq_start(struct seq_file *seq, loff_t *pos)
++{
++	/* we use seq_file->private pointer as an int */
++	unsigned int *bucket = (unsigned int *)&seq->private;
++
++	read_lock_bh(&ip_tproxy_lock);
++
++	if (*pos >= ip_tproxy_htable_size)
++		return NULL;
++
++	*bucket = *pos;
++	return bucket;
++}
++
++static void *ip_tproxy_seq_next(struct seq_file *seq, void *v, loff_t *pos)
++{
++	unsigned int *bucket = (unsigned int *)v;
++
++	*pos = ++(*bucket);
++	if (*pos > ip_tproxy_htable_size)
++		return NULL;
++
++	return bucket;
++}
++
++static void ip_tproxy_seq_stop(struct seq_file *seq, void *v)
++{
++	read_unlock_bh(&ip_tproxy_lock);
++}
++
++/* print information about a sockref, used by the procfs interface */
++static unsigned int
++ip_tproxy_print_sockref(const struct ip_tproxy_hash *h, struct seq_file *seq)
++{
++	struct ip_tproxy_sockref *sr = h->sockref;
++
++	IP_NF_ASSERT(sr);
++
++	return seq_printf(seq, "%05d %08x:%04x %08x:%04x %08x:%04x %08x %05u %06u %10ld:%06ld\n",
++			sr->proto, sr->faddr, sr->fport, sr->laddr,
++			sr->lport, sr->raddr, sr->rport, sr->flags,
++			atomic_read(&sr->related), atomic_read(&sr->socket_count),
++			sr->tv_hashed.tv_sec, sr->tv_hashed.tv_nsec) ? 1 : 0;
++}
++
++static int ip_tproxy_seq_show(struct seq_file *seq, void *v)
++{
++	unsigned int *bucket = (unsigned int *)v;
++	struct ip_tproxy_hash *h;
++
++	list_for_each_entry(h, &ip_tproxy_bylocal[*bucket], list)
++		if (ip_tproxy_print_sockref(h, seq))
++			return 1;
++
++	return 0;
++}
++
++static struct seq_operations ip_tproxy_seq_ops = {
++	.start = ip_tproxy_seq_start,
++	.next  = ip_tproxy_seq_next,
++	.stop  = ip_tproxy_seq_stop,
++	.show  = ip_tproxy_seq_show
++};
++
++static int ip_tproxy_proc_open(struct inode *inode, struct file *file)
++{
++	return seq_open(file, &ip_tproxy_seq_ops);
++}
++
++static struct file_operations ip_tproxy_file_ops = {
++	.owner	 = THIS_MODULE,
++	.open	 = ip_tproxy_proc_open,
++	.read	 = seq_read,
++	.llseek	 = seq_lseek,
++	.release = seq_release
++};
++
++/* lookup sockref based on the local address. refcount is not incremented on the returned sockref */
++struct ip_tproxy_sockref *
++ip_tproxy_sockref_find_local(u32 addr, u16 port, u8 proto, int fresh, u32 raddr, u16 rport)
++{
++	u32 hash = ip_tproxy_hash_fn(addr, port, proto);
++	struct ip_tproxy_hash *h;
++	struct ip_tproxy_sockref *sr, *best = NULL;
++
++	ASSERT_READ_LOCK(&ip_tproxy_bylocal[hash]);
++	DEBUGP(KERN_DEBUG "IP_TPROXY: ip_tproxy_sockref_find_local(): "
++	       "entered, %08x:%04x\n", addr, port);
++
++	list_for_each_entry(h, &ip_tproxy_bylocal[hash], list) {
++		sr = h->sockref;
++
++		DEBUGP(KERN_DEBUG "IP_TPROXY: sockref_cmpfn_local(): sr: %08x:%04x "
++		       "(foreign: %08x:%04x remote: %08x:%04x), searched: "
++		       "%08x:%04x (remote: %08x:%04x)\n",
++		       sr->laddr, sr->lport, sr->faddr, sr->fport,
++		       sr->raddr, sr->rport, addr, port, raddr, rport);
++
++		if (sr->laddr == addr && sr->lport == port && sr->proto == proto) {
++			/* fresh means orphaned entries should be skipped */
++			if (fresh && (sr->flags & TF_ORPHAN))
++				continue;
++
++			if (raddr == 0 && rport == 0) {
++				/* not interested in remote address */
++				return sr;
++			}
++			else if (sr->raddr == raddr && sr->rport == rport) {
++				/* complete match */
++				return sr;
++			}
++			else if (sr->raddr == 0 && sr->rport == 0) {
++				/* unconnected sockref if complete match not found */
++				best = sr;
++			}
++		}
++	}
++
++	return best;
++}
++
++/* lookup sockref based on the foreign address. refcount is not incremented on the returned sockref */
++struct ip_tproxy_sockref *
++ip_tproxy_sockref_find_foreign(u32 addr, u16 port, u8 proto, u32 raddr, u16 rport)
++{
++	u32 hash = ip_tproxy_hash_fn(addr, port, proto);
++	struct ip_tproxy_hash *h;
++	struct ip_tproxy_sockref *sr, *best = NULL;
++
++	ASSERT_READ_LOCK(&ip_tproxy_byforeign[hash]);
++	DEBUGP(KERN_DEBUG "IP_TPROXY: ip_tproxy_sockref_find_foreign(): "
++	       "entered, %08x:%04x\n", addr, port);
++
++	list_for_each_entry(h, &ip_tproxy_byforeign[hash], list) {
++		sr = h->sockref;
++
++		DEBUGP(KERN_DEBUG "IP_TPROXY: sockref_cmpfn_foreign(): sr: %08x:%04x "
++		       "(remote: %08x:%04x), searched: %08x:%04x (remote: %08x:%04x)\n",
++		       sr->faddr, sr->fport, sr->raddr, sr->rport, addr, port, raddr, rport);
++
++		if (sr->faddr == addr && sr->fport == port && sr->proto == proto) {
++			if (raddr == 0 && rport == 0) {
++				/* not interested in remote address */
++				return sr;
++			}
++			else if (sr->raddr == raddr && sr->rport == rport) {
++				/* complete match */
++				return sr;
++			}
++			else if (sr->raddr == 0 && sr->rport == 0) {
++				/* unconnected sockref if complete match not found */
++				best = sr;
++			}
++		}
++	}
++
++	return best;
++}
++
++/* delete all sockrefs currently in the hash tables
++ * FIXME: we might have a race here. If our hook is running while to module
++ * is unloading, bad things might happen. */
++static void
++ip_tproxy_sockref_table_free(void)
++{
++	int i;
++	struct ip_tproxy_hash *h, *p;
++
++	for (i = 0; i < ip_tproxy_htable_size; i++) {
++		list_for_each_entry_safe(h, p, &ip_tproxy_bylocal[i], list) {
++			list_del(&h->list);
++			ip_tproxy_kill_conntracks(h->sockref, 0, 0, 0);
++			ip_tproxy_sockref_unref(h->sockref);
++		}
++		ip_tproxy_byforeign[i].prev = ip_tproxy_byforeign[i].next = &ip_tproxy_byforeign[i];
++	}
++}
++
++/* setup a bidirectional NAT mapping for the given connection, using the values specified by
++ * the assigned sockref */
++static int
++ip_tproxy_setup_nat_bidir(struct ip_conntrack *ct, int hooknum, struct ip_tproxy_sockref *sr, unsigned int flags)
++{
++	struct ip_nat_range range;
++	u32 newip = 0;
++	u16 newport = 0;
++	int res;
++
++	if (is_confirmed(ct) || ip_nat_initialized(ct, HOOK2MANIP(hooknum))) {
++		return NF_ACCEPT;
++	}
++
++	DEBUGP(KERN_DEBUG "IP_TPROXY: ip_tproxy_setup_nat(): adding nat "
++	       "entry hooknum=%d %08x:%04x -> %08x:%04x\n", hooknum, sr->laddr,
++	       sr->lport, sr->faddr, sr->fport);
++
++	range.flags = IP_NAT_RANGE_MAP_IPS | IP_NAT_RANGE_BYPASS_HELPERS;
++
++	if (hooknum == NF_IP_POST_ROUTING) {
++		/* in POSTROUTING we perform an SNAT to the foreign address */
++		newip = sr->faddr;
++		newport = sr->fport;
++	}
++	else if (hooknum == NF_IP_PRE_ROUTING || hooknum == NF_IP_LOCAL_OUT) {
++		/* in PREROUTING and LOCAL_OUT we perform a DNAT to our socket address */
++
++		newip = sr->laddr;
++		newport = sr->lport;
++	}
++
++	range.min_ip = range.max_ip = newip;
++
++	/* if port number was specified */
++	if (newport != 0) {
++		if (sr->proto == IPPROTO_TCP) {
++			range.min.tcp.port = range.max.tcp.port = newport;
++			range.flags |= IP_NAT_RANGE_PROTO_SPECIFIED;
++		}
++		else if (sr->proto == IPPROTO_UDP) {
++			range.min.udp.port = range.max.udp.port = newport;
++			range.flags |= IP_NAT_RANGE_PROTO_SPECIFIED;
++		}
++#ifdef CONFIG_IP_NF_NAT_NRES
++		if (sr->flags & TF_NAT_RESERVED)
++			range.flags |= IP_NAT_RANGE_USE_RESERVED;
++#endif
++	}
++
++	res = ip_nat_setup_info(ct, &range, hooknum);
++
++	if (res != NF_ACCEPT) {
++		printk(KERN_WARNING "IP_TPROXY: error applying NAT mapping, "
++		       "hooknum=%d %08x:%04x -> %08x:%04x\n",
++		       hooknum, sr->laddr, sr->lport, newip, newport);
++	} else {
++		/* we store a reference to the sockref in the conntrack */
++		if (!test_and_set_bit(IPS_TPROXY_BIT, &ct->status)) {
++			if (flags & TN_STOREREF) {
++				ip_tproxy_sockref_ref(sr);
++				ct->tproxy.sockref = sr;
++			}
++		}
++
++		if ((newport == 0) && (ct->status & IPS_SRC_NAT) && (sr->flags & TF_HASHED)) {
++			u16 fport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all;
++			write_lock_bh(&ip_tproxy_lock);
++			/* FIXME: necessary and correct? */
++			ip_tproxy_rehash_fport(sr, fport);
++			write_unlock_bh(&ip_tproxy_lock);
++		}
++	}
++
++	return res;
++}
++
++/* redirect incoming packet to the appropriate local port (UDP specific) */
++static int
++ip_tproxy_setup_nat_unidir(struct sk_buff **pskb, int hooknum, struct ip_tproxy_sockref *sr)
++{
++	enum ip_nat_manip_type manip_type;
++	struct sk_buff *skb = *pskb;
++	struct ip_conntrack_tuple tuple;
++
++	/* free the original conntrack entry, and assign the fake one */
++	nf_conntrack_put(skb->nfct);
++	skb->nfct = &ip_tproxy_fake_ct.ct_general;
++	skb->nfctinfo = IP_CT_NEW;
++	nf_conntrack_get(skb->nfct);
++
++	/* fill tuple structure with new information */
++	tuple.dst.protonum = skb->nh.iph->protocol;
++
++	if (hooknum == NF_IP_POST_ROUTING) {
++		/* in POSTROUTING we perform an SNAT to the foreign address */
++		tuple.src.ip = sr->faddr;
++		tuple.src.u.udp.port = sr->fport;
++		manip_type = IP_NAT_MANIP_SRC;
++	} else if (hooknum == NF_IP_PRE_ROUTING || hooknum == NF_IP_LOCAL_OUT) {
++		/* in PREROUTING and LOCAL_OUT we perform a DNAT to our socket address */
++		tuple.dst.ip = sr->laddr;
++		tuple.dst.u.udp.port = sr->lport;
++		manip_type = IP_NAT_MANIP_DST;
++	} else
++		return NF_DROP;
++
++	/* manipulate packet "by hand" */
++	if (unlikely(!ip_nat_manip_pkt(skb->nh.iph->protocol, pskb, 0, &tuple, manip_type))) {
++		DEBUGP(KERN_DEBUG "IP_TPROXY: ip_tproxy_setup_nat_unidir(): "
++		       "failed to rewrite packet header\n");
++		return NF_DROP;
++	}
++
++	return NF_ACCEPT;
++}
++
++/* setup NAT for the packet */
++int
++ip_tproxy_setup_nat(struct sk_buff **pskb, int hooknum, struct ip_tproxy_sockref *sr, unsigned int flags)
++{
++	if (sr->proto == IPPROTO_TCP || (flags & TN_BIDIR)) {
++		struct ip_conntrack *ct;
++		enum ip_conntrack_info ctinfo;
++
++		ct = ip_conntrack_get(*pskb, &ctinfo);
++		return ip_tproxy_setup_nat_bidir(ct, hooknum, sr, flags);
++	} else if (sr->proto == IPPROTO_UDP)
++		return ip_tproxy_setup_nat_unidir(pskb, hooknum, sr);
++
++	return NF_DROP;
++}
++EXPORT_SYMBOL_GPL(ip_tproxy_setup_nat);
++
++/* This is a gross hack */
++static void
++ip_tproxy_save_orig_addrs(struct sk_buff *skb)
++{
++	struct iphdr *iph = skb->nh.iph;
++	u16 *tports, _tports[2];
++
++	tports = skb_header_pointer(skb, iph->ihl * 4, sizeof(_tports), &_tports);
++	if (tports != NULL) {
++		IPCB(skb)->orig_srcaddr = iph->saddr;
++		IPCB(skb)->orig_srcport = tports[0];
++		IPCB(skb)->orig_dstaddr = iph->daddr;
++		IPCB(skb)->orig_dstport = tports[1];
++	}
++}
++
++/* tproxy Netfilter hook */
++static unsigned int
++ip_tproxy_fn(unsigned int hooknum,
++	     struct sk_buff **pskb,
++	     const struct net_device *in,
++	     const struct net_device *out,
++	     int (*okfn)(struct sk_buff *))
++{
++	struct ip_conntrack *ct;
++	enum ip_conntrack_info ctinfo;
++	unsigned int verdict = NF_ACCEPT;
++
++	ct = ip_conntrack_get(*pskb, &ctinfo);
++
++	if (ct && ctinfo == IP_CT_NEW) {
++		struct iphdr *iph = (*pskb)->nh.iph;
++		u16 *tports, _tports[2];
++		struct ip_tproxy_sockref *sr = NULL;
++
++		tports = skb_header_pointer(*pskb, (*pskb)->nh.iph->ihl * 4,
++					    sizeof(_tports), &_tports);
++		if (tports == NULL) {
++			DEBUGP(KERN_DEBUG "IP_TPROXY: ip_tproxy_fn(): "
++			       "failed to copy protocol header\n");
++			return NF_DROP;
++		}
++
++		DEBUGP(KERN_DEBUG "IP_TPROXY: ip_tproxy_fn(): new connection, "
++		       "hook=%d, %08x:%04x -> %08x:%04x\n",
++		       hooknum, iph->saddr, tports[0], iph->daddr, tports[1]);
++
++		ip_tproxy_save_orig_addrs(*pskb);
++		read_lock_bh(&ip_tproxy_lock);
++		if (hooknum == NF_IP_PRE_ROUTING || hooknum == NF_IP_LOCAL_OUT) {
++
++			/*
++			 * We either received a connection from the network (PREROUTING case)
++			 * or a local process generated one (LOCAL_OUT case).
++			 *
++			 * In either case we check whether a proxy bound to the
++			 * destination of this connection.
++			 *
++			 * As a special case we check in LOCAL_OUT whether the
++			 * connection was initiated by a local proxy, and if it
++			 * was we mark the connection as such and skip the
++			 * tproxy table.
++			 */
++
++			/* destination address is interesting */
++
++			sr = ip_tproxy_sockref_find_foreign(iph->daddr, tports[1],
++						iph->protocol, iph->saddr, tports[0]);
++
++			if (sr && sr->flags & TF_ORPHAN) {
++				/* This sockref is orphaned, the listening socket is already unassigned,
++				 * so it should not be used for setting up NAT for a new connection. */
++				sr = NULL;
++			}
++
++			if (sr && (sr->flags & (TF_LISTEN|TF_MARK_ONLY)) == 0) {
++				DEBUGP(KERN_DEBUG "IP_TPROXY: ip_tproxy_fn(PREROUTING), "
++				       "entry found but flags = 0\n");
++				sr = NULL;
++			}
++
++			if (hooknum == NF_IP_LOCAL_OUT &&
++			    !sr &&
++			    (sr = ip_tproxy_sockref_find_local(iph->saddr, tports[0],
++							       iph->protocol, 1, iph->daddr,
++							       tports[1]))) {
++				DEBUGP("IP_TPROXY: tproxy initiated session in local "
++				       "output, sr->flags=%04x\n", sr->flags);
++				if ((sr->flags & TF_MARK_ONLY) == 0)
++					sr = NULL;
++			}
++		}
++		else if (hooknum == NF_IP_POST_ROUTING) {
++
++			/*
++			 * We detected a new connection just leaving this box, so
++			 * we now have a chance to add a translation changing
++			 * the source address of all packets. We want to do this
++			 * if the connection was initiated by a transparent proxy
++			 * which registered another address to rewrite the source into.
++			 *
++			 * A proxy registered an entry if find_local returns non-NULL.
++			 */
++
++			/* source address is interesting */
++
++			sr = ip_tproxy_sockref_find_local(iph->saddr, tports[0], iph->protocol,
++					1, iph->daddr, tports[1]);
++			if (sr && (sr->flags & (TF_CONNECT|TF_MARK_ONLY)) == 0) {
++				DEBUGP(KERN_DEBUG "IP_TPROXY: ip_tproxy_fn(POSTROUTING), "
++				       "entry found but flags = 0\n");
++				sr = NULL;
++			}
++		}
++		else {
++			printk(KERN_WARNING "IP_TPROXY: hook function called at hooks other "
++			       "than NF_IP_PRE_ROUTING, NF_IP_POST_ROUTING or "
++			       "NF_IP_LOCAL_OUT, hooknum=%d\n", hooknum);
++			verdict = NF_DROP;
++		}
++
++		/*
++		 * sockref will not be freed, as the hash is read locked here
++		 * and by the time we unlock it we own a reference
++		 */
++
++		if (sr) {
++			if (sr->flags & TF_MARK_ONLY) {
++				/*
++				 * A MARK_ONLY entry indicates that although the proxy
++				 * doesn't want any address rewrite to be performed
++				 * it registered its connection as one originating
++				 * from a transparent proxy, so -m tproxy matches it.
++				 *
++				 * It is a convinience feature, so administrators
++				 * can simply let tproxied traffic through their filter
++				 * table.
++				 */
++				DEBUGP(KERN_DEBUG "IP_TPROXY: mark only entry...\n");
++
++				if (!test_and_set_bit(IPS_TPROXY_BIT, &ct->status))
++					ct->tproxy.sockref = NULL;
++
++				sr = NULL;
++			}
++			else {
++				/* we'll have a reference to the sockref after releasing the lock */
++				ip_tproxy_sockref_ref(sr);
++			}
++		}
++		read_unlock_bh(&ip_tproxy_lock);
++
++		DEBUGP(KERN_DEBUG "IP_TPROXY: ip_tproxy_fn(): sockref looked up, sr=%p\n", sr);
++		if (sr) {
++
++			/* sockref found it is a real translation as
++			 * MARK_ONLY was handled above so we apply the
++			 * necessary NAT function
++			 */
++
++			/* apply NAT mapping */
++			unsigned int dirflag = !(sr->flags & TF_UNIDIR) ? TN_BIDIR : 0;
++			if (ip_tproxy_setup_nat(pskb, hooknum, sr, dirflag | TN_STOREREF) == NF_ACCEPT) {
++				/* FIXME: hmm. there might be races involved
++				 * with TF_NAT_APPLIED, as another processor
++				 * might be processing the same sockref.
++				 */
++				sr->flags |= TF_NAT_APPLIED;
++			} else {
++				/* Applying the NAT mapping failed, we should drop the packet */
++				verdict = NF_DROP;
++			}
++
++			/* drop reference */
++			ip_tproxy_sockref_unref(sr);
++		} /* if (sr) */
++		else if (!test_bit(IPS_TPROXY_BIT, &ct->status) &&
++			 (hooknum == NF_IP_PRE_ROUTING || hooknum == NF_IP_LOCAL_OUT)) {
++
++			/* there was no matching sockref, so we consult the
++			 * TPROXY table
++			 */
++
++			verdict = ipt_do_table(pskb, hooknum, in, out, &tproxy_table);
++		}
++	}
++
++	return verdict;
++}
++
++#ifdef CONFIG_IP_NF_NAT_NRES
++static inline struct ip_nat_reserved *
++ip_tproxy_nat_reserve(const u32 faddr, const u16 fport, int proto, const u32 raddr, const u16 rport)
++{
++	struct ip_conntrack_manip m = {.ip = faddr, .u = {.all = fport}};
++	struct ip_conntrack_manip p = {.ip = raddr, .u = {.all = rport}};
++	struct ip_nat_reserved *res;
++
++	DEBUGP(KERN_DEBUG "IP_TPROXY: ip_tproxy_nat_reserve proto %u foreign "
++	       "%u.%u.%u.%u:%u peer %u.%u.%u.%u:%u\n",
++	       proto, NIPQUAD(faddr), ntohs(fport), NIPQUAD(raddr), ntohs(rport));
++
++	write_lock_bh(&ip_nat_lock);
++	res = __ip_nat_reserved_new_hash(&m, proto, (raddr && rport) ? &p : NULL);
++	write_unlock_bh(&ip_nat_lock);
++
++	return res;
++}
++
++static void
++ip_tproxy_nat_reserved_free(struct ip_tproxy_sockref *sr)
++{
++	struct ip_nat_reserved *res;
++	struct ip_conntrack_manip m = {.ip = sr->faddr, .u = {.all = sr->fport}};
++	struct ip_conntrack_manip p = {.ip = sr->raddr, .u = {.all = sr->rport}};
++
++	/* free NAT reservation */
++	if (sr->flags & TF_NAT_RESERVED) {
++		write_lock_bh(&ip_nat_lock);
++		if (sr->flags & TF_NAT_PEER)
++			res = __ip_nat_reserved_unhash(&m, sr->proto, &p);
++		else
++			res = __ip_nat_reserved_unhash(&m, sr->proto, NULL);
++		write_unlock_bh(&ip_nat_lock);
++
++		if (res) {
++			sr->flags &= ~(TF_NAT_RESERVED | TF_NAT_PEER);
++			__ip_nat_reserved_free(res);
++		}
++	}
++}
++#endif
++
++/* This routine dynamically allocates a foreign port if the proxy requests this
++ * by setting fport to 0. We try to use the same algorithm the local stack
++ * uses to allocate a port. The routine itself is only used when we need to
++ * allocate a foreign port _before_ sending the first packet, standard connect
++ * sockets get their foreign port allocated by the NAT subsystem. */
++static inline int
++ip_tproxy_sockref_uniq(struct ip_tproxy_sockref *sr)
++{
++	int min, max, rover, left;
++	static int ip_tproxy_port_rover = 0;
++
++	DEBUGP(KERN_DEBUG "IP_TPROXY: ip_tproxy_sockref_uniq\n");
++	min = sysctl_local_port_range[0];
++	max = sysctl_local_port_range[1];
++	rover = ip_tproxy_port_rover;
++	left = (max - min) + 1;
++	do {
++		rover++;
++		if (rover < min || rover > max)
++			rover = min;
++		if (ip_tproxy_sockref_find_foreign(sr->faddr, htons(rover),
++						   sr->proto, sr->raddr,
++						   sr->rport) == NULL) {
++#ifdef CONFIG_IP_NF_NAT_NRES
++			/* unique entry found, try to reserve in NAT */
++			if (ip_tproxy_nat_reserve(sr->faddr, htons(rover), sr->proto, sr->raddr, sr->rport))
++#endif
++				break;
++		}
++	} while (--left > 0);
++
++	if (left == 0) {
++		printk(KERN_WARNING "IP_TPROXY: out of free foreign ports, "
++		       "increase local_port_range\n");
++		return 0;
++	} else if (rover == 0) {
++		printk(KERN_WARNING "IP_TPROXY: hm?? ip_tproxy_sockref_uniq, "
++		       "left != 0 && rover == 0\n");
++	} else {
++		/* succeeded */
++		DEBUGP(KERN_DEBUG "IP_TPROXY: ip_tproxy_sockref_uniq, "
++		       "allocated port=%d\n", rover);
++
++		ip_tproxy_port_rover = rover;
++
++#ifdef CONFIG_IP_NF_NAT_NRES
++		sr->flags |= TF_NAT_RESERVED;
++		if (sr->raddr && sr->rport)
++			sr->flags |= TF_NAT_PEER;
++#endif
++		ip_tproxy_rehash_fport(sr, htons(rover));
++	}
++
++	return rover;
++}
++
++static int
++ip_tproxy_setsockopt_version(struct sock *sk, int proto, struct in_tproxy *itp)
++{
++	int res = 0;
++	u_int32_t ver = itp->v.version;
++
++	DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_VERSION\n");
++
++	if ((MAJOR_VERSION(ver) != TPROXY_MAJOR_VERSION) ||
++	    (MINOR_VERSION(ver) > TPROXY_MINOR_VERSION))
++		res = -EINVAL;
++
++	return res;
++}
++
++static int
++ip_tproxy_setsockopt_assign(struct sock *sk, int proto, struct in_tproxy *itp)
++{
++	int foreign_matches, res = 0;
++	struct ip_tproxy_sockref *sr, *tsr = NULL;
++	struct inet_sock *inet = inet_sk(sk);
++
++	DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_ASSIGN %08x:%04x\n",
++	       inet->rcv_saddr, inet->sport);
++
++	if (!capable(CAP_NET_ADMIN))
++		return -EPERM;
++
++	if ((sk->sk_socket == NULL) ||
++	    (sk->sk_socket->state != SS_UNCONNECTED)) {
++		DEBUGP(KERN_DEBUG "IP_TPROXY: socket is not SS_UNCONNECTED "
++		       "during assign\n");
++		return -EINVAL;
++	}
++
++	if (!inet->rcv_saddr || !inet->sport)
++		return -EINVAL;
++
++	read_lock_bh(&ip_tproxy_lock);
++
++	DEBUGP(KERN_DEBUG "IP_TPROXY: count=%d\n", ip_tproxy_htable_count);
++
++	/* check if this socket was already assigned a sockref */
++	sr = ip_tproxy_sockref_find_local(inet->rcv_saddr, inet->sport, proto, 0, 0, 0);
++
++	/* NOTE: this is a HACK, and trusts the userspace app.
++	   We allow to assign multiple sockrefs to a single
++	   local addr:port pair _iff_ the foreign address is
++	   0.0.0.0:0 to allow UDP sessions to be bound to
++	   the same socket while keeping the 'mark as
++	   tproxy' packet mechanism.
++
++	   Maybe we should assign sockrefs to the struct sock *
++	   address instead.
++	*/
++	if (sr) {
++		if (itp->v.addr.faddr.s_addr || itp->v.addr.fport) {
++			printk("IP_TPROXY: socket already assigned, reuse=%d, "
++			       "%08x:%04x, sr->faddr=%08x:%04x, flags=%x, "
++			       "sr->tv_hashed=%ld:%ld\n", sk->sk_reuse,
++			       inet->rcv_saddr, inet->sport, sr->faddr, sr->fport,
++			       sr->flags, sr->tv_hashed.tv_sec, sr->tv_hashed.tv_nsec);
++			res = -EEXIST;
++			goto read_unlk;
++		} else {
++			DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_ASSIGN local address "
++			       "already taken, sharing this sockref\n");
++
++			/* increase socket count of sockref, indicating that it is
++			 * shared between multiple sockets */
++			atomic_inc(&sr->socket_count);
++			goto read_unlk;
++		}
++	}
++
++	/* check if the foreign address specified has already been taken.
++	 * if it has, the socket can only be used for connecting, provided
++	 * sk->sk_reuse is true, otherwise fail */
++
++	if (itp->v.addr.faddr.s_addr && itp->v.addr.fport != 0 &&
++	    (tsr = ip_tproxy_sockref_find_foreign(itp->v.addr.faddr.s_addr, itp->v.addr.fport, proto, 0, 0))) {
++		if (!sk->sk_reuse) {
++			res = -EADDRINUSE;
++			goto read_unlk;
++		}
++		foreign_matches = 1;
++	} else {
++		foreign_matches = 0;
++	}
++
++	/* we performed all checks, now allocate and fill a new
++	 * sockref */
++
++	sr = ip_tproxy_sockref_new();
++	if (!sr) {
++		printk(KERN_WARNING "IP_TPROXY: drained? cannot allocate sockref\n");
++		res = -ENOBUFS;
++		goto read_unlk;
++	}
++	sr->flags = 0;
++	sr->proto = proto;
++	sr->faddr = itp->v.addr.faddr.s_addr;
++	sr->fport = itp->v.addr.fport;
++	sr->laddr = inet->rcv_saddr;
++	sr->lport = inet->sport;
++	sr->assigned_to = sk;
++
++	if (itp->v.addr.faddr.s_addr == 0) {
++		/* we store the local address as foreign as well
++		 * for mark only connections, so find_foreign
++		 * finds this entry as well */
++
++		sr->flags |= TF_MARK_ONLY;
++		sr->faddr = sr->laddr;
++		sr->fport = sr->lport;
++	}
++	else if (foreign_matches) {
++		/* sk->sk_reuse was true */
++		/* if the existing sockref is mark only, or has its remote
++		 * endpoint specified, we have a chance not to clash with it,
++		 * otherwise this sockref will be connect-only */
++
++		if ((tsr->flags & TF_MARK_ONLY) || (tsr->raddr != 0 && tsr->rport != 0)) {
++			DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_ASSIGN omitting "
++			       "CONNECT_ONLY, other sockref is mark-only or connected\n");
++		} else {
++			sr->flags |= TF_CONNECT_ONLY;
++			DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_ASSIGN setting "
++			       "sr %p CONNECT_ONLY\n", sr);
++		}
++	}
++
++	DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_ASSIGN sr %p faddr:fport "
++	       "%08x:%04x flags %08x\n", sr, sr->faddr, sr->fport, sr->flags);
++
++#ifdef CONFIG_IP_NF_NAT_NRES
++	/* If SO_REUSE is not set and foreign port was specified, we should
++	 * allocate a NAT reservation right now. This mode is used by range
++	 * binds, so being pessimistic at NAT reservation clash checks causes
++	 * the caller to proceed to the next port and try again. */
++	if (itp->v.addr.faddr.s_addr && itp->v.addr.fport &&
++	    !foreign_matches && !sk->sk_reuse) {
++		/* we should register a NAT reservatinon */
++		if (ip_tproxy_nat_reserve(sr->faddr, sr->fport, proto, 0, 0)) {
++			sr->flags |= TF_NAT_RESERVED;
++			sr->flags &= ~TF_NAT_PEER;
++		} else {
++			/* failed to register NAT reservation, bail out */
++			DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_ASSIGN cannot "
++			       "register NAT reservation %08x:%04x\n",
++			       sr->faddr, sr->fport);
++
++			res = -EINVAL;
++			ip_tproxy_sockref_unref(sr);
++			goto read_unlk;
++		}
++	}
++#endif
++
++	read_unlock_bh(&ip_tproxy_lock);
++	write_lock_bh(&ip_tproxy_lock);
++	/* here we should check if we've won the race: if a sockref is in the
++	 * local hash by the time we acquired the write lock, we've lost */
++	if (!(tsr = ip_tproxy_sockref_find_local(inet->rcv_saddr,
++						 inet->sport, proto, 0, 0, 0)))
++		ip_tproxy_hash(sr);
++	write_unlock_bh(&ip_tproxy_lock);
++
++	if (tsr) {
++		/* we've lost the race */
++		res = -EINVAL;
++	}
++
++	/* the hashtable stores a reference, if hashing succeeded */
++	ip_tproxy_sockref_unref(sr);
++
++	return res;
++
++ read_unlk:
++	read_unlock_bh(&ip_tproxy_lock);
++	return res;
++}
++
++static int
++ip_tproxy_setsockopt_unassign(struct sock *sk, int proto, struct in_tproxy *itp)
++{
++	int res = 0, unhash = 0;
++	u32 saddr, daddr;
++	u16 sport, dport;
++	struct ip_tproxy_sockref *sr;
++
++	/* connection and time_wait socksets have to be handled differently */
++	if (sk->sk_state == TCP_TIME_WAIT) {
++		struct inet_timewait_sock *tw = inet_twsk(sk);
++		saddr = tw->tw_rcv_saddr;
++		daddr = tw->tw_daddr;
++		sport = tw->tw_sport;
++		dport = tw->tw_dport;
++	} else {
++		struct inet_sock *inet = inet_sk(sk);
++		saddr = inet->rcv_saddr;
++		daddr = inet->daddr;
++		sport = inet->sport;
++		dport = inet->dport;
++	}
++
++	/* break the connection between this socket and
++	 * a foreign address. This is implicitly performed
++	 * when the socket is closed */
++
++	DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_UNASSIGN %08x:%04x\n", saddr, sport);
++
++	write_lock_bh(&ip_tproxy_lock);
++	sr = ip_tproxy_sockref_find_local(saddr, sport, proto, 0, daddr, dport);
++
++	if (!sr) {
++		DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_UNASSIGN not unhashing socket, "
++		       "%08x:%04x, proto=%d, sk->state=%d\n",
++		       saddr, sport, proto, sk->sk_socket ? sk->sk_socket->state : -1);
++		res = -ENOENT;
++		goto write_unlk;
++	}
++
++	/* Delete appropriate related connections and set 'unhash' if
++	 * we have to unhash the sockref. */
++
++	/* Handle mark-only sockrefs separately: mark-only sockrefs don't have
++	 * related conntrack entries, so there is no need to bother to delete
++	 * the correct one from the related list. However, mark-only entries
++	 * can be shared, which means that more than one sockets are bound to
++	 * the same local address, and they are using the same sockref to have
++	 * matching connections marked. Because of this, we may unhash the
++	 * sockref only if there are no sockets left */
++	if (sr->flags & TF_MARK_ONLY) {
++		DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_UNASSIGN unassigning "
++		       "mark-only sockref %08x:%04x\n", saddr, sport);
++		if (atomic_dec_and_test(&sr->socket_count)) {
++			/* this was the last socket using this sockref */
++			unhash = 1;
++		}
++	} else switch (proto) {
++	case IPPROTO_TCP:
++		if ((sr->flags & TF_LISTEN)) {
++			if (sr->assigned_to != sk) {
++				/* unassigning the socket of a connection
++				 * established to a listening socket */
++				DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_UNASSIGN unassigning "
++				       "TCP listen related %08x:%04x -> %08x:%04x\n",
++				       daddr, dport, saddr, sport);
++			} else {
++				/* unassigning a listening socket, don't destroy just mark invalid */
++				DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_UNASSIGN unassigning "
++				       "TCP listen socket %08x:%04x\n", saddr, sport);
++				sr->flags |= TF_ORPHAN;
++				sr->assigned_to = NULL;
++			}
++
++			/* we have to unhash if there are no more related
++			 * connections and the listening socket is closed as
++			 * well */
++			if (!atomic_read(&sr->related) && !sr->assigned_to)
++				unhash = 1;
++
++		} else if (sr->flags & TF_CONNECT) {
++			/* unassigning a connect socket */
++			DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_UNASSIGN unassigning "
++			       "TCP connect %08x:%04x\n", saddr, sport);
++			unhash = 1;
++		}
++		break;
++
++	case IPPROTO_UDP:
++		DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_UNASSIGN unassigning UDP "
++		       "%08x:%04x\n", saddr, sport);
++		ip_tproxy_kill_conntracks(sr, 0, 0, 1);
++		unhash = 1;
++		break;
++	}
++
++	/* unhash sockref if we don't need it anymore */
++	if (unhash) {
++#ifdef CONFIG_IP_NF_NAT_NRES
++		ip_tproxy_nat_reserved_free(sr);
++#endif
++		ip_tproxy_unhash(sr);
++	}
++
++ write_unlk:
++	write_unlock_bh(&ip_tproxy_lock);
++
++	return res;
++}
++
++static int
++ip_tproxy_setsockopt_flags(struct sock *sk, int proto, struct in_tproxy *itp)
++{
++	int res = 0;
++	struct ip_tproxy_sockref *sr;
++	u_int32_t flags = itp->v.flags;
++	struct inet_sock *inet = inet_sk(sk);
++
++	/* specify translation flags for this socket */
++
++	DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_FLAGS %08x:%04x\n",
++	       inet->rcv_saddr, inet->sport);
++
++	/* we don't check CAP_NET_ADMIN here, it was checked when this entry was hashed */
++
++	DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_FLAGS flags to set %08x\n",
++	       flags);
++
++	/* FIXME: since read locks cannot be upgraded, we need a write lock if
++	 * foreign port allocation will be needed... */
++	write_lock_bh(&ip_tproxy_lock);
++	sr = ip_tproxy_sockref_find_local(inet->rcv_saddr, inet->sport, proto,
++					  0, inet->daddr, inet->dport);
++	if (!sr) {
++		res = -ENOENT;
++		goto write_unlk;
++	}
++
++	DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_FLAGS sr %p flags %08x\n", sr, sr->flags);
++
++	/* Don't do anything in case of MARK_ONLY sockrefs */
++	if (sr->flags & TF_MARK_ONLY) {
++		DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_FLAGS sr %p mark only, "
++		       "doing nothing\n", sr);
++		goto write_unlk;
++	}
++
++	/* clear user-settable flags */
++	sr->flags &= TF_STATE_MASK;
++
++	/* set TF_CONNECT/TF_LISTEN if needed */
++	switch (flags & (ITP_CONNECT | ITP_LISTEN | ITP_ESTABLISHED)) {
++	case ITP_CONNECT:
++		sr->flags |= TF_CONNECT;
++		ip_tproxy_kill_conntracks(sr, 0, 0, 1);
++		break;
++	case ITP_LISTEN:
++		if (sr->flags & TF_CONNECT_ONLY) {
++			DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_FLAGS sr %p: "
++					   "trying to set ITP_LISTEN on a connect only sockref\n",
++					   sr);
++			res = -EINVAL;
++			break;
++		}
++		sr->flags |= TF_LISTEN;
++		ip_tproxy_kill_conntracks(sr, 0, 0, 1);
++		break;
++	case ITP_ESTABLISHED:
++		DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_FLAGS: establishing sr %p "
++		       "raddr:rport %08x:%04x daddr:dport %08x:%04x\n",
++			sr, sr->raddr, sr->rport, inet->daddr, inet->dport);
++
++		if (sr->raddr == 0 || sr->rport == 0) {
++			DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_FLAGS sr %p: "
++			       "trying to set ITP_ESTABLISHED on a not connected sockref\n",
++			       sr);
++			res = -EINVAL;
++		}
++		sr->flags |= TF_LISTEN | TF_CONNECT;
++		ip_tproxy_kill_conntracks(sr, 0, 0, 1);
++		break;
++	default:
++		DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_FLAGS sr %p: "
++				  "invalid combination of flags %x\n", sr, flags);
++		/* FIXME: indicate error, if no CONNECT/LISTEN/ESTABLISHED was given? */
++		break;
++	}
++
++	/* Set TF_NAT_ONCE and TF_UNIDIR if needed */
++	sr->flags |= (flags & ITP_ONCE ? TF_NAT_ONCE : 0) |
++		     (flags & ITP_UNIDIR ? TF_UNIDIR : 0);
++
++#ifdef CONFIG_IP_NF_NAT_NRES
++	/* reserve NAT mappings if raddr is specified and sk->sk_reuse is set */
++	if (flags & (ITP_CONNECT | ITP_ESTABLISHED) &&
++	    sr->faddr && sr->fport && sr->raddr && sr->rport && sk->sk_reuse) {
++		if (ip_tproxy_nat_reserve(sr->faddr, sr->fport, proto, sr->raddr, sr->rport)) {
++			sr->flags |= (TF_NAT_RESERVED | TF_NAT_PEER);
++		} else {
++			DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_FLAGS sr %p: "
++					  "failed to register NAT reservation\n", sr);
++			res = -EINVAL;
++			goto write_unlk;
++		}
++	}
++#endif
++
++ write_unlk:
++	write_unlock_bh(&ip_tproxy_lock);
++
++	return res;
++}
++
++static int
++ip_tproxy_setsockopt_alloc(struct sock *sk, int proto, struct in_tproxy *itp)
++{
++	int res = 0;
++	struct ip_tproxy_sockref *sr;
++	struct inet_sock *inet = inet_sk(sk);
++
++	/* we'd like to force allocation of a unique foreign address, if one's not specified */
++	DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_ALLOC %08x:%04x\n",
++	       inet->rcv_saddr, inet->sport);
++
++	write_lock_bh(&ip_tproxy_lock);
++	sr = ip_tproxy_sockref_find_local(inet->rcv_saddr, inet->sport, proto, 0, inet->daddr, inet->dport);
++	if (!sr) {
++		res = -ENOENT;
++		goto write_unlk;
++	}
++
++	DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_ALLOC sr %p, current foreign "
++	       "%08x:%04x\n", sr, sr->faddr, sr->fport);
++
++	if (sr->flags & TF_MARK_ONLY) {
++		DEBUGP("IP_TPROXY: IP_TPROXY_ALLOC sr %p mark only, "
++		       "doing nothing\n", sr);
++		goto write_unlk;
++	}
++
++	if (sr->faddr && sr->fport) {
++		/* foreign port already assigned */
++		res = -EINVAL;
++		goto write_unlk;
++	}
++
++	if (ip_tproxy_sockref_uniq(sr) == 0) {
++		/* allocating a foreign port failed */
++		DEBUGP(KERN_DEBUG "IP_TPROXY: failed to allocate foreign port "
++		       "for listening sockref\n");
++		res = -EFAULT;
++		goto write_unlk;
++	}
++
++ write_unlk:
++	write_unlock_bh(&ip_tproxy_lock);
++
++	return res;
++}
++
++static int
++ip_tproxy_setsockopt_connect(struct sock *sk, int proto, struct in_tproxy *itp)
++{
++	int res = 0;
++	struct ip_tproxy_sockref *sr;
++	struct inet_sock *inet = inet_sk(sk);
++
++	DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_CONNECT %08x:%04x\n",
++	       inet->rcv_saddr, inet->sport);
++
++	/* Look up in the local sockref hash */
++	read_lock_bh(&ip_tproxy_lock);
++	sr = ip_tproxy_sockref_find_local(inet->rcv_saddr, inet->sport, proto,
++					  0, inet->daddr, inet->dport);
++	if (!sr) {
++		res = -ENOENT;
++		goto read_unlk;
++	}
++
++	DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_CONNECT sr %p, current "
++	       "raddr:rport %08x:%04x\n", sr, sr->raddr, sr->rport);
++
++	if (sr->flags & TF_MARK_ONLY) {
++		DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_CONNECT sr %p "
++		       "mark only\n", sr);
++		goto read_unlk;
++	}
++
++	/* store remote address */
++	if (itp->v.addr.faddr.s_addr && itp->v.addr.fport) {
++		sr->raddr = itp->v.addr.faddr.s_addr;
++		sr->rport = itp->v.addr.fport;
++		DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_CONNECT sr %p, "
++		       "new raddr:rport %08x:%04x\n", sr, sr->raddr, sr->rport);
++	}
++
++ read_unlk:
++	read_unlock_bh(&ip_tproxy_lock);
++
++	return res;
++}
++
++static int
++ip_tproxy_setsockopt(struct sock *sk, int optval, void __user *user, unsigned int len)
++{
++	int proto;
++	int res = 0;
++	unsigned int mlen;
++	struct in_tproxy itp;
++
++	/* get protocol number of the socket */
++	proto = sk->sk_protocol;
++	if ((proto != IPPROTO_UDP) && (proto != IPPROTO_TCP))
++		return -EINVAL;
++
++	if (len < sizeof(itp.op) + sizeof(itp.v.version))
++		return -EINVAL;
++
++	mlen = MIN(sizeof(itp), len);
++
++	if (copy_from_user(&itp, user, mlen))
++		return -EFAULT;
++
++	switch (itp.op) {
++		case TPROXY_VERSION:
++			res = ip_tproxy_setsockopt_version(sk, proto, &itp);
++			break;
++		case TPROXY_ASSIGN:
++			res = ip_tproxy_setsockopt_assign(sk, proto, &itp);
++			break;
++		case TPROXY_UNASSIGN:
++			res = ip_tproxy_setsockopt_unassign(sk, proto, &itp);
++			break;
++		case TPROXY_FLAGS:
++			res = ip_tproxy_setsockopt_flags(sk, proto, &itp);
++			break;
++		case TPROXY_ALLOC:
++			res = ip_tproxy_setsockopt_alloc(sk, proto, &itp);
++			break;
++		case TPROXY_CONNECT:
++			res = ip_tproxy_setsockopt_connect(sk, proto, &itp);
++			break;
++		default:
++			res = -ENOPROTOOPT;
++			break;
++	}
++
++	return res;
++}
++
++static int
++ip_tproxy_getsockopt_version(struct sock *sk, int proto, struct in_tproxy *itp)
++{
++	DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_VERSION\n");
++
++	itp->v.version = TPROXY_FULL_VERSION;
++
++	return 0;
++}
++
++static int
++ip_tproxy_getsockopt_query(struct sock *sk, int proto, struct in_tproxy *itp)
++{
++	int res = 0;
++	struct ip_tproxy_sockref *sr;
++	struct inet_sock *inet = inet_sk(sk);
++
++	DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_QUERY %08x:%04x\n",
++	       inet->rcv_saddr, inet->sport);
++
++	read_lock_bh(&ip_tproxy_lock);
++
++	sr = ip_tproxy_sockref_find_local(inet->rcv_saddr, inet->sport, proto,
++					  0, inet->daddr, inet->dport);
++	if (sr) {
++		itp->v.addr.faddr.s_addr = sr->faddr;
++		itp->v.addr.fport = sr->fport;
++		DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_QUERY found sr %p "
++		       "faddr:fport %08x:%04x\n", sr, sr->faddr, sr->fport);
++	} else
++		res = -ENOENT;
++
++	read_unlock_bh(&ip_tproxy_lock);
++
++	return res;
++}
++
++static int
++ip_tproxy_getsockopt_flags(struct sock *sk, int proto, struct in_tproxy *itp)
++{
++	int res = 0;
++	u_int32_t flags;
++	struct ip_tproxy_sockref *sr;
++	struct inet_sock *inet = inet_sk(sk);
++
++	DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_FLAGS get %08x:%04x\n",
++	       inet->rcv_saddr, inet->sport);
++
++	read_lock_bh(&ip_tproxy_lock);
++
++	sr = ip_tproxy_sockref_find_local(inet->rcv_saddr, inet->sport, proto,
++					  0, inet->daddr, inet->dport);
++	if (!sr) {
++		res = -ENOENT;
++		goto read_unlk;
++	}
++
++	flags = 0;
++	if ((sr->flags & (TF_CONNECT+TF_LISTEN)) == (TF_CONNECT+TF_LISTEN))
++		flags |= ITP_ESTABLISHED;
++	else if (sr->flags & TF_CONNECT)
++		flags |= ITP_CONNECT;
++	else if (sr->flags & TF_LISTEN)
++		flags |= ITP_LISTEN;
++
++	if (sr->flags & TF_UNIDIR)
++		flags |= ITP_UNIDIR;
++	if (sr->flags & TF_NAT_ONCE)
++		flags |= ITP_ONCE;
++	if (sr->flags & TF_MARK_ONLY)
++		flags |= ITP_MARK;
++	if (sr->flags & TF_NAT_APPLIED)
++		flags |= ITP_APPLIED;
++
++	DEBUGP(KERN_DEBUG "IP_TPROXY: IP_TPROXY_FLAGS found sr %p faddr:fport "
++	       "%08x:%04x flags %08x\n", sr, sr->faddr, sr->fport, sr->flags);
++
++	itp->v.flags = flags;
++
++ read_unlk:
++	read_unlock_bh(&ip_tproxy_lock);
++
++	return res;
++}
++
++static int
++ip_tproxy_getsockopt(struct sock *sk, int optval, void __user *user, int *len)
++{
++	int proto;
++	int res = 0;
++	unsigned int mlen;
++	struct in_tproxy itp;
++
++	proto = sk->sk_protocol;
++	if ((proto != IPPROTO_UDP) && (proto != IPPROTO_TCP))
++		return -EINVAL;
++
++	if (*len < sizeof(itp.op) + sizeof(itp.v.version))
++		return -EINVAL;
++
++	mlen = MIN(sizeof(itp), *len);
++
++	if (copy_from_user(&itp, user, mlen))
++		return -EFAULT;
++
++	switch (itp.op) {
++		case TPROXY_VERSION:
++			res = ip_tproxy_getsockopt_version(sk, proto, &itp);
++			break;
++		case TPROXY_QUERY:
++			res = ip_tproxy_getsockopt_query(sk, proto, &itp);
++			break;
++		case TPROXY_FLAGS:
++			res = ip_tproxy_getsockopt_flags(sk, proto, &itp);
++			break;
++		default:
++			res = -ENOPROTOOPT;
++			break;
++	}
++
++	/* copy data to userspace */
++	/* FIXME: we do this even when res != 0, is this a problem? */
++	if (copy_to_user(user, &itp, mlen))
++		res = -EFAULT;
++
++	return res;
++}
++
++/* callback function: called when a socket gets unhashed by the UDP or TCP stack */
++static void
++ip_tproxy_close(struct sock *sk, int proto)
++{
++	if (proto)
++		ip_tproxy_setsockopt_unassign(sk, proto, NULL);
++}
++
++/* fake timeout function needed by the fake conntrack entry, in theory, it never
++ * runs */
++static void
++ip_tproxy_fake_timeout(unsigned long null_ptr)
++{
++	printk("IP_TPROXY: Fake timeout called!");
++}
++
++static struct nf_hook_ops ip_tproxy_pre_ops = {
++	.hook		= ip_tproxy_fn,
++	.owner		= THIS_MODULE,
++	.pf		= PF_INET,
++	.hooknum	= NF_IP_PRE_ROUTING,
++	.priority	= -130
++};
++
++static struct nf_hook_ops ip_tproxy_post_ops = {
++	.hook		= ip_tproxy_fn,
++	.owner		= THIS_MODULE,
++	.pf		= PF_INET,
++	.hooknum	= NF_IP_POST_ROUTING,
++	.priority	= -130
++};
++
++static struct nf_hook_ops ip_tproxy_local_out_ops = {
++	.hook		= ip_tproxy_fn,
++	.owner		= THIS_MODULE,
++	.pf		= PF_INET,
++	.hooknum	= NF_IP_LOCAL_OUT,
++	.priority	= -130
++};
++
++static struct nf_sockopt_ops ip_tproxy_sockopts = {
++	.pf		= PF_INET,
++	.set_optmin	= IP_TPROXY,
++	.set_optmax	= IP_TPROXY + 1,
++	.set		= ip_tproxy_setsockopt,
++	.get_optmin	= IP_TPROXY,
++	.get_optmax	= IP_TPROXY + 1,
++	.get		= ip_tproxy_getsockopt,
++};
++
++/* init or cleanup the tproxy module */
++static int
++init_or_cleanup(int startup)
++{
++	int ret = 0;
++	int i;
++	struct proc_dir_entry *proc;
++
++	if (!startup) {
++		goto clean_all;
++	}
++
++	/* we depend on the NAT hooks being operational */
++	need_nat_hooks();
++
++	/* use our own fake conntrack entry, which indicates that packet was
++	   tproxied, this let's us use the same -m tproxy match in our filter
++	   rules.  The original idea of using a fake conntrack entry to avoid
++	   conntracking is by Jozsef Kadlecsik */
++
++	atomic_set(&ip_tproxy_fake_ct.ct_general.use, 1);
++	ip_tproxy_fake_ct.timeout.function = ip_tproxy_fake_timeout;
++	ip_tproxy_fake_ct.status |= IPS_CONFIRMED | IPS_TPROXY | IPS_NAT_DONE_MASK;
++
++	ip_tproxy_sockref_table = kmem_cache_create("ip_tproxy", sizeof(struct ip_tproxy_sockref), 0,
++						    SLAB_HWCACHE_ALIGN, NULL, NULL);
++
++	if (!ip_tproxy_sockref_table) {
++		ret = -ENOMEM;
++		goto clean_nothing;
++	}
++
++	if (hashsize)
++		ip_tproxy_htable_size = hashsize;
++	else
++		ip_tproxy_htable_size = 127;
++
++	ip_tproxy_bylocal = (struct list_head *) vmalloc(sizeof(struct list_head) *
++							 ip_tproxy_htable_size * 2);
++	if (!ip_tproxy_bylocal) {
++		ret = -ENOMEM;
++		goto clean_sockref_table;
++	}
++	ip_tproxy_byforeign = (struct list_head *) ip_tproxy_bylocal + ip_tproxy_htable_size;
++
++	for (i = 0; i < ip_tproxy_htable_size; i++) {
++		INIT_LIST_HEAD(&ip_tproxy_bylocal[i]);
++		INIT_LIST_HEAD(&ip_tproxy_byforeign[i]);
++	}
++
++	proc = proc_net_create("tproxy", 0, NULL);
++	if (!proc) goto clean_sockref_hash;
++	proc->proc_fops = &ip_tproxy_file_ops;
++
++	ret = ipt_register_table(&tproxy_table, &initial_table.repl);
++	if (ret < 0) {
++		printk("IP_TPROXY: can't register tproxy table.\n");
++		goto clean_proc;
++	}
++
++	ret = nf_register_hook(&ip_tproxy_local_out_ops);
++	if (ret < 0) {
++		printk("IP_TPROXY: can't register local out hook.\n");
++		goto clean_table;
++	}
++
++	ret = nf_register_hook(&ip_tproxy_post_ops);
++	if (ret < 0) {
++		printk("IP_TPROXY: can't register postrouting hook.\n");
++		goto clean_loops;
++	}
++
++	ret = nf_register_hook(&ip_tproxy_pre_ops);
++	if (ret < 0) {
++		printk("IP_TPROXY: can't register prerouting hook.\n");
++		goto clean_postops;
++	}
++
++	nf_register_sockopt(&ip_tproxy_sockopts);
++
++	ip_tproxy_udp_unhashed = ip_tproxy_close;
++	ip_tproxy_tcp_unhashed = ip_tproxy_close;
++
++	/* initialize confirm and destroy callbacks */
++	ip_conntrack_confirmed = ip_tproxy_confirmed;
++	ip_conntrack_destroyed_old = ip_conntrack_destroyed;
++	ip_conntrack_destroyed = ip_tproxy_conntrack_destroyed;
++
++	printk("IP_TPROXY: Transparent proxy support initialized 2.0.6\n"
++	       "IP_TPROXY: Copyright (c) 2002-2006 BalaBit IT Ltd.\n");
++	return ret;
++
++ clean_all:
++	ip_conntrack_destroyed = ip_conntrack_destroyed_old;
++	ip_conntrack_confirmed = NULL;
++
++	ip_tproxy_udp_unhashed = NULL;
++	ip_tproxy_tcp_unhashed = NULL;
++
++	nf_unregister_sockopt(&ip_tproxy_sockopts);
++
++	nf_unregister_hook(&ip_tproxy_pre_ops);
++
++ clean_postops:
++	nf_unregister_hook(&ip_tproxy_post_ops);
++
++ clean_loops:
++	nf_unregister_hook(&ip_tproxy_local_out_ops);
++
++ clean_table:
++	ipt_unregister_table(&tproxy_table);
++
++ clean_proc:
++	proc_net_remove("tproxy");
++
++ clean_sockref_hash:
++	ip_tproxy_sockref_table_free();
++	vfree(ip_tproxy_bylocal);
++
++ clean_sockref_table:
++	kmem_cache_destroy(ip_tproxy_sockref_table);
++
++ clean_nothing:
++	return ret;
++}
++
++static int __init init(void)
++{
++	return init_or_cleanup(1);
++}
++
++static void __exit fini(void)
++{
++	init_or_cleanup(0);
++}
++
++module_init(init);
++module_exit(fini);
++MODULE_LICENSE("GPL");
++MODULE_AUTHOR("Balázs Scheidler <bazsi@balabit.hu>");
++MODULE_DESCRIPTION("Netfilter transparent proxy core module.");
+diff --git a/net/ipv4/tcp_ipv4.c b/net/ipv4/tcp_ipv4.c
+index 22ef8bd..89b21c7 100644
+--- a/net/ipv4/tcp_ipv4.c
++++ b/net/ipv4/tcp_ipv4.c
+@@ -1887,6 +1887,10 @@ EXPORT_SYMBOL(tcp_v4_remember_stamp);
+ EXPORT_SYMBOL(tcp_v4_send_check);
+ EXPORT_SYMBOL(tcp_v4_syn_recv_sock);
+ 
++#if defined(CONFIG_IP_NF_TPROXY) || defined (CONFIG_IP_NF_TPROXY_MODULE)
++EXPORT_SYMBOL(ip_tproxy_tcp_unhashed);
++#endif
++
+ #ifdef CONFIG_PROC_FS
+ EXPORT_SYMBOL(tcp_proc_register);
+ EXPORT_SYMBOL(tcp_proc_unregister);
+diff --git a/net/ipv4/tcp_minisocks.c b/net/ipv4/tcp_minisocks.c
+index 0163d98..ca7d584 100644
+--- a/net/ipv4/tcp_minisocks.c
++++ b/net/ipv4/tcp_minisocks.c
+@@ -27,6 +27,7 @@ #include <linux/workqueue.h>
+ #include <net/tcp.h>
+ #include <net/inet_common.h>
+ #include <net/xfrm.h>
++#include <linux/net.h>
+ 
+ #ifdef CONFIG_SYSCTL
+ #define SYNC_INIT 0 /* let the user enable it */
+diff --git a/net/ipv4/udp.c b/net/ipv4/udp.c
+index 9e1bd37..9e4f56e 100644
+--- a/net/ipv4/udp.c
++++ b/net/ipv4/udp.c
+@@ -230,8 +230,18 @@ static void udp_v4_hash(struct sock *sk)
+ 	BUG();
+ }
+ 
++#if defined(CONFIG_IP_NF_TPROXY) || defined (CONFIG_IP_NF_TPROXY_MODULE)
++void (*ip_tproxy_udp_unhashed)(struct sock *sk, int proto) = NULL;
++#endif
++
+ static void udp_v4_unhash(struct sock *sk)
+ {
++#if defined(CONFIG_IP_NF_TPROXY) || defined (CONFIG_IP_NF_TPROXY_MODULE)
++	/* ugly tproxy unassign hook */
++	if (ip_tproxy_udp_unhashed)
++		ip_tproxy_udp_unhashed(sk, IPPROTO_UDP);
++#endif
++
+ 	write_lock_bh(&udp_hash_lock);
+ 	if (sk_del_node_init(sk)) {
+ 		inet_sk(sk)->num = 0;
+@@ -1635,6 +1645,10 @@ EXPORT_SYMBOL(udp_prot);
+ EXPORT_SYMBOL(udp_sendmsg);
+ EXPORT_SYMBOL(udp_poll);
+ 
++#if defined(CONFIG_IP_NF_TPROXY) || defined (CONFIG_IP_NF_TPROXY_MODULE)
++EXPORT_SYMBOL(ip_tproxy_udp_unhashed);
++#endif
++
+ #ifdef CONFIG_PROC_FS
+ EXPORT_SYMBOL(udp_proc_register);
+ EXPORT_SYMBOL(udp_proc_unregister);

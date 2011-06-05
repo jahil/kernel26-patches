@@ -1,0 +1,12 @@
+Contents of apparmor kernel patch release
+
+  current/ - contains the patches for the current branch of apparmor
+    apparmor-Kversion#-svnversion#-fullseries.patch - single kernel patcch
+    patches/ - quilt series to patch kernel including apparmor patch
+
+  nextgen - contains the patches for the nextgen branch of apparmor
+    apparmor-Kversion#-svnversion#-fullseries.patch - single kernel patch
+    patches/ - quilt series to patch kernel including apparmor patch
+
+the fullseries kernel patches are equivalent to the quilt series flattened
+into a single patch

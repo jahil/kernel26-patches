@@ -1,0 +1,8 @@
+Short term:
+- Remove TCA_SFQ_HASH_*DIR from include/linux/pkt_shed.h in both patches.
+- Read kernel coding style documentation; make both patches adhere.
+
+Medium term:
+- Remove error messages from iproute2 patch about *_dir being obsolete.
+- Submit iproute2 patch upstream.
+- Submit kernel patch upstream.

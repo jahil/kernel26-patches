@@ -1,0 +1,19 @@
+Changes with cko 1.2
+2005-02-07	Josip Deanovic <djosip@linuxpages.org>
+	* Added procfs support (files under /proc/vt_cko)
+
+2005-01-17	Jan Engelhardt <jengelh@linux01.gwdg.de>
+	* Fixed issues with newline handling
+
+
+Changes with cko 1.1
+2005-01-08	Josip Deanovic <djosip@linuxpages.org>
+
+	* Added changes that will prevent user from selecting bright colors
+	  if no CONFIG_FB_VGA16 is enabled.
+
+
+Changes with cko 1.0
+2004-12-09	Josip Deanovic <djosip@linuxpages.org>
+        
+	* Initial release.

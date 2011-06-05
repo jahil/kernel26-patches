@@ -1,0 +1,29 @@
+From: Greg Kroah-Hartman <gregkh@suse.de>
+Subject: Linux 2.6.34.1
+Patch-mainline: 2.6.34.1
+
+
+Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+
+Automatically created from "patches.kernel.org/patch-2.6.34.1" by xen-port-patches.py
+
+--- 11.3-2010-07-06.orig/arch/x86/kernel/setup-xen.c	2010-04-15 10:48:32.000000000 +0200
++++ 11.3-2010-07-06/arch/x86/kernel/setup-xen.c	2010-07-06 11:06:15.000000000 +0200
+@@ -746,6 +746,17 @@ static struct dmi_system_id __initdata b
+ 			DMI_MATCH(DMI_BOARD_NAME, "DG45FC"),
+ 		},
+ 	},
++	/*
++	 * The Dell Inspiron Mini 1012 has DMI_BIOS_VENDOR = "Dell Inc.", so
++	 * match on the product name.
++	 */
++	{
++		.callback = dmi_low_memory_corruption,
++		.ident = "Phoenix BIOS",
++		.matches = {
++			DMI_MATCH(DMI_PRODUCT_NAME, "Inspiron 1012"),
++		},
++	},
+ #endif
+ 	{}
+ };

@@ -1,0 +1,50 @@
+From: http://xenbits.xensource.com/linux-2.6.18-xen.hg?rev/566d68f989ee
+# HG changeset patch
+# User Keir Fraser <keir.fraser@citrix.com>
+# Date 1281451616 -3600
+# Node ID 566d68f989eec2fa570fd0273a07e79d7702d773
+# Parent 042c8cd710810204049ea8194f1bb95e74949a1d
+Subject: blktap2: eliminate bogus clearing of PG_reserved
+References: bnc#624814
+Patch-mainline: n/a
+
+While making sure PG_reserved is set for pages allocated from the
+balloon driver (and to be used for I/O) is a necessary thing to do
+(as 2.6.18's as well as pv-ops' balloon drivers don't guarantee this
+for the pages returned from alloc_empty_pages_and_page_vec()),
+clearing this flag again when a page is no longer in use for I/O is
+bogus at best (after all, the page at that point is not associated
+with any MFN anymore), and causes problems when the balloon driver
+properly marks all such pages as reserved and checks, upon their
+return, that they are still marked this way.
+
+Signed-off-by: Jan Beulich <jbeulich@novell.com>
+
+--- sle11sp1-2010-08-06.orig/drivers/xen/blktap2/device.c	2010-03-01 14:03:37.000000000 +0100
++++ sle11sp1-2010-08-06/drivers/xen/blktap2/device.c	2010-08-17 10:03:21.000000000 +0200
+@@ -281,7 +281,6 @@ blktap_device_fast_flush(struct blktap *
+ 
+ 		page = map[offset];
+ 		if (page) {
+-			ClearPageReserved(map[offset]);
+ 			if (PageBlkback(page)) {
+ 				ClearPageBlkback(page);
+ 				set_page_private(page, 0);
+--- sle11sp1-2010-08-06.orig/drivers/xen/blktap2/ring.c	2010-04-21 14:01:31.000000000 +0200
++++ sle11sp1-2010-08-06/drivers/xen/blktap2/ring.c	2010-08-17 10:03:23.000000000 +0200
+@@ -112,12 +112,9 @@ blktap_ring_clear_pte(struct vm_area_str
+ 
+ 	offset  = (int)((uvaddr - vma->vm_start) >> PAGE_SHIFT);
+ 	page    = map[offset];
+-	if (page) {
+-		ClearPageReserved(page);
+-		if (PageBlkback(page)) {
+-			ClearPageBlkback(page);
+-			set_page_private(page, 0);
+-		}
++	if (page && PageBlkback(page)) {
++		ClearPageBlkback(page);
++		set_page_private(page, 0);
+ 	}
+ 	map[offset] = NULL;
+ 

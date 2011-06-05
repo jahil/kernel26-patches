@@ -1,0 +1,33 @@
+From: http://xenbits.xensource.com/linux-2.6.18-xen.hg?rev/63b4d7f56688
+# HG changeset patch
+# User Keir Fraser <keir.fraser@citrix.com>
+# Date 1264084745 0
+# Node ID 63b4d7f56688f38fd42ede433fd0f7220e545cda
+# Parent  f47c07325a56463fa052b4500b4a3c0056939d15
+Subject: blkback: Flush blkback data when connecting.
+References: bnc#474773, bnc#510449, bnc#561078
+Patch-mainline: n/a
+
+First cut at flushing blkback data when first connecting
+blkback.  This should avoid the pygrub issues we are experiencing
+in (RedHat bugzilla) 466681.
+
+Signed-off-by: Chris Lalancette <clalance@redhat.com>
+Acked-by: jbeulich@novell.com
+
+--- 11.2-2010-02-16.orig/drivers/xen/blkback/xenbus.c	2010-02-16 15:38:43.000000000 +0100
++++ 11.2-2010-02-16/drivers/xen/blkback/xenbus.c	2010-02-16 15:40:46.000000000 +0100
+@@ -86,6 +86,13 @@ static void update_blkif_status(blkif_t 
+ 		return;
+ 	}
+ 
++	err = filemap_write_and_wait(blkif->vbd.bdev->bd_inode->i_mapping);
++	if (err) {
++		xenbus_dev_error(blkif->be->dev, err, "block flush");
++		return;
++	}
++	invalidate_inode_pages2(blkif->vbd.bdev->bd_inode->i_mapping);
++
+ 	blkif->xenblkd = kthread_run(blkif_schedule, blkif, name);
+ 	if (IS_ERR(blkif->xenblkd)) {
+ 		err = PTR_ERR(blkif->xenblkd);

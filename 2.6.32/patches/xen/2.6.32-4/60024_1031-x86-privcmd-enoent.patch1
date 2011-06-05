@@ -1,0 +1,55 @@
+From: http://xenbits.xensource.com/linux-2.6.18-xen.hg?rev/0051d294bb60
+# HG changeset patch
+# User Keir Fraser <keir.fraser@citrix.com>
+# Date 1284395993 -3600
+# Node ID 0051d294bb60fc096849df586d56a389e32650d4
+# Parent  e8f97b92d307c6786992bb118dddc6f3466bfd01
+Subject: xen/x86: make __direct_remap_pfn_range()'s return value meaningful
+Patch-mainline: n/a
+References: FATE#310510
+
+From: Olaf Hering <ohering@novell.com>
+
+This change fixes the xc_map_foreign_bulk interface, which would
+otherwise cause SIGBUS when pages are gone because -ENOENT is not
+returned as expected by the IOCTL_PRIVCMD_MMAPBATCH_V2 ioctl.
+
+Signed-off-by: Jan Beulich <jbeulich@novell.com>
+
+--- sle11sp1-2010-09-22.orig/arch/x86/mm/ioremap-xen.c	2008-04-02 12:34:02.000000000 +0200
++++ sle11sp1-2010-09-22/arch/x86/mm/ioremap-xen.c	2010-09-22 10:54:58.000000000 +0200
+@@ -45,7 +45,7 @@ static int __direct_remap_pfn_range(stru
+ 				    pgprot_t prot,
+ 				    domid_t  domid)
+ {
+-	int rc;
++	int rc = 0;
+ 	unsigned long i, start_address;
+ 	mmu_update_t *u, *v, *w;
+ 
+@@ -65,8 +65,8 @@ static int __direct_remap_pfn_range(stru
+ 						 direct_remap_area_pte_fn, &w);
+ 			if (rc)
+ 				goto out;
+-			rc = -EFAULT;
+-			if (HYPERVISOR_mmu_update(u, v - u, NULL, domid) < 0)
++			rc = HYPERVISOR_mmu_update(u, v - u, NULL, domid);
++			if (rc < 0)
+ 				goto out;
+ 			v = w = u;
+ 			start_address = address;
+@@ -90,13 +90,9 @@ static int __direct_remap_pfn_range(stru
+ 					 direct_remap_area_pte_fn, &w);
+ 		if (rc)
+ 			goto out;
+-		rc = -EFAULT;
+-		if (unlikely(HYPERVISOR_mmu_update(u, v - u, NULL, domid) < 0))
+-			goto out;
++		rc = HYPERVISOR_mmu_update(u, v - u, NULL, domid);
+ 	}
+ 
+-	rc = 0;
+-
+  out:
+ 	flush_tlb_all();
+ 

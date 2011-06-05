@@ -1,0 +1,18 @@
+From: Greg Kroah-Hartman <gregkh@suse.de>
+Subject: Linux 2.6.32.9
+Patch-mainline: 2.6.32.9
+
+Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+
+Automatically created from "patches.kernel.org/patch-2.6.32.8-9" by xen-port-patches.py
+
+--- sle11sp1-2010-08-06.orig/arch/x86/kernel/apic/io_apic-xen.c	2010-08-06 17:02:05.000000000 +0200
++++ sle11sp1-2010-08-06/arch/x86/kernel/apic/io_apic-xen.c	2010-08-06 17:02:21.000000000 +0200
+@@ -3265,6 +3265,7 @@ unsigned int create_irq_nr(unsigned int 
+ 			continue;
+ 
+ 		desc_new = move_irq_desc(desc_new, node);
++		cfg_new = desc_new->chip_data;
+ 
+ 		if (__assign_irq_vector(new, cfg_new, apic->target_cpus()) == 0)
+ 			irq = new;

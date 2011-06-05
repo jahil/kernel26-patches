@@ -1,0 +1,931 @@
+diff -urN linux-2.6.21/drivers/bluetooth/hci_ldisc.c linux-2.6.21-mh1/drivers/bluetooth/hci_ldisc.c
+--- linux-2.6.21/drivers/bluetooth/hci_ldisc.c	2007-04-26 05:08:32.000000000 +0200
++++ linux-2.6.21-mh1/drivers/bluetooth/hci_ldisc.c	2007-05-26 08:12:48.000000000 +0200
+@@ -307,7 +307,9 @@
+ 
+ 	if (hu) {
+ 		struct hci_dev *hdev = hu->hdev;
+-		hci_uart_close(hdev);
++
++		if (hdev)
++			hci_uart_close(hdev);
+ 
+ 		if (test_and_clear_bit(HCI_UART_PROTO_SET, &hu->flags)) {
+ 			hu->proto->close(hu);
+@@ -473,12 +475,18 @@
+ 			tty->low_latency = 1;
+ 		} else
+ 			return -EBUSY;
++		break;
+ 
+ 	case HCIUARTGETPROTO:
+ 		if (test_bit(HCI_UART_PROTO_SET, &hu->flags))
+ 			return hu->proto->id;
+ 		return -EUNATCH;
+ 
++	case HCIUARTGETDEVICE:
++		if (test_bit(HCI_UART_PROTO_SET, &hu->flags))
++			return hu->hdev->id;
++		return -EUNATCH;
++
+ 	default:
+ 		err = n_tty_ioctl(tty, file, cmd, arg);
+ 		break;
+diff -urN linux-2.6.21/drivers/bluetooth/hci_uart.h linux-2.6.21-mh1/drivers/bluetooth/hci_uart.h
+--- linux-2.6.21/drivers/bluetooth/hci_uart.h	2007-04-26 05:08:32.000000000 +0200
++++ linux-2.6.21-mh1/drivers/bluetooth/hci_uart.h	2007-05-26 08:12:48.000000000 +0200
+@@ -28,8 +28,9 @@
+ #endif
+ 
+ /* Ioctls */
+-#define HCIUARTSETPROTO	_IOW('U', 200, int)
+-#define HCIUARTGETPROTO	_IOR('U', 201, int)
++#define HCIUARTSETPROTO		_IOW('U', 200, int)
++#define HCIUARTGETPROTO		_IOR('U', 201, int)
++#define HCIUARTGETDEVICE	_IOR('U', 202, int)
+ 
+ /* UART protocols */
+ #define HCI_UART_MAX_PROTO	4
+diff -urN linux-2.6.21/drivers/bluetooth/hci_usb.c linux-2.6.21-mh1/drivers/bluetooth/hci_usb.c
+--- linux-2.6.21/drivers/bluetooth/hci_usb.c	2007-04-26 05:08:32.000000000 +0200
++++ linux-2.6.21-mh1/drivers/bluetooth/hci_usb.c	2007-05-26 08:12:48.000000000 +0200
+@@ -114,25 +114,31 @@
+ 	{ USB_DEVICE(0x0a5c, 0x200a), .driver_info = HCI_RESET | HCI_WRONG_SCO_MTU },
+ 	{ USB_DEVICE(0x0a5c, 0x2009), .driver_info = HCI_BCM92035 },
+ 
++	/* Broadcom BCM2045 */
++	{ USB_DEVICE(0x0a5c, 0x2101), .driver_info = HCI_RESET | HCI_WRONG_SCO_MTU },
++
+ 	/* IBM/Lenovo ThinkPad with Broadcom chip */
+-	{ USB_DEVICE(0x0a5c, 0x201e), .driver_info = HCI_WRONG_SCO_MTU },
+-	{ USB_DEVICE(0x0a5c, 0x2110), .driver_info = HCI_WRONG_SCO_MTU },
++	{ USB_DEVICE(0x0a5c, 0x201e), .driver_info = HCI_RESET | HCI_WRONG_SCO_MTU },
++	{ USB_DEVICE(0x0a5c, 0x2110), .driver_info = HCI_RESET | HCI_WRONG_SCO_MTU },
++
++	/* Targus ACB10US */
++	{ USB_DEVICE(0x0a5c, 0x2100), .driver_info = HCI_RESET },
+ 
+ 	/* ANYCOM Bluetooth USB-200 and USB-250 */
+ 	{ USB_DEVICE(0x0a5c, 0x2111), .driver_info = HCI_RESET },
+ 
+ 	/* HP laptop with Broadcom chip */
+-	{ USB_DEVICE(0x03f0, 0x171d), .driver_info = HCI_WRONG_SCO_MTU },
++	{ USB_DEVICE(0x03f0, 0x171d), .driver_info = HCI_RESET | HCI_WRONG_SCO_MTU },
+ 
+ 	/* Dell laptop with Broadcom chip */
+-	{ USB_DEVICE(0x413c, 0x8126), .driver_info = HCI_WRONG_SCO_MTU },
++	{ USB_DEVICE(0x413c, 0x8126), .driver_info = HCI_RESET | HCI_WRONG_SCO_MTU },
+ 
+ 	/* Microsoft Wireless Transceiver for Bluetooth 2.0 */
+ 	{ USB_DEVICE(0x045e, 0x009c), .driver_info = HCI_RESET },
+ 
+ 	/* Kensington Bluetooth USB adapter */
+ 	{ USB_DEVICE(0x047d, 0x105d), .driver_info = HCI_RESET },
+-	{ USB_DEVICE(0x047d, 0x105e), .driver_info = HCI_WRONG_SCO_MTU },
++	{ USB_DEVICE(0x047d, 0x105e), .driver_info = HCI_RESET | HCI_WRONG_SCO_MTU },
+ 
+ 	/* ISSC Bluetooth Adapter v3.1 */
+ 	{ USB_DEVICE(0x1131, 0x1001), .driver_info = HCI_RESET },
+@@ -142,8 +148,8 @@
+ 	{ USB_DEVICE(0x0400, 0x080a), .driver_info = HCI_BROKEN_ISOC },
+ 
+ 	/* Belkin F8T012 and F8T013 devices */
+-	{ USB_DEVICE(0x050d, 0x0012), .driver_info = HCI_WRONG_SCO_MTU },
+-	{ USB_DEVICE(0x050d, 0x0013), .driver_info = HCI_WRONG_SCO_MTU },
++	{ USB_DEVICE(0x050d, 0x0012), .driver_info = HCI_RESET | HCI_WRONG_SCO_MTU },
++	{ USB_DEVICE(0x050d, 0x0013), .driver_info = HCI_RESET | HCI_WRONG_SCO_MTU },
+ 
+ 	/* Digianswer devices */
+ 	{ USB_DEVICE(0x08fd, 0x0001), .driver_info = HCI_DIGIANSWER },
+diff -urN linux-2.6.21/include/net/bluetooth/l2cap.h linux-2.6.21-mh1/include/net/bluetooth/l2cap.h
+--- linux-2.6.21/include/net/bluetooth/l2cap.h	2007-04-26 05:08:32.000000000 +0200
++++ linux-2.6.21-mh1/include/net/bluetooth/l2cap.h	2007-05-26 08:12:49.000000000 +0200
+@@ -129,8 +129,10 @@
+ 	__u8       data[0];
+ } __attribute__ ((packed));
+ 
+-#define L2CAP_CONF_SUCCESS	0x00
+-#define L2CAP_CONF_UNACCEPT	0x01
++#define L2CAP_CONF_SUCCESS	0x0000
++#define L2CAP_CONF_UNACCEPT	0x0001
++#define L2CAP_CONF_REJECT	0x0002
++#define L2CAP_CONF_UNKNOWN	0x0003
+ 
+ struct l2cap_conf_opt {
+ 	__u8       type;
+@@ -215,6 +217,8 @@
+ 
+ 	__u32		link_mode;
+ 
++	__u8		conf_req[64];
++	__u8		conf_len;
+ 	__u8		conf_state;
+ 	__u8		conf_retry;
+ 	__u16		conf_mtu;
+diff -urN linux-2.6.21/Makefile linux-2.6.21-mh1/Makefile
+--- linux-2.6.21/Makefile	2007-04-26 05:08:32.000000000 +0200
++++ linux-2.6.21-mh1/Makefile	2007-05-26 08:12:49.000000000 +0200
+@@ -1,7 +1,7 @@
+ VERSION = 2
+ PATCHLEVEL = 6
+ SUBLEVEL = 21
+-EXTRAVERSION =
++EXTRAVERSION = -mh1
+ NAME = Nocturnal Monster Puppy
+ 
+ # *DOCUMENTATION*
+diff -urN linux-2.6.21/net/bluetooth/hci_conn.c linux-2.6.21-mh1/net/bluetooth/hci_conn.c
+--- linux-2.6.21/net/bluetooth/hci_conn.c	2007-04-26 05:08:32.000000000 +0200
++++ linux-2.6.21-mh1/net/bluetooth/hci_conn.c	2007-05-26 08:12:48.000000000 +0200
+@@ -72,11 +72,11 @@
+ 			inquiry_entry_age(ie) <= INQUIRY_ENTRY_AGE_MAX) {
+ 		cp.pscan_rep_mode = ie->data.pscan_rep_mode;
+ 		cp.pscan_mode     = ie->data.pscan_mode;
+-		cp.clock_offset   = ie->data.clock_offset | __cpu_to_le16(0x8000);
++		cp.clock_offset   = ie->data.clock_offset | cpu_to_le16(0x8000);
+ 		memcpy(conn->dev_class, ie->data.dev_class, 3);
+ 	}
+ 
+-	cp.pkt_type = __cpu_to_le16(hdev->pkt_type & ACL_PTYPE_MASK);
++	cp.pkt_type = cpu_to_le16(hdev->pkt_type & ACL_PTYPE_MASK);
+ 	if (lmp_rswitch_capable(hdev) && !(hdev->link_mode & HCI_LM_MASTER))
+ 		cp.role_switch	= 0x01;
+ 	else
+@@ -107,7 +107,7 @@
+ 
+ 	conn->state = BT_DISCONN;
+ 
+-	cp.handle = __cpu_to_le16(conn->handle);
++	cp.handle = cpu_to_le16(conn->handle);
+ 	cp.reason = reason;
+ 	hci_send_cmd(conn->hdev, OGF_LINK_CTL,
+ 				OCF_DISCONNECT, sizeof(cp), &cp);
+@@ -123,8 +123,8 @@
+ 	conn->state = BT_CONNECT;
+ 	conn->out = 1;
+ 
+-	cp.pkt_type = __cpu_to_le16(hdev->pkt_type & SCO_PTYPE_MASK);
+-	cp.handle   = __cpu_to_le16(handle);
++	cp.pkt_type = cpu_to_le16(hdev->pkt_type & SCO_PTYPE_MASK);
++	cp.handle   = cpu_to_le16(handle);
+ 
+ 	hci_send_cmd(hdev, OGF_LINK_CTL, OCF_ADD_SCO, sizeof(cp), &cp);
+ }
+@@ -348,7 +348,7 @@
+ 
+ 	if (!test_and_set_bit(HCI_CONN_AUTH_PEND, &conn->pend)) {
+ 		struct hci_cp_auth_requested cp;
+-		cp.handle = __cpu_to_le16(conn->handle);
++		cp.handle = cpu_to_le16(conn->handle);
+ 		hci_send_cmd(conn->hdev, OGF_LINK_CTL, OCF_AUTH_REQUESTED, sizeof(cp), &cp);
+ 	}
+ 	return 0;
+@@ -368,7 +368,7 @@
+ 
+ 	if (hci_conn_auth(conn)) {
+ 		struct hci_cp_set_conn_encrypt cp;
+-		cp.handle  = __cpu_to_le16(conn->handle);
++		cp.handle  = cpu_to_le16(conn->handle);
+ 		cp.encrypt = 1;
+ 		hci_send_cmd(conn->hdev, OGF_LINK_CTL, OCF_SET_CONN_ENCRYPT, sizeof(cp), &cp);
+ 	}
+@@ -383,7 +383,7 @@
+ 
+ 	if (!test_and_set_bit(HCI_CONN_AUTH_PEND, &conn->pend)) {
+ 		struct hci_cp_change_conn_link_key cp;
+-		cp.handle = __cpu_to_le16(conn->handle);
++		cp.handle = cpu_to_le16(conn->handle);
+ 		hci_send_cmd(conn->hdev, OGF_LINK_CTL, OCF_CHANGE_CONN_LINK_KEY, sizeof(cp), &cp);
+ 	}
+ 	return 0;
+@@ -423,7 +423,7 @@
+ 
+ 	if (!test_and_set_bit(HCI_CONN_MODE_CHANGE_PEND, &conn->pend)) {
+ 		struct hci_cp_exit_sniff_mode cp;
+-		cp.handle = __cpu_to_le16(conn->handle);
++		cp.handle = cpu_to_le16(conn->handle);
+ 		hci_send_cmd(hdev, OGF_LINK_POLICY,
+ 				OCF_EXIT_SNIFF_MODE, sizeof(cp), &cp);
+ 	}
+@@ -452,21 +452,21 @@
+ 
+ 	if (lmp_sniffsubr_capable(hdev) && lmp_sniffsubr_capable(conn)) {
+ 		struct hci_cp_sniff_subrate cp;
+-		cp.handle             = __cpu_to_le16(conn->handle);
+-		cp.max_latency        = __constant_cpu_to_le16(0);
+-		cp.min_remote_timeout = __constant_cpu_to_le16(0);
+-		cp.min_local_timeout  = __constant_cpu_to_le16(0);
++		cp.handle             = cpu_to_le16(conn->handle);
++		cp.max_latency        = cpu_to_le16(0);
++		cp.min_remote_timeout = cpu_to_le16(0);
++		cp.min_local_timeout  = cpu_to_le16(0);
+ 		hci_send_cmd(hdev, OGF_LINK_POLICY,
+ 				OCF_SNIFF_SUBRATE, sizeof(cp), &cp);
+ 	}
+ 
+ 	if (!test_and_set_bit(HCI_CONN_MODE_CHANGE_PEND, &conn->pend)) {
+ 		struct hci_cp_sniff_mode cp;
+-		cp.handle       = __cpu_to_le16(conn->handle);
+-		cp.max_interval = __cpu_to_le16(hdev->sniff_max_interval);
+-		cp.min_interval = __cpu_to_le16(hdev->sniff_min_interval);
+-		cp.attempt      = __constant_cpu_to_le16(4);
+-		cp.timeout      = __constant_cpu_to_le16(1);
++		cp.handle       = cpu_to_le16(conn->handle);
++		cp.max_interval = cpu_to_le16(hdev->sniff_max_interval);
++		cp.min_interval = cpu_to_le16(hdev->sniff_min_interval);
++		cp.attempt      = cpu_to_le16(4);
++		cp.timeout      = cpu_to_le16(1);
+ 		hci_send_cmd(hdev, OGF_LINK_POLICY,
+ 				OCF_SNIFF_MODE, sizeof(cp), &cp);
+ 	}
+diff -urN linux-2.6.21/net/bluetooth/hci_core.c linux-2.6.21-mh1/net/bluetooth/hci_core.c
+--- linux-2.6.21/net/bluetooth/hci_core.c	2007-04-26 05:08:32.000000000 +0200
++++ linux-2.6.21-mh1/net/bluetooth/hci_core.c	2007-05-26 08:12:49.000000000 +0200
+@@ -216,10 +216,10 @@
+ 	/* Host buffer size */
+ 	{
+ 		struct hci_cp_host_buffer_size cp;
+-		cp.acl_mtu = __cpu_to_le16(HCI_MAX_ACL_SIZE);
++		cp.acl_mtu = cpu_to_le16(HCI_MAX_ACL_SIZE);
+ 		cp.sco_mtu = HCI_MAX_SCO_SIZE;
+-		cp.acl_max_pkt = __cpu_to_le16(0xffff);
+-		cp.sco_max_pkt = __cpu_to_le16(0xffff);
++		cp.acl_max_pkt = cpu_to_le16(0xffff);
++		cp.sco_max_pkt = cpu_to_le16(0xffff);
+ 		hci_send_cmd(hdev, OGF_HOST_CTL, OCF_HOST_BUFFER_SIZE, sizeof(cp), &cp);
+ 	}
+ #endif
+@@ -240,11 +240,11 @@
+ 	}
+ 
+ 	/* Page timeout ~20 secs */
+-	param = __cpu_to_le16(0x8000);
++	param = cpu_to_le16(0x8000);
+ 	hci_send_cmd(hdev, OGF_HOST_CTL, OCF_WRITE_PG_TIMEOUT, 2, &param);
+ 
+ 	/* Connection accept timeout ~20 secs */
+-	param = __cpu_to_le16(0x7d00);
++	param = cpu_to_le16(0x7d00);
+ 	hci_send_cmd(hdev, OGF_HOST_CTL, OCF_WRITE_CA_TIMEOUT, 2, &param);
+ }
+ 
+@@ -853,7 +853,7 @@
+ 	hdev->pkt_type  = (HCI_DM1 | HCI_DH1 | HCI_HV1);
+ 	hdev->link_mode = (HCI_LM_ACCEPT);
+ 
+-	hdev->idle_timeout = 0;
++	hdev->idle_timeout = HCI_IDLE_TIMEOUT;
+ 	hdev->sniff_max_interval = 800;
+ 	hdev->sniff_min_interval = 80;
+ 
+@@ -1034,7 +1034,7 @@
+ 	}
+ 
+ 	hdr = (struct hci_command_hdr *) skb_put(skb, HCI_COMMAND_HDR_SIZE);
+-	hdr->opcode = __cpu_to_le16(hci_opcode_pack(ogf, ocf));
++	hdr->opcode = cpu_to_le16(hci_opcode_pack(ogf, ocf));
+ 	hdr->plen   = plen;
+ 
+ 	if (plen)
+@@ -1060,7 +1060,7 @@
+ 
+ 	hdr = (void *) hdev->sent_cmd->data;
+ 
+-	if (hdr->opcode != __cpu_to_le16(hci_opcode_pack(ogf, ocf)))
++	if (hdr->opcode != cpu_to_le16(hci_opcode_pack(ogf, ocf)))
+ 		return NULL;
+ 
+ 	BT_DBG("%s ogf 0x%x ocf 0x%x", hdev->name, ogf, ocf);
+@@ -1075,8 +1075,8 @@
+ 	int len = skb->len;
+ 
+ 	hdr = (struct hci_acl_hdr *) skb_push(skb, HCI_ACL_HDR_SIZE);
+-	hdr->handle = __cpu_to_le16(hci_handle_pack(handle, flags));
+-	hdr->dlen   = __cpu_to_le16(len);
++	hdr->handle = cpu_to_le16(hci_handle_pack(handle, flags));
++	hdr->dlen   = cpu_to_le16(len);
+ 
+ 	skb->h.raw = (void *) hdr;
+ }
+@@ -1140,7 +1140,7 @@
+ 		return -EINVAL;
+ 	}
+ 
+-	hdr.handle = __cpu_to_le16(conn->handle);
++	hdr.handle = cpu_to_le16(conn->handle);
+ 	hdr.dlen   = skb->len;
+ 
+ 	skb->h.raw = skb_push(skb, HCI_SCO_HDR_SIZE);
+diff -urN linux-2.6.21/net/bluetooth/hci_event.c linux-2.6.21-mh1/net/bluetooth/hci_event.c
+--- linux-2.6.21/net/bluetooth/hci_event.c	2007-04-26 05:08:32.000000000 +0200
++++ linux-2.6.21-mh1/net/bluetooth/hci_event.c	2007-05-26 08:12:49.000000000 +0200
+@@ -783,7 +783,7 @@
+ 		if (conn->type == ACL_LINK && hdev->link_policy) {
+ 			struct hci_cp_write_link_policy cp;
+ 			cp.handle = ev->handle;
+-			cp.policy = __cpu_to_le16(hdev->link_policy);
++			cp.policy = cpu_to_le16(hdev->link_policy);
+ 			hci_send_cmd(hdev, OGF_LINK_POLICY,
+ 				OCF_WRITE_LINK_POLICY, sizeof(cp), &cp);
+ 		}
+@@ -793,8 +793,8 @@
+ 			struct hci_cp_change_conn_ptype cp;
+ 			cp.handle = ev->handle;
+ 			cp.pkt_type = (conn->type == ACL_LINK) ?
+-				__cpu_to_le16(hdev->pkt_type & ACL_PTYPE_MASK):
+-				__cpu_to_le16(hdev->pkt_type & SCO_PTYPE_MASK);
++				cpu_to_le16(hdev->pkt_type & ACL_PTYPE_MASK):
++				cpu_to_le16(hdev->pkt_type & SCO_PTYPE_MASK);
+ 
+ 			hci_send_cmd(hdev, OGF_LINK_CTL,
+ 				OCF_CHANGE_CONN_PTYPE, sizeof(cp), &cp);
+@@ -970,7 +970,7 @@
+ 		if (test_bit(HCI_CONN_ENCRYPT_PEND, &conn->pend)) {
+ 			if (!ev->status) {
+ 				struct hci_cp_set_conn_encrypt cp;
+-				cp.handle  = __cpu_to_le16(conn->handle);
++				cp.handle  = cpu_to_le16(conn->handle);
+ 				cp.encrypt = 1;
+ 				hci_send_cmd(conn->hdev, OGF_LINK_CTL,
+ 					OCF_SET_CONN_ENCRYPT, sizeof(cp), &cp);
+diff -urN linux-2.6.21/net/bluetooth/hci_sock.c linux-2.6.21-mh1/net/bluetooth/hci_sock.c
+--- linux-2.6.21/net/bluetooth/hci_sock.c	2007-04-26 05:08:32.000000000 +0200
++++ linux-2.6.21-mh1/net/bluetooth/hci_sock.c	2007-05-26 08:12:49.000000000 +0200
+@@ -499,6 +499,15 @@
+ 		break;
+ 
+ 	case HCI_FILTER:
++		{
++			struct hci_filter *f = &hci_pi(sk)->filter;
++
++			uf.type_mask = f->type_mask;
++			uf.opcode    = f->opcode;
++			uf.event_mask[0] = *((u32 *) f->event_mask + 0);
++			uf.event_mask[1] = *((u32 *) f->event_mask + 1);
++		}
++
+ 		len = min_t(unsigned int, len, sizeof(uf));
+ 		if (copy_from_user(&uf, optval, len)) {
+ 			err = -EFAULT;
+@@ -656,7 +665,8 @@
+ 		/* Detach sockets from device */
+ 		read_lock(&hci_sk_list.lock);
+ 		sk_for_each(sk, node, &hci_sk_list.head) {
+-			lock_sock(sk);
++			local_bh_disable();
++			bh_lock_sock_nested(sk);
+ 			if (hci_pi(sk)->hdev == hdev) {
+ 				hci_pi(sk)->hdev = NULL;
+ 				sk->sk_err = EPIPE;
+@@ -665,7 +675,8 @@
+ 
+ 				hci_dev_put(hdev);
+ 			}
+-			release_sock(sk);
++			bh_unlock_sock(sk);
++			local_bh_enable();
+ 		}
+ 		read_unlock(&hci_sk_list.lock);
+ 	}
+diff -urN linux-2.6.21/net/bluetooth/hci_sysfs.c linux-2.6.21-mh1/net/bluetooth/hci_sysfs.c
+--- linux-2.6.21/net/bluetooth/hci_sysfs.c	2007-04-26 05:08:32.000000000 +0200
++++ linux-2.6.21-mh1/net/bluetooth/hci_sysfs.c	2007-05-26 08:12:46.000000000 +0200
+@@ -305,7 +305,7 @@
+ 
+ 	BT_DBG("%p name %s type %d", hdev, hdev->name, hdev->type);
+ 
+-	dev->class = bt_class;
++	dev->bus = &bt_bus;
+ 	dev->parent = hdev->parent;
+ 
+ 	strlcpy(dev->bus_id, hdev->name, BUS_ID_SIZE);
+@@ -322,6 +322,10 @@
+ 		if (device_create_file(dev, bt_attrs[i]) < 0)
+ 			BT_ERR("Failed to create device attribute");
+ 
++	if (sysfs_create_link(&bt_class->subsys.kset.kobj,
++				&dev->kobj, kobject_name(&dev->kobj)) < 0)
++		BT_ERR("Failed to create class symlink");
++
+ 	return 0;
+ }
+ 
+@@ -329,6 +333,9 @@
+ {
+ 	BT_DBG("%p name %s type %d", hdev, hdev->name, hdev->type);
+ 
++	sysfs_remove_link(&bt_class->subsys.kset.kobj,
++					kobject_name(&hdev->dev.kobj));
++
+ 	device_del(&hdev->dev);
+ }
+ 
+diff -urN linux-2.6.21/net/bluetooth/l2cap.c linux-2.6.21-mh1/net/bluetooth/l2cap.c
+--- linux-2.6.21/net/bluetooth/l2cap.c	2007-04-26 05:08:32.000000000 +0200
++++ linux-2.6.21-mh1/net/bluetooth/l2cap.c	2007-05-26 08:12:49.000000000 +0200
+@@ -459,8 +459,8 @@
+ 			sk->sk_state = BT_DISCONN;
+ 			l2cap_sock_set_timer(sk, sk->sk_sndtimeo);
+ 
+-			req.dcid = __cpu_to_le16(l2cap_pi(sk)->dcid);
+-			req.scid = __cpu_to_le16(l2cap_pi(sk)->scid);
++			req.dcid = cpu_to_le16(l2cap_pi(sk)->dcid);
++			req.scid = cpu_to_le16(l2cap_pi(sk)->scid);
+ 			l2cap_send_cmd(conn, l2cap_get_ident(conn),
+ 					L2CAP_DISCONN_REQ, sizeof(req), &req);
+ 		} else {
+@@ -507,6 +507,7 @@
+ 	}
+ 
+ 	/* Default config options */
++	pi->conf_len = 0;
+ 	pi->conf_mtu = L2CAP_DEFAULT_MTU;
+ 	pi->flush_to = L2CAP_DEFAULT_FLUSH_TO;
+ }
+@@ -652,7 +653,7 @@
+ 		if (sk->sk_type == SOCK_SEQPACKET) {
+ 			struct l2cap_conn_req req;
+ 			l2cap_pi(sk)->ident = l2cap_get_ident(conn);
+-			req.scid = __cpu_to_le16(l2cap_pi(sk)->scid);
++			req.scid = cpu_to_le16(l2cap_pi(sk)->scid);
+ 			req.psm  = l2cap_pi(sk)->psm;
+ 			l2cap_send_cmd(conn, l2cap_pi(sk)->ident,
+ 					L2CAP_CONN_REQ, sizeof(req), &req);
+@@ -868,8 +869,8 @@
+ 
+ 	/* Create L2CAP header */
+ 	lh = (struct l2cap_hdr *) skb_put(skb, L2CAP_HDR_SIZE);
+-	lh->cid = __cpu_to_le16(l2cap_pi(sk)->dcid);
+-	lh->len = __cpu_to_le16(len + (hlen - L2CAP_HDR_SIZE));
++	lh->cid = cpu_to_le16(l2cap_pi(sk)->dcid);
++	lh->len = cpu_to_le16(len + (hlen - L2CAP_HDR_SIZE));
+ 
+ 	if (sk->sk_type == SOCK_DGRAM)
+ 		put_unaligned(l2cap_pi(sk)->psm, (u16 *) skb_put(skb, 2));
+@@ -954,11 +955,17 @@
+ 
+ 	switch (optname) {
+ 	case L2CAP_OPTIONS:
++		opts.imtu     = l2cap_pi(sk)->imtu;
++		opts.omtu     = l2cap_pi(sk)->omtu;
++		opts.flush_to = l2cap_pi(sk)->flush_to;
++		opts.mode     = 0x00;
++
+ 		len = min_t(unsigned int, sizeof(opts), optlen);
+ 		if (copy_from_user((char *) &opts, optval, len)) {
+ 			err = -EFAULT;
+ 			break;
+ 		}
++
+ 		l2cap_pi(sk)->imtu  = opts.imtu;
+ 		l2cap_pi(sk)->omtu  = opts.omtu;
+ 		break;
+@@ -1096,7 +1103,7 @@
+ 		} else if (sk->sk_state == BT_CONNECT) {
+ 			struct l2cap_conn_req req;
+ 			l2cap_pi(sk)->ident = l2cap_get_ident(conn);
+-			req.scid = __cpu_to_le16(l2cap_pi(sk)->scid);
++			req.scid = cpu_to_le16(l2cap_pi(sk)->scid);
+ 			req.psm  = l2cap_pi(sk)->psm;
+ 			l2cap_send_cmd(conn, l2cap_pi(sk)->ident, L2CAP_CONN_REQ, sizeof(req), &req);
+ 		}
+@@ -1192,13 +1199,13 @@
+ 		return NULL;
+ 
+ 	lh = (struct l2cap_hdr *) skb_put(skb, L2CAP_HDR_SIZE);
+-	lh->len = __cpu_to_le16(L2CAP_CMD_HDR_SIZE + dlen);
+-	lh->cid = __cpu_to_le16(0x0001);
++	lh->len = cpu_to_le16(L2CAP_CMD_HDR_SIZE + dlen);
++	lh->cid = cpu_to_le16(0x0001);
+ 
+ 	cmd = (struct l2cap_cmd_hdr *) skb_put(skb, L2CAP_CMD_HDR_SIZE);
+ 	cmd->code  = code;
+ 	cmd->ident = ident;
+-	cmd->len   = __cpu_to_le16(dlen);
++	cmd->len   = cpu_to_le16(dlen);
+ 
+ 	if (dlen) {
+ 		count -= L2CAP_HDR_SIZE + L2CAP_CMD_HDR_SIZE;
+@@ -1265,42 +1272,6 @@
+ 	return len;
+ }
+ 
+-static inline void l2cap_parse_conf_req(struct sock *sk, void *data, int len)
+-{
+-	int type, hint, olen;
+-	unsigned long val;
+-	void *ptr = data;
+-
+-	BT_DBG("sk %p len %d", sk, len);
+-
+-	while (len >= L2CAP_CONF_OPT_SIZE) {
+-		len -= l2cap_get_conf_opt(&ptr, &type, &olen, &val);
+-
+-		hint  = type & 0x80;
+-		type &= 0x7f;
+-
+-		switch (type) {
+-		case L2CAP_CONF_MTU:
+-			l2cap_pi(sk)->conf_mtu = val;
+-			break;
+-
+-		case L2CAP_CONF_FLUSH_TO:
+-			l2cap_pi(sk)->flush_to = val;
+-			break;
+-
+-		case L2CAP_CONF_QOS:
+-			break;
+-
+-		default:
+-			if (hint)
+-				break;
+-
+-			/* FIXME: Reject unknown option */
+-			break;
+-		}
+-	}
+-}
+-
+ static void l2cap_add_conf_opt(void **ptr, u8 type, u8 len, unsigned long val)
+ {
+ 	struct l2cap_conf_opt *opt = *ptr;
+@@ -1316,11 +1287,11 @@
+ 		break;
+ 
+ 	case 2:
+-		*((u16 *) opt->val) = __cpu_to_le16(val);
++		*((u16 *) opt->val) = cpu_to_le16(val);
+ 		break;
+ 
+ 	case 4:
+-		*((u32 *) opt->val) = __cpu_to_le32(val);
++		*((u32 *) opt->val) = cpu_to_le32(val);
+ 		break;
+ 
+ 	default:
+@@ -1346,46 +1317,82 @@
+ 	//if (flush_to != L2CAP_DEFAULT_FLUSH_TO)
+ 	//   l2cap_add_conf_opt(&ptr, L2CAP_CONF_FLUSH_TO, 2, pi->flush_to);
+ 
+-	req->dcid  = __cpu_to_le16(pi->dcid);
+-	req->flags = __cpu_to_le16(0);
++	req->dcid  = cpu_to_le16(pi->dcid);
++	req->flags = cpu_to_le16(0);
+ 
+ 	return ptr - data;
+ }
+ 
+-static inline int l2cap_conf_output(struct sock *sk, void **ptr)
++static int l2cap_parse_conf_req(struct sock *sk, void *data)
+ {
+ 	struct l2cap_pinfo *pi = l2cap_pi(sk);
+-	int result = 0;
++	struct l2cap_conf_rsp *rsp = data;
++	void *ptr = rsp->data;
++	void *req = pi->conf_req;
++	int len = pi->conf_len;
++	int type, hint, olen;
++	unsigned long val;
++	u16 result = L2CAP_CONF_SUCCESS;
+ 
+-	/* Configure output options and let the other side know
+-	 * which ones we don't like. */
+-	if (pi->conf_mtu < pi->omtu)
+-		result = L2CAP_CONF_UNACCEPT;
+-	else
+-		pi->omtu = pi->conf_mtu;
++	BT_DBG("sk %p", sk);
++
++	while (len >= L2CAP_CONF_OPT_SIZE) {
++		len -= l2cap_get_conf_opt(&req, &type, &olen, &val);
+ 
+-	l2cap_add_conf_opt(ptr, L2CAP_CONF_MTU, 2, pi->omtu);
++		hint  = type & 0x80;
++		type &= 0x7f;
+ 
+-	BT_DBG("sk %p result %d", sk, result);
+-	return result;
++		switch (type) {
++		case L2CAP_CONF_MTU:
++			pi->conf_mtu = val;
++			break;
++
++		case L2CAP_CONF_FLUSH_TO:
++			pi->flush_to = val;
++			break;
++
++		case L2CAP_CONF_QOS:
++			break;
++
++		default:
++			if (hint)
++				break;
++
++			result = L2CAP_CONF_UNKNOWN;
++			*((u8 *) ptr++) = type;
++			break;
++		}
++	}
++
++	if (result == L2CAP_CONF_SUCCESS) {
++		/* Configure output options and let the other side know
++		 * which ones we don't like. */
++
++		if (pi->conf_mtu < pi->omtu)
++			result = L2CAP_CONF_UNACCEPT;
++		else
++			pi->omtu = pi->conf_mtu;
++
++		l2cap_add_conf_opt(&ptr, L2CAP_CONF_MTU, 2, pi->omtu);
++	}
++
++	rsp->scid   = cpu_to_le16(pi->dcid);
++	rsp->result = cpu_to_le16(result);
++	rsp->flags  = cpu_to_le16(0x0000);
++
++	return ptr - data;
+ }
+ 
+-static int l2cap_build_conf_rsp(struct sock *sk, void *data, int *result)
++static int l2cap_build_conf_rsp(struct sock *sk, void *data, u16 result, u16 flags)
+ {
+ 	struct l2cap_conf_rsp *rsp = data;
+ 	void *ptr = rsp->data;
+-	u16 flags = 0;
+ 
+-	BT_DBG("sk %p complete %d", sk, result ? 1 : 0);
+-
+-	if (result)
+-		*result = l2cap_conf_output(sk, &ptr);
+-	else
+-		flags = 0x0001;
++	BT_DBG("sk %p", sk);
+ 
+-	rsp->scid   = __cpu_to_le16(l2cap_pi(sk)->dcid);
+-	rsp->result = __cpu_to_le16(result ? *result : 0);
+-	rsp->flags  = __cpu_to_le16(flags);
++	rsp->scid   = cpu_to_le16(l2cap_pi(sk)->dcid);
++	rsp->result = cpu_to_le16(result);
++	rsp->flags  = cpu_to_le16(flags);
+ 
+ 	return ptr - data;
+ }
+@@ -1470,10 +1477,10 @@
+ 	bh_unlock_sock(parent);
+ 
+ sendresp:
+-	rsp.scid   = __cpu_to_le16(scid);
+-	rsp.dcid   = __cpu_to_le16(dcid);
+-	rsp.result = __cpu_to_le16(result);
+-	rsp.status = __cpu_to_le16(status);
++	rsp.scid   = cpu_to_le16(scid);
++	rsp.dcid   = cpu_to_le16(dcid);
++	rsp.result = cpu_to_le16(result);
++	rsp.status = cpu_to_le16(status);
+ 	l2cap_send_cmd(conn, cmd->ident, L2CAP_CONN_RSP, sizeof(rsp), &rsp);
+ 	return 0;
+ }
+@@ -1529,7 +1536,7 @@
+ 	u16 dcid, flags;
+ 	u8 rsp[64];
+ 	struct sock *sk;
+-	int result;
++	int len;
+ 
+ 	dcid  = __le16_to_cpu(req->dcid);
+ 	flags = __le16_to_cpu(req->flags);
+@@ -1542,25 +1549,40 @@
+ 	if (sk->sk_state == BT_DISCONN)
+ 		goto unlock;
+ 
+-	l2cap_parse_conf_req(sk, req->data, cmd->len - sizeof(*req));
++	/* Reject if config buffer is too small. */
++	len = cmd->len - sizeof(*req);
++	if (l2cap_pi(sk)->conf_len + len > sizeof(l2cap_pi(sk)->conf_req)) {
++		l2cap_send_cmd(conn, cmd->ident, L2CAP_CONF_RSP,
++				l2cap_build_conf_rsp(sk, rsp,
++					L2CAP_CONF_REJECT, flags), rsp);
++		goto unlock;
++	}
++
++	/* Store config. */
++	memcpy(l2cap_pi(sk)->conf_req + l2cap_pi(sk)->conf_len, req->data, len);
++	l2cap_pi(sk)->conf_len += len;
+ 
+ 	if (flags & 0x0001) {
+ 		/* Incomplete config. Send empty response. */
+ 		l2cap_send_cmd(conn, cmd->ident, L2CAP_CONF_RSP,
+-				l2cap_build_conf_rsp(sk, rsp, NULL), rsp);
++				l2cap_build_conf_rsp(sk, rsp,
++					L2CAP_CONF_SUCCESS, 0x0001), rsp);
+ 		goto unlock;
+ 	}
+ 
+ 	/* Complete config. */
+-	l2cap_send_cmd(conn, cmd->ident, L2CAP_CONF_RSP,
+-			l2cap_build_conf_rsp(sk, rsp, &result), rsp);
+-
+-	if (result)
++	len = l2cap_parse_conf_req(sk, rsp);
++	if (len < 0)
+ 		goto unlock;
+ 
+-	/* Output config done */
++	l2cap_send_cmd(conn, cmd->ident, L2CAP_CONF_RSP, len, rsp);
++
++	/* Output config done. */
+ 	l2cap_pi(sk)->conf_state |= L2CAP_CONF_OUTPUT_DONE;
+ 
++	/* Reset config buffer. */
++	l2cap_pi(sk)->conf_len = 0;
++
+ 	if (l2cap_pi(sk)->conf_state & L2CAP_CONF_INPUT_DONE) {
+ 		sk->sk_state = BT_CONNECTED;
+ 		l2cap_chan_ready(sk);
+@@ -1613,8 +1635,8 @@
+ 		l2cap_sock_set_timer(sk, HZ * 5);
+ 		{
+ 			struct l2cap_disconn_req req;
+-			req.dcid = __cpu_to_le16(l2cap_pi(sk)->dcid);
+-			req.scid = __cpu_to_le16(l2cap_pi(sk)->scid);
++			req.dcid = cpu_to_le16(l2cap_pi(sk)->dcid);
++			req.scid = cpu_to_le16(l2cap_pi(sk)->scid);
+ 			l2cap_send_cmd(conn, l2cap_get_ident(conn),
+ 					L2CAP_DISCONN_REQ, sizeof(req), &req);
+ 		}
+@@ -1652,8 +1674,8 @@
+ 	if (!(sk = l2cap_get_chan_by_scid(&conn->chan_list, dcid)))
+ 		return 0;
+ 
+-	rsp.dcid = __cpu_to_le16(l2cap_pi(sk)->scid);
+-	rsp.scid = __cpu_to_le16(l2cap_pi(sk)->dcid);
++	rsp.dcid = cpu_to_le16(l2cap_pi(sk)->scid);
++	rsp.scid = cpu_to_le16(l2cap_pi(sk)->dcid);
+ 	l2cap_send_cmd(conn, cmd->ident, L2CAP_DISCONN_RSP, sizeof(rsp), &rsp);
+ 
+ 	sk->sk_shutdown = SHUTDOWN_MASK;
+@@ -1696,8 +1718,8 @@
+ 
+ 	BT_DBG("type 0x%4.4x", type);
+ 
+-	rsp.type   = __cpu_to_le16(type);
+-	rsp.result = __cpu_to_le16(L2CAP_IR_NOTSUPP);
++	rsp.type   = cpu_to_le16(type);
++	rsp.result = cpu_to_le16(L2CAP_IR_NOTSUPP);
+ 	l2cap_send_cmd(conn, cmd->ident, L2CAP_INFO_RSP, sizeof(rsp), &rsp);
+ 
+ 	return 0;
+@@ -1794,7 +1816,7 @@
+ 			BT_DBG("error %d", err);
+ 
+ 			/* FIXME: Map err to a valid reason */
+-			rej.reason = __cpu_to_le16(0);
++			rej.reason = cpu_to_le16(0);
+ 			l2cap_send_cmd(conn, cmd.ident, L2CAP_COMMAND_REJ, sizeof(rej), &rej);
+ 		}
+ 
+@@ -1993,10 +2015,10 @@
+ 			result = L2CAP_CR_SEC_BLOCK;
+ 		}
+ 
+-		rsp.scid   = __cpu_to_le16(l2cap_pi(sk)->dcid);
+-		rsp.dcid   = __cpu_to_le16(l2cap_pi(sk)->scid);
+-		rsp.result = __cpu_to_le16(result);
+-		rsp.status = __cpu_to_le16(0);
++		rsp.scid   = cpu_to_le16(l2cap_pi(sk)->dcid);
++		rsp.dcid   = cpu_to_le16(l2cap_pi(sk)->scid);
++		rsp.result = cpu_to_le16(result);
++		rsp.status = cpu_to_le16(0);
+ 		l2cap_send_cmd(conn, l2cap_pi(sk)->ident,
+ 				L2CAP_CONN_RSP, sizeof(rsp), &rsp);
+ 
+@@ -2041,10 +2063,10 @@
+ 			result = L2CAP_CR_SEC_BLOCK;
+ 		}
+ 
+-		rsp.scid   = __cpu_to_le16(l2cap_pi(sk)->dcid);
+-		rsp.dcid   = __cpu_to_le16(l2cap_pi(sk)->scid);
+-		rsp.result = __cpu_to_le16(result);
+-		rsp.status = __cpu_to_le16(0);
++		rsp.scid   = cpu_to_le16(l2cap_pi(sk)->dcid);
++		rsp.dcid   = cpu_to_le16(l2cap_pi(sk)->scid);
++		rsp.result = cpu_to_le16(result);
++		rsp.status = cpu_to_le16(0);
+ 		l2cap_send_cmd(conn, l2cap_pi(sk)->ident,
+ 				L2CAP_CONN_RSP, sizeof(rsp), &rsp);
+ 
+diff -urN linux-2.6.21/net/bluetooth/rfcomm/core.c linux-2.6.21-mh1/net/bluetooth/rfcomm/core.c
+--- linux-2.6.21/net/bluetooth/rfcomm/core.c	2007-04-26 05:08:32.000000000 +0200
++++ linux-2.6.21-mh1/net/bluetooth/rfcomm/core.c	2007-05-26 08:12:47.000000000 +0200
+@@ -622,7 +622,7 @@
+ 	bacpy(&addr.l2_bdaddr, src);
+ 	addr.l2_family = AF_BLUETOOTH;
+ 	addr.l2_psm    = 0;
+-	*err = sock->ops->bind(sock, (struct sockaddr *) &addr, sizeof(addr));
++	*err = kernel_bind(sock, (struct sockaddr *) &addr, sizeof(addr));
+ 	if (*err < 0)
+ 		goto failed;
+ 
+@@ -643,7 +643,7 @@
+ 	bacpy(&addr.l2_bdaddr, dst);
+ 	addr.l2_family = AF_BLUETOOTH;
+ 	addr.l2_psm    = htobs(RFCOMM_PSM);
+-	*err = sock->ops->connect(sock, (struct sockaddr *) &addr, sizeof(addr), O_NONBLOCK);
++	*err = kernel_connect(sock, (struct sockaddr *) &addr, sizeof(addr), O_NONBLOCK);
+ 	if (*err == 0 || *err == -EINPROGRESS)
+ 		return s;
+ 
+@@ -1058,6 +1058,12 @@
+ 		case BT_DISCONN:
+ 			d->state = BT_CLOSED;
+ 			__rfcomm_dlc_close(d, 0);
++
++			if (list_empty(&s->dlcs)) {
++				s->state = BT_DISCONN;
++				rfcomm_send_disc(s, 0);
++			}
++
+ 			break;
+ 		}
+ 	} else {
+@@ -1067,6 +1073,10 @@
+ 			s->state = BT_CONNECTED;
+ 			rfcomm_process_connect(s);
+ 			break;
++
++		case BT_DISCONN:
++			rfcomm_session_put(s);
++			break;
+ 		}
+ 	}
+ 	return 0;
+@@ -1757,19 +1767,12 @@
+ 
+ 	BT_DBG("session %p", s);
+ 
+-	if (sock_create_lite(PF_BLUETOOTH, sock->type, BTPROTO_L2CAP, &nsock))
++	err = kernel_accept(sock, &nsock, O_NONBLOCK);
++	if (err < 0)
+ 		return;
+ 
+-	nsock->ops  = sock->ops;
+-
+ 	__module_get(nsock->ops->owner);
+ 
+-	err = sock->ops->accept(sock, nsock, O_NONBLOCK);
+-	if (err < 0) {
+-		sock_release(nsock);
+-		return;
+-	}
+-
+ 	/* Set our callbacks */
+ 	nsock->sk->sk_data_ready   = rfcomm_l2data_ready;
+ 	nsock->sk->sk_state_change = rfcomm_l2state_change;
+@@ -1885,7 +1888,7 @@
+ 	bacpy(&addr.l2_bdaddr, ba);
+ 	addr.l2_family = AF_BLUETOOTH;
+ 	addr.l2_psm    = htobs(RFCOMM_PSM);
+-	err = sock->ops->bind(sock, (struct sockaddr *) &addr, sizeof(addr));
++	err = kernel_bind(sock, (struct sockaddr *) &addr, sizeof(addr));
+ 	if (err < 0) {
+ 		BT_ERR("Bind failed %d", err);
+ 		goto failed;
+@@ -1898,7 +1901,7 @@
+ 	release_sock(sk);
+ 
+ 	/* Start listening on the socket */
+-	err = sock->ops->listen(sock, 10);
++	err = kernel_listen(sock, 10);
+ 	if (err) {
+ 		BT_ERR("Listen failed %d", err);
+ 		goto failed;
+diff -urN linux-2.6.21/net/bluetooth/rfcomm/tty.c linux-2.6.21-mh1/net/bluetooth/rfcomm/tty.c
+--- linux-2.6.21/net/bluetooth/rfcomm/tty.c	2007-04-26 05:08:32.000000000 +0200
++++ linux-2.6.21-mh1/net/bluetooth/rfcomm/tty.c	2007-05-26 08:12:47.000000000 +0200
+@@ -517,9 +517,10 @@
+ 	if (dlc->state == BT_CLOSED) {
+ 		if (!dev->tty) {
+ 			if (test_bit(RFCOMM_RELEASE_ONHUP, &dev->flags)) {
+-				rfcomm_dev_hold(dev);
+-				rfcomm_dev_del(dev);
++				if (rfcomm_dev_get(dev->id) == NULL)
++					return;
+ 
++				rfcomm_dev_del(dev);
+ 				/* We have to drop DLC lock here, otherwise
+ 				   rfcomm_dev_put() will dead lock if it's
+ 				   the last reference. */
+@@ -974,8 +975,12 @@
+ 
+ 	rfcomm_tty_flush_buffer(tty);
+ 
+-	if (test_bit(RFCOMM_RELEASE_ONHUP, &dev->flags))
++	if (test_bit(RFCOMM_RELEASE_ONHUP, &dev->flags)) {
++		if (rfcomm_dev_get(dev->id) == NULL)
++			return;
+ 		rfcomm_dev_del(dev);
++		rfcomm_dev_put(dev);
++	}
+ }
+ 
+ static int rfcomm_tty_read_proc(char *buf, char **start, off_t offset, int len, int *eof, void *unused)
