@@ -1,0 +1,610 @@
+diff -ruN linux-2.6.16.2.orig/fs/Kconfig linux-2.6.16.2/fs/Kconfig
+--- linux-2.6.16.2.orig/fs/Kconfig	2006-04-07 18:56:47.000000000 +0200
++++ linux-2.6.16.2/fs/Kconfig	2006-04-10 13:27:10.000000000 +0200
+@@ -438,6 +438,32 @@
+ 	depends on XFS_QUOTA || QUOTA
+ 	default y
+ 
++config DARE
++	bool "Data Recovery System - DARE"
++	help
++	  DARE is a small Linux kernel patch to VFS (Virtual Filesystem) which
++	  transparently moves files into a special directory on each filesystem
++	  instead of removing them. It works similar like Novell Netware
++	  Data Recovery or Windows Recycle Bin.
++
++	  Deleted files are moved into /deleted directory on each mounted
++	  filesystem. Deleted files are grouped into subdirectories by N hours.
++	  
++	  If you want to use this feature for getting ability to undelete files
++	  you need answer Y here and create directory 'deleted' accessible only
++	  for user 'root' at root directory of every mounted filesystem which
++	  you want to have undelete ability.
++
++	  You also need user space utility for undeleting files and user space
++	  daemon which periodicaly checks free space on mounted filesystems and
++	  removes older files from 'deleted' directory if needed.
++	  Those utilities can be found at <http://project.terminus.sk/dare/>.
++
++config DARE_HOURS
++	int "Group deleted files by N hours"
++	depends on DARE
++	default 1
++
+ config DNOTIFY
+ 	bool "Dnotify support" if EMBEDDED
+ 	default y
+diff -ruN linux-2.6.16.2.orig/fs/Makefile linux-2.6.16.2/fs/Makefile
+--- linux-2.6.16.2.orig/fs/Makefile	2006-04-07 18:56:47.000000000 +0200
++++ linux-2.6.16.2/fs/Makefile	2006-04-10 13:14:32.000000000 +0200
+@@ -48,6 +48,8 @@
+ obj-y				+= devpts/
+ 
+ obj-$(CONFIG_PROFILING)		+= dcookies.o
++
++obj-$(CONFIG_DARE)		+= dare.o
+  
+ # Do not add any filesystems before this line
+ obj-$(CONFIG_REISERFS_FS)	+= reiserfs/
+diff -ruN linux-2.6.16.2.orig/fs/dare.c linux-2.6.16.2/fs/dare.c
+--- linux-2.6.16.2.orig/fs/dare.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-2.6.16.2/fs/dare.c	2006-04-10 13:30:20.000000000 +0200
+@@ -0,0 +1,381 @@
++/*
++ *  linux/fs/dare.c
++ *
++ *  Copyright (C) 2004-2006  by Marek Zelem <marek@terminus.sk>
++ */
++
++#define DELETED_DIR	"deleted"
++// #define	CONFIG_DARE_HOURS	1
++
++#include <linux/config.h>
++#include <linux/init.h>
++#include <linux/slab.h>
++#include <linux/fs.h>
++#include <linux/quotaops.h>
++#include <linux/namei.h>
++#include <linux/namespace.h>
++#include <linux/string.h>
++#include <linux/mm.h>
++#include <linux/utime.h>
++#include <linux/file.h>
++#include <linux/smp_lock.h>
++#include <linux/dnotify.h>
++// #include <linux/vfs.h>
++#include <asm/uaccess.h>
++
++char * d_path_relative(struct dentry *dentry, struct vfsmount *vfsmnt,
++				char *buf, int buflen);
++
++static DECLARE_MUTEX(deleted_mutex);
++
++struct vfsmount *find_inode_mnt(struct inode *inode);
++
++static int is_offspring( struct dentry * dir, struct dentry * offspring )
++{
++	/* FIXME: do locking */
++	/* maybe add some depth limitation eg. /deleted/xxx/yyy */
++	while( offspring->d_parent!=NULL && offspring->d_parent!=offspring )
++	{
++		if( offspring->d_parent==dir )
++			return(1);
++		offspring=offspring->d_parent;
++	}
++	return(0);
++}
++
++struct proc_priv {
++	uid_t fsuid;
++	gid_t fsgid;
++	kernel_cap_t cap_effective;
++};
++
++static void save_proc_priv( struct proc_priv *p )
++{
++	p->fsuid=current->fsuid;
++	p->fsgid=current->fsgid;
++	cap_t(p->cap_effective) = cap_t(current->cap_effective);
++}
++
++static void restore_proc_priv( struct proc_priv *p )
++{
++	current->fsuid=p->fsuid;
++	current->fsgid=p->fsgid;
++	cap_t(current->cap_effective) = cap_t(p->cap_effective);
++}
++
++static void set_proc_priv( void )
++{
++	current->fsuid=0;
++	current->fsgid=0;
++	cap_t(current->cap_effective) = to_cap_t(CAP_FS_MASK);
++}
++
++static int write_to_file( struct file *file, char *buf, int len )
++{
++	mm_segment_t old_fs;
++	int result;
++	loff_t pos;
++
++	if( buf==NULL )
++		return(0);
++	old_fs = get_fs();
++	set_fs(get_ds());
++	/* The cast to a user pointer is valid due to the set_fs() */
++	pos=file->f_pos;
++	result = vfs_write(file,buf,len,&pos);
++	file->f_pos=pos;
++	set_fs(old_fs);
++	return(result);
++}
++
++static int write_path_to_file( struct file *file, struct dentry *dentry, struct vfsmount *mnt )
++{ char *fn;
++  char *page = (char *) __get_free_page(GFP_USER);
++
++	if( page!=NULL )
++	{
++		fn=d_path_relative(dentry,mnt,page,PAGE_SIZE);
++		if( fn!=NULL )
++			write_to_file(file,fn,strlen(fn));
++		free_page((unsigned long) page);
++		return(0);
++	}
++	return(0);
++}
++
++/*
++ * dare_move( struct inode *dir, struct dentry * dentry )
++ * Must be called with mutex_lock(&dir->i_mutex);
++ */
++int dare_move( struct inode *dir, struct dentry * dentry )
++{
++	struct dentry *deldir;
++	struct proc_priv proc_priv;
++	struct timeval now;
++	int num;
++	char buf[64];
++	struct dentry *d,*f;
++	struct iattr newattrs;
++	struct file *file;
++	struct vfsmount *mnt;
++	unsigned long ino;
++	int ret = -ENOENT;
++
++	/* We move only a valid dentry */
++
++	if( !dentry->d_inode )
++		return(ret);
++
++
++// printk("ZZZ: start\n");
++	/* Save current process privileges and set root privileges */
++
++	save_proc_priv(&proc_priv);
++	set_proc_priv();
++
++
++	/* search for /deleted directory */
++
++	deldir=lookup_one_len(DELETED_DIR,dentry->d_sb->s_root,strlen(DELETED_DIR));
++	if( IS_ERR(deldir) )
++	{
++		printk("dare_move: Error 1 (%d) [patent inode %ld]\n",(int)(deldir),dentry->d_sb->s_root->d_inode->i_ino);
++		goto Out0;
++	}
++	if( !deldir->d_inode )
++	{	
++		/* /deleted does not exist */
++		goto Out;
++	}
++	if( !S_ISDIR(deldir->d_inode->i_mode) )
++	{
++		/* /deleted is not a directory! */
++/*		printk("dare_move: /deleted is not a directory!\n");	*/
++		goto Out;
++	}
++	if( deldir==dentry || is_offspring(deldir,dentry) )
++	{	
++		/* Deleting inside /deleted */
++		/* printk("dare_move: Deleting inside /deleted\n"); */
++		goto Out;
++	}
++
++// printk("ZZZ: 1\n");
++
++	/* search for /deleted/<time> directory */
++	
++	do_gettimeofday(&now);
++	num=now.tv_sec / (3600*CONFIG_DARE_HOURS);
++	num*= (3600*CONFIG_DARE_HOURS);
++	sprintf(buf,"%d",num);
++	d=lookup_one_len(buf,deldir,strlen(buf));
++// printk("ZZZ: 2\n");
++	if( IS_ERR(d) )
++	{
++		printk("dare_move: Error during lookuping /deleted/<time>\n");
++		goto Out;
++	}
++// printk("ZZZ: 3\n");
++	down(&deleted_mutex);
++// printk("ZZZ: 4\n");
++	mutex_lock(&deldir->d_inode->i_mutex);
++// printk("ZZZ: 5\n");
++	if( !d->d_inode )
++	{	
++// printk("ZZZ: 5.5\n");
++		vfs_mkdir(deldir->d_inode,d,0700);
++	}
++// printk("ZZZ: 6\n");
++	if( !S_ISDIR(deldir->d_inode->i_mode) )
++	{
++		printk("dare_move: /deleted/<time> is not a directory\n");
++Out2up:		
++		mutex_unlock(&deldir->d_inode->i_mutex);
++Out2u:		
++		up(&deleted_mutex);
++		goto Out2;
++	}
++// printk("ZZZ: 7\n");
++
++
++	/* search for /deleted/<time>.inf file */
++
++	sprintf(buf,"%d.inf",num);
++	f=lookup_one_len(buf,deldir,strlen(buf));
++// printk("ZZZ: 8\n");
++	if( IS_ERR(f) )
++	{
++		printk("dare_move: Error during lookuping /deleted/<time>.inf\n");
++		goto Out2up;
++	}
++// printk("ZZZ: 9\n");
++	if( !f->d_inode )
++	{
++// printk("ZZZ: 9.5\n");
++		if( vfs_create(deldir->d_inode,f,0600,NULL) )
++		{	dput(f);
++			printk("dare_move: Cannot create /deleted/<time>.inf file\n");
++			goto Out2up;
++		}
++	}
++// printk("ZZZ: 10\n");
++	if( !S_ISREG(f->d_inode->i_mode) )
++	{
++		dput(f);
++		printk("dare_move: /deleted/<time>.inf is not a regular file\n");
++		goto Out2up;
++	}
++// printk("ZZZ: 11\n");
++	mutex_unlock(&deldir->d_inode->i_mutex);
++// printk("ZZZ: 12\n");
++
++	if( break_lease(f->d_inode,(O_WRONLY|O_APPEND)+1) )
++	{
++		dput(f);
++		printk("dare_move: Error during break_lease()\n");
++		goto Out2u;
++	}
++// printk("ZZZ: 13\n");
++	DQUOT_INIT(f->d_inode);
++// printk("ZZZ: 14\n");
++
++	mnt=find_inode_mnt(f->d_inode);
++	mntget(mnt);
++// printk("ZZZ: 15\n");
++	file = dentry_open(f,mnt,O_WRONLY|O_APPEND);
++// printk("ZZZ: 16\n");
++	if( IS_ERR(file) )
++	{	mntput(mnt);
++		mntput(mnt);
++		dput(f);
++		printk("dare_move: Error opening .inf file\n");
++		goto Out2u;
++	}
++// printk("ZZZ: 17\n");
++	vfs_llseek(file,0,2);
++// printk("ZZZ: 18\n");
++
++	/* if not regular file or symlink with nlink==1 ->ino=0 ->do not move */
++	
++	if( !(S_ISREG(dentry->d_inode->i_mode) || S_ISLNK(dentry->d_inode->i_mode)) || dentry->d_inode->i_nlink!=1 )
++		ino=0;
++	else
++		ino=dentry->d_inode->i_ino;
++
++// printk("ZZZ: 19\n");
++	if( file->f_op->write!=NULL )
++	{
++// printk("ZZZ: 19.5\n");
++#ifdef CONFIG_MEDUSA
++		sprintf(buf,"%lu:%lu:%d:%d:%06o:%d,%d,%d:",ino,(unsigned long)(now.tv_sec),dentry->d_inode->i_uid,dentry->d_inode->i_gid,dentry->d_inode->i_mode,proc_priv.fsuid,current->uid,current->med.luid);
++#else
++		sprintf(buf,"%lu:%lu:%d:%d:%06o:%d,%d:",ino,(unsigned long)(now.tv_sec),dentry->d_inode->i_uid,dentry->d_inode->i_gid,dentry->d_inode->i_mode,proc_priv.fsuid,current->uid);
++#endif
++		write_to_file(file,buf,strlen(buf));
++		write_path_to_file(file,dentry,mnt);
++		buf[0]='\n';
++		write_to_file(file,buf,1);
++	}
++	else	printk("dare_move: can't write to .inf file\n");
++// printk("ZZZ: 20\n");
++	filp_close(file,NULL);
++// printk("ZZZ: 21\n");
++	mntput(mnt);
++// printk("ZZZ: 22\n");
++	up(&deleted_mutex);
++// printk("ZZZ: 23\n");
++
++
++	/* if ino==0 -> do not move */
++	
++	if( ino==0 )
++		goto Out2;
++
++
++	/* move deleted file to /deleted/<time>/ */
++
++// printk("ZZZ: 24\n");
++	sprintf(buf,"%lu",ino);
++	f=lookup_one_len(buf,d,strlen(buf));
++// printk("ZZZ: 25\n");
++	if( IS_ERR(f) )
++	{
++		printk("dare_move: Error during lookuping /deleted/<time>/<ino>\n");
++		goto Out2;
++	}
++// printk("ZZZ: 26\n");
++	if( !f->d_inode )
++	{
++		struct dentry * old_dir_dentry;
++
++		old_dir_dentry=d_find_alias(dir);
++
++// printk("ZZZ: 26.5\n");
++		/* We can't call lock_rename(d, old_dir_dentry ); */
++		mutex_lock(&d->d_inode->i_mutex);
++		/* mutex_lock(&dir->i_mutex); - This is already down before calling dare_move() */
++		
++// printk("ZZZ: 26.6\n");
++		if( vfs_rename(dir,dentry,d->d_inode,f)!=0 )
++		{
++			/* We can't call unlock_rename(d, old_dir_dentry); */
++			mutex_unlock(&d->d_inode->i_mutex);
++
++			dput(old_dir_dentry);
++			printk("dare_move: Cannot move file to /deleted/<time>/<ino>\n");
++			goto Out3;
++		}
++// printk("ZZZ: 26.7\n");
++		/* We can't call unlock_rename(d, old_dir_dentry); */
++		mutex_unlock(&d->d_inode->i_mutex);
++
++		dput(old_dir_dentry);
++		ret=0;
++	}
++	else	ret= -1;
++// printk("ZZZ: 27\n");
++	dput(f);
++
++	/* And now we set uid, gig, and mode becaude quota, etc... */
++
++// printk("ZZZ: 28\n");
++	f=lookup_one_len(buf,d,strlen(buf));
++// printk("ZZZ: 29\n");
++	if( IS_ERR(f) )
++	{
++		printk("dare_move: Error2 during lookuping /deleted/<time>/<ino>\n");
++		goto Out2;
++	}
++// printk("ZZZ: 30\n");
++	if( !f->d_inode )
++	{
++		printk("dare_move: Somebody has deleted our file!\n");
++		goto Out3;
++	}
++
++// printk("ZZZ: 31\n");
++	if( f->d_inode->i_nlink==1 )
++	{
++// printk("ZZZ: 31.5\n");
++		newattrs.ia_mode = (0600 & S_IALLUGO) | (f->d_inode->i_mode & ~S_IALLUGO);
++		newattrs.ia_uid = 0;
++		newattrs.ia_gid = 0;
++		newattrs.ia_valid = ATTR_MODE | ATTR_UID | ATTR_GID | ATTR_CTIME ;
++		notify_change(f, &newattrs);
++	}
++// printk("ZZZ: 32\n");
++Out3:
++	dput(f);
++Out2:
++	dput(d);
++Out:
++	dput(deldir);
++Out0:
++	/* restore current process privileges */
++
++	restore_proc_priv(&proc_priv);
++
++// printk("ZZZ: end\n");
++	return(ret);
++}
++
+diff -ruN linux-2.6.16.2.orig/fs/dcache.c linux-2.6.16.2/fs/dcache.c
+--- linux-2.6.16.2.orig/fs/dcache.c	2006-04-07 18:56:47.000000000 +0200
++++ linux-2.6.16.2/fs/dcache.c	2006-04-10 11:46:45.000000000 +0200
+@@ -1448,6 +1448,24 @@
+ 	return res;
+ }
+ 
++/* write full pathname into buffer and return start of pathname */
++char * d_path_relative(struct dentry *dentry, struct vfsmount *vfsmnt,
++				char *buf, int buflen)
++{
++	char *res;
++	struct vfsmount *rootmnt;
++	struct dentry *root;
++
++	rootmnt = mntget(vfsmnt);
++	root = dget(dentry->d_sb->s_root);
++	spin_lock(&dcache_lock);
++	res = __d_path(dentry, vfsmnt, root, rootmnt, buf, buflen);
++	spin_unlock(&dcache_lock);
++	dput(root);
++	mntput(rootmnt);
++	return res;
++}
++
+ /*
+  * NOTE! The user-level library version returns a
+  * character pointer. The kernel system call just
+diff -ruN linux-2.6.16.2.orig/fs/namei.c linux-2.6.16.2/fs/namei.c
+--- linux-2.6.16.2.orig/fs/namei.c	2006-04-07 18:56:47.000000000 +0200
++++ linux-2.6.16.2/fs/namei.c	2006-04-10 13:15:06.000000000 +0200
+@@ -14,6 +14,7 @@
+ /* [Feb-Apr 2000, AV] Rewrite to the new namespace architecture.
+  */
+ 
++#include <linux/config.h>
+ #include <linux/init.h>
+ #include <linux/module.h>
+ #include <linux/slab.h>
+@@ -35,6 +36,10 @@
+ #include <asm/namei.h>
+ #include <asm/uaccess.h>
+ 
++#ifdef CONFIG_DARE
++int dare_move( struct inode *dir, struct dentry * dentry );
++#endif /* CONFIG_DARE */
++
+ #define ACC_MODE(x) ("\000\004\002\006"[(x)&O_ACCMODE])
+ 
+ /* [Feb-1997 T. Schoebel-Theuer]
+@@ -1951,11 +1956,22 @@
+ 	DQUOT_INIT(dir);
+ 
+ 	mutex_lock(&dentry->d_inode->i_mutex);
++#ifdef CONFIG_DARE
++	if( !d_mountpoint(dentry) && !(error=security_inode_rmdir(dir, dentry)) )
++	{
++		mutex_unlock(&dentry->d_inode->i_mutex);
++		if( dare_move(dir,dentry)==0 )
++			return 0;
++		mutex_lock(&dentry->d_inode->i_mutex);
++	}
++#endif /* CONFIG_DARE */
+ 	dentry_unhash(dentry);
+ 	if (d_mountpoint(dentry))
+ 		error = -EBUSY;
+ 	else {
++#ifndef CONFIG_DARE
+ 		error = security_inode_rmdir(dir, dentry);
++#endif /* CONFIG_DARE */
+ 		if (!error) {
+ 			error = dir->i_op->rmdir(dir, dentry);
+ 			if (!error)
+@@ -2035,7 +2051,15 @@
+ 	else {
+ 		error = security_inode_unlink(dir, dentry);
+ 		if (!error)
++		{
++#ifdef CONFIG_DARE
++			mutex_unlock(&dentry->d_inode->i_mutex);
++			if( dare_move(dir,dentry)==0 )
++				return 0;
++			mutex_lock(&dentry->d_inode->i_mutex);
++#endif /* CONFIG_DARE */
+ 			error = dir->i_op->unlink(dir, dentry);
++		}
+ 	}
+ 	mutex_unlock(&dentry->d_inode->i_mutex);
+ 
+@@ -2361,7 +2385,34 @@
+ 	if (d_mountpoint(old_dentry)||d_mountpoint(new_dentry))
+ 		error = -EBUSY;
+ 	else
++	{
++#ifdef CONFIG_DARE
++		if( target )
++		{
++			struct dentry * tmp_old_dir, * tmp_new_dir;
++
++			tmp_old_dir=d_find_alias(old_dir);
++			tmp_new_dir=d_find_alias(new_dir);
++			mutex_unlock(&target->i_mutex);
++			unlock_rename(tmp_new_dir, tmp_old_dir);
++			mutex_lock(&target->i_mutex);
++			if( dare_move(new_dir,new_dentry)==0 )
++			{
++				mutex_unlock(&target->i_mutex);
++				lock_rename(tmp_new_dir, tmp_old_dir);
++				dput(tmp_new_dir); dput(tmp_old_dir);
++				dput(new_dentry);
++				return -ERESTARTSYS;
++			}
++			/* FIXME: Maybe we rather have to always return with -ERESTARTSYS */
++			mutex_unlock(&target->i_mutex);
++			lock_rename(tmp_new_dir, tmp_old_dir);
++			dput(tmp_new_dir); dput(tmp_old_dir);
++			mutex_lock(&target->i_mutex);
++		}
++#endif /* CONFIG_DARE */
+ 		error = old_dir->i_op->rename(old_dir, old_dentry, new_dir, new_dentry);
++	}
+ 	if (!error) {
+ 		/* The following d_move() should become unconditional */
+ 		if (!(old_dir->i_sb->s_type->fs_flags & FS_ODD_RENAME))
+@@ -2506,7 +2557,19 @@
+ 	to = getname(newname);
+ 	error = PTR_ERR(to);
+ 	if (!IS_ERR(to)) {
++#ifdef CONFIG_DARE
++		int state=0;
++		while( state<2 )
++		{
++#endif /* CONFIG_DARE */
+ 		error = do_rename(olddfd, from, newdfd, to);
++#ifdef CONFIG_DARE
++			if( error == -ERESTARTSYS )
++				state++;
++			else
++				break;
++		}
++#endif /* CONFIG_DARE */
+ 		putname(to);
+ 	}
+ 	putname(from);
+diff -ruN linux-2.6.16.2.orig/fs/namespace.c linux-2.6.16.2/fs/namespace.c
+--- linux-2.6.16.2.orig/fs/namespace.c	2006-04-07 18:56:47.000000000 +0200
++++ linux-2.6.16.2/fs/namespace.c	2006-04-10 13:00:26.000000000 +0200
+@@ -1763,3 +1763,29 @@
+ 	release_mounts(&umount_list);
+ 	kfree(namespace);
+ }
++
++struct vfsmount *find_inode_mnt(struct inode *inode)
++{	/* I love Alexander Viro for calling functions without vfsmount,
++	/* so we have to find some vfsmount and hope it is the right one. */
++	struct namespace *ns;
++	struct vfsmount *mnt = NULL;
++
++	/* Okay, we need to find the vfsmount by looking
++	 * at the namespace now.
++	 */
++	ns = current->namespace;
++	down_read(&namespace_sem);
++
++	list_for_each_entry(mnt, &ns->list, mnt_list) {
++		if (mnt->mnt_sb == inode->i_sb) {
++			mntget(mnt);
++			goto out;
++		}
++	}
++
++      out:
++	up_read(&namespace_sem);
++
++	return mnt;
++}
++
