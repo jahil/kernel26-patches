@@ -1,0 +1,118 @@
+This patch changes a few background timers in the Linux kernel to
+1) be aligned to full seconds so that multiple timers get handled in one
+   processor wakeup
+2) have longer timeouts for those timers that can use such longer timeouts
+
+Some of these are a bit crude, but it's effective
+
+Signed-off-by: Arjan van de Ven <arjan@linux.intel.com>
+
+diff -purN linux-2.6.20/kernel/time/clocksource.c linux-2.6.21-rc5/kernel/time/clocksource.c
+--- linux-2.6.20/kernel/time/clocksource.c	2007-05-10 12:16:30.000000000 -0400
++++ linux-2.6.21-rc5/kernel/time/clocksource.c	2007-04-09 09:58:57.000000000 -0400
+@@ -77,11 +77,17 @@ static cycle_t watchdog_last;
+ /*
+  * Interval: 0.5sec Treshold: 0.0625s
+  */
+-#define WATCHDOG_INTERVAL (HZ >> 1)
++#define WATCHDOG_INTERVAL (HZ*10)
+ #define WATCHDOG_TRESHOLD (NSEC_PER_SEC >> 4)
+ 
++static int secondtime;
++
+ static void clocksource_ratewd(struct clocksource *cs, int64_t delta)
+ {
++	if (!secondtime) {
++		secondtime = 1;
++		return;
++	};
+ 	if (delta > -WATCHDOG_TRESHOLD && delta < WATCHDOG_TRESHOLD)
+ 		return;
+ 
+@@ -132,7 +138,7 @@ static void clocksource_watchdog(unsigne
+ 
+ 	if (!list_empty(&watchdog_list)) {
+ 		__mod_timer(&watchdog_timer,
+-			    watchdog_timer.expires + WATCHDOG_INTERVAL);
++			    round_jiffies(watchdog_timer.expires + WATCHDOG_INTERVAL));
+ 	}
+ 	spin_unlock(&watchdog_lock);
+ }
+diff -purN linux-2.6.20/mm/page-writeback.c linux-2.6.21-rc5/mm/page-writeback.c
+--- linux-2.6.20/mm/page-writeback.c	2007-05-10 12:16:30.000000000 -0400
++++ linux-2.6.21-rc5/mm/page-writeback.c	2007-04-10 11:29:38.000000000 -0400
+@@ -77,7 +77,7 @@ int vm_dirty_ratio = 40;
+ /*
+  * The interval between `kupdate'-style writebacks, in jiffies
+  */
+-int dirty_writeback_interval = 5 * HZ;
++int dirty_writeback_interval = 15 * HZ;
+ 
+ /*
+  * The longest number of jiffies for which data is allowed to remain dirty
+@@ -420,7 +420,7 @@ static void wb_kupdate(unsigned long arg
+ 
+ 	oldest_jif = jiffies - dirty_expire_interval;
+ 	start_jif = jiffies;
+-	next_jif = start_jif + dirty_writeback_interval;
++	next_jif = round_jiffies(start_jif + dirty_writeback_interval);
+ 	nr_to_write = global_page_state(NR_FILE_DIRTY) +
+ 			global_page_state(NR_UNSTABLE_NFS) +
+ 			(inodes_stat.nr_inodes - inodes_stat.nr_unused);
+@@ -437,7 +437,7 @@ static void wb_kupdate(unsigned long arg
+ 		nr_to_write -= MAX_WRITEBACK_PAGES - wbc.nr_to_write;
+ 	}
+ 	if (time_before(next_jif, jiffies + HZ))
+-		next_jif = jiffies + HZ;
++		next_jif = round_jiffies(jiffies + HZ);
+ 	if (dirty_writeback_interval)
+ 		mod_timer(&wb_timer, next_jif);
+ }
+@@ -461,7 +461,7 @@ int dirty_writeback_centisecs_handler(ct
+ static void wb_timer_fn(unsigned long unused)
+ {
+ 	if (pdflush_operation(wb_kupdate, 0) < 0)
+-		mod_timer(&wb_timer, jiffies + HZ); /* delay 1 second */
++		mod_timer(&wb_timer, round_jiffies(jiffies + HZ)); /* delay 1 second */
+ }
+ 
+ static void laptop_flush(unsigned long unused)
+diff -purN linux-2.6.20/mm/slab.c linux-2.6.21-rc5/mm/slab.c
+--- linux-2.6.20/mm/slab.c	2007-05-10 12:16:30.000000000 -0400
++++ linux-2.6.21-rc5/mm/slab.c	2007-04-16 09:49:55.000000000 -0400
+@@ -457,8 +457,8 @@ struct kmem_cache {
+  * OTOH the cpuarrays can contain lots of objects,
+  * which could lock up otherwise freeable slabs.
+  */
+-#define REAPTIMEOUT_CPUC	(2*HZ)
+-#define REAPTIMEOUT_LIST3	(4*HZ)
++#define REAPTIMEOUT_CPUC	(12*HZ)
++#define REAPTIMEOUT_LIST3	(20*HZ)
+ 
+ #if STATS
+ #define	STATS_INC_ACTIVE(x)	((x)->num_active++)
+@@ -958,7 +958,7 @@ static void __devinit start_cpu_timer(in
+ 		init_reap_node(cpu);
+ 		INIT_DELAYED_WORK(reap_work, cache_reap);
+ 		schedule_delayed_work_on(cpu, reap_work,
+-					__round_jiffies_relative(HZ, cpu));
++					__round_jiffies_relative(HZ*4, cpu));
+ 	}
+ }
+ 
+diff -purN linux-2.6.20/net/core/neighbour.c linux-2.6.21-rc5/net/core/neighbour.c
+--- linux-2.6.20/net/core/neighbour.c	2007-05-10 12:16:35.000000000 -0400
++++ linux-2.6.21-rc5/net/core/neighbour.c	2007-04-16 09:50:28.000000000 -0400
+@@ -693,10 +693,10 @@ next_elt:
+ 	if (!expire)
+ 		expire = 1;
+ 
+-	if (expire>HZ)
++	if (expire>4*HZ)
+ 		mod_timer(&tbl->gc_timer, round_jiffies(now + expire));
+ 	else
+-		mod_timer(&tbl->gc_timer, now + expire);
++		mod_timer(&tbl->gc_timer, round_jiffies(now + 4*HZ));
+ 
+ 	write_unlock(&tbl->lock);
+ }

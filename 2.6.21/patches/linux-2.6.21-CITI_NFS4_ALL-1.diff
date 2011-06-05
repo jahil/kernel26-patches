@@ -1,0 +1,2966 @@
+Changes since 2.6.21-rc4-CITI_NFS4_ALL-1
+	- Patch from Akinobu Mita to fix problem with repeated
+	  load/unload of gss modules.
+	- server-side support for pseudoflavor requirements that vary by
+	  ip address
+	- server-side secinfo support
+	- build rpcsec_gss whenever nfsd4 is built
+	- miscellaneous server-cluster-locking-api cleanup and fixes
+	- fix nfsv4 filehandle size units confusion
+	- use same grace period for lockd and nfsd4 (needs some more
+	  work)
+
+---
+
+ Makefile                              |    2 
+ fs/Kconfig                            |    1 
+ fs/fuse/file.c                        |    3 
+ fs/gfs2/locking/dlm/plock.c           |  109 ++++++++++++-
+ fs/gfs2/locking/nolock/main.c         |    8 
+ fs/gfs2/ops_file.c                    |   12 -
+ fs/lockd/svc.c                        |   28 ++-
+ fs/lockd/svc4proc.c                   |    6 
+ fs/lockd/svclock.c                    |  275 ++++++++++++++++++++++++++++------
+ fs/lockd/svcproc.c                    |    7 
+ fs/lockd/svcsubs.c                    |    2 
+ fs/locks.c                            |  266 +++++++++++++++++++-------------
+ fs/nfs/file.c                         |    7 
+ fs/nfs/nfs4proc.c                     |    4 
+ fs/nfsd/export.c                      |  185 ++++++++++++++++++++++
+ fs/nfsd/nfs4acl.c                     |   17 --
+ fs/nfsd/nfs4idmap.c                   |   13 +
+ fs/nfsd/nfs4proc.c                    |   62 +++++++
+ fs/nfsd/nfs4state.c                   |   40 +++-
+ fs/nfsd/nfs4xdr.c                     |   99 ++++++++++++
+ fs/nfsd/nfsfh.c                       |   30 ++-
+ fs/nfsd/nfsproc.c                     |    3 
+ fs/nfsd/nfssvc.c                      |   10 +
+ fs/nfsd/vfs.c                         |   80 ++++++---
+ include/linux/fcntl.h                 |    4 
+ include/linux/fs.h                    |    9 -
+ include/linux/lockd/bind.h            |    8 
+ include/linux/lockd/lockd.h           |   14 +
+ include/linux/nfs4_acl.h              |    1 
+ include/linux/nfsd/export.h           |   38 ++++
+ include/linux/nfsd/nfsd.h             |    6 
+ include/linux/nfsd/nfsfh.h            |    1 
+ include/linux/nfsd/state.h            |    2 
+ include/linux/nfsd/xdr4.h             |    7 
+ include/linux/sunrpc/gss_api.h        |    1 
+ include/linux/sunrpc/svc.h            |    2 
+ include/linux/sunrpc/svcauth.h        |    1 
+ include/linux/sunrpc/svcauth_gss.h    |    2 
+ net/sunrpc/auth_gss/gss_krb5_mech.c   |    1 
+ net/sunrpc/auth_gss/gss_mech_switch.c |   15 +
+ net/sunrpc/auth_gss/gss_spkm3_mech.c  |    1 
+ net/sunrpc/auth_gss/gss_spkm3_seal.c  |   13 -
+ net/sunrpc/auth_gss/svcauth_gss.c     |   47 ++++-
+ net/sunrpc/svcauth_unix.c             |    7 
+ 44 files changed, 1136 insertions(+), 313 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index d970cb1..883ab92 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,7 @@
+ VERSION = 2
+ PATCHLEVEL = 6
+ SUBLEVEL = 21
+-EXTRAVERSION =
++EXTRAVERSION =-CITI_NFS4_ALL-1
+ NAME = Nocturnal Monster Puppy
+ 
+ # *DOCUMENTATION*
+diff --git a/fs/Kconfig b/fs/Kconfig
+index 3c4886b..fc6be68 100644
+--- a/fs/Kconfig
++++ b/fs/Kconfig
+@@ -1679,6 +1679,7 @@ config NFSD_V3_ACL
+ config NFSD_V4
+ 	bool "Provide NFSv4 server support (EXPERIMENTAL)"
+ 	depends on NFSD_V3 && EXPERIMENTAL
++	select RPCSEC_GSS_KRB5
+ 	help
+ 	  If you would like to include the NFSv4 server as well as the NFSv2
+ 	  and NFSv3 servers, say Y here.  This feature is experimental, and
+diff --git a/fs/fuse/file.c b/fs/fuse/file.c
+index 2fd0692..acfad65 100644
+--- a/fs/fuse/file.c
++++ b/fs/fuse/file.c
+@@ -738,8 +738,7 @@ static int fuse_file_lock(struct file *file, int cmd, struct file_lock *fl)
+ 
+ 	if (cmd == F_GETLK) {
+ 		if (fc->no_lock) {
+-			if (!posix_test_lock(file, fl, fl))
+-				fl->fl_type = F_UNLCK;
++			posix_test_lock(file, fl);
+ 			err = 0;
+ 		} else
+ 			err = fuse_getlk(file, fl);
+diff --git a/fs/gfs2/locking/dlm/plock.c b/fs/gfs2/locking/dlm/plock.c
+index 1dd4215..f82495e 100644
+--- a/fs/gfs2/locking/dlm/plock.c
++++ b/fs/gfs2/locking/dlm/plock.c
+@@ -25,6 +25,15 @@ struct plock_op {
+ 	struct gdlm_plock_info info;
+ };
+ 
++struct plock_xop {
++	struct plock_op xop;
++	void *callback;
++	void *fl;
++	void *file;
++	struct file_lock flc;
++};
++
++
+ static inline void set_version(struct gdlm_plock_info *info)
+ {
+ 	info->version[0] = GDLM_PLOCK_VERSION_MAJOR;
+@@ -64,12 +73,14 @@ int gdlm_plock(void *lockspace, struct lm_lockname *name,
+ {
+ 	struct gdlm_ls *ls = lockspace;
+ 	struct plock_op *op;
++	struct plock_xop *xop;
+ 	int rv;
+ 
+-	op = kzalloc(sizeof(*op), GFP_KERNEL);
+-	if (!op)
++	xop = kzalloc(sizeof(*xop), GFP_KERNEL);
++	if (!xop)
+ 		return -ENOMEM;
+ 
++	op = &xop->xop;
+ 	op->info.optype		= GDLM_PLOCK_OP_LOCK;
+ 	op->info.pid		= fl->fl_pid;
+ 	op->info.ex		= (fl->fl_type == F_WRLCK);
+@@ -79,9 +90,21 @@ int gdlm_plock(void *lockspace, struct lm_lockname *name,
+ 	op->info.start		= fl->fl_start;
+ 	op->info.end		= fl->fl_end;
+ 	op->info.owner		= (__u64)(long) fl->fl_owner;
++	if (fl->fl_lmops && fl->fl_lmops->fl_grant) {
++		xop->callback	= fl->fl_lmops->fl_grant;
++		locks_init_lock(&xop->flc);
++		locks_copy_lock(&xop->flc, fl);
++		xop->fl		= fl;
++		xop->file	= file;
++	} else
++		xop->callback	= NULL;
+ 
+ 	send_op(op);
+-	wait_event(recv_wq, (op->done != 0));
++
++	if (xop->callback == NULL)
++		wait_event(recv_wq, (op->done != 0));
++	else
++		return -EINPROGRESS;
+ 
+ 	spin_lock(&ops_lock);
+ 	if (!list_empty(&op->list)) {
+@@ -99,7 +122,63 @@ int gdlm_plock(void *lockspace, struct lm_lockname *name,
+ 				  (unsigned long long)name->ln_number);
+ 	}
+ 
+-	kfree(op);
++	kfree(xop);
++	return rv;
++}
++
++/* Returns failure iff a succesful lock operation should be canceled */
++static int gdlm_plock_callback(struct plock_op *op)
++{
++	struct file *file;
++	struct file_lock *fl;
++	struct file_lock *flc;
++	int (*notify)(void *, void *, int) = NULL;
++	struct plock_xop *xop = (struct plock_xop *)op;
++	int rv = 0;
++
++	spin_lock(&ops_lock);
++	if (!list_empty(&op->list)) {
++		printk(KERN_INFO "plock op on list\n");
++		list_del(&op->list);
++	}
++	spin_unlock(&ops_lock);
++
++	/* check if the following 2 are still valid or make a copy */
++	file = xop->file;
++	flc = &xop->flc;
++	fl = xop->fl;
++	notify = xop->callback;
++
++	if (op->info.rv) {
++		notify(flc, NULL, op->info.rv);
++		goto out;
++	}
++
++	/* got fs lock; bookkeep locally as well: */
++	flc->fl_flags &= ~FL_SLEEP;
++	if (posix_lock_file(file, flc, NULL)) {
++		/*
++		 * This can only happen in the case of kmalloc() failure.
++		 * The filesystem's own lock is the authoritative lock,
++		 * so a failure to get the lock locally is not a disaster.
++		 * As long as GFS cannot reliably cancel locks (especially
++		 * in a low-memory situation), we're better off ignoring
++		 * this failure than trying to recover.
++		 */
++		log_error("gdlm_plock: vfs lock error file %p fl %p",
++				file, fl);
++	}
++
++	rv = notify(flc, NULL, 0);
++	if (rv) {
++		/* XXX: We need to cancel the fs lock here: */
++		printk("gfs2 lock granted after lock request failed;"
++						" dangling lock!\n");
++		goto out;
++	}
++
++out:
++	kfree(xop);
+ 	return rv;
+ }
+ 
+@@ -138,6 +217,9 @@ int gdlm_punlock(void *lockspace, struct lm_lockname *name,
+ 
+ 	rv = op->info.rv;
+ 
++	if (rv == -ENOENT)
++		rv = 0;
++
+ 	kfree(op);
+ 	return rv;
+ }
+@@ -161,6 +243,7 @@ int gdlm_plock_get(void *lockspace, struct lm_lockname *name,
+ 	op->info.start		= fl->fl_start;
+ 	op->info.end		= fl->fl_end;
+ 
++
+ 	send_op(op);
+ 	wait_event(recv_wq, (op->done != 0));
+ 
+@@ -173,9 +256,10 @@ int gdlm_plock_get(void *lockspace, struct lm_lockname *name,
+ 
+ 	rv = op->info.rv;
+ 
+-	if (rv == 0)
+-		fl->fl_type = F_UNLCK;
+-	else if (rv > 0) {
++	fl->fl_type = F_UNLCK;
++	if (rv == -ENOENT)
++		rv = 0;
++	else if (rv == 0 && op->info.pid != fl->fl_pid) {
+ 		fl->fl_type = (op->info.ex) ? F_WRLCK : F_RDLCK;
+ 		fl->fl_pid = op->info.pid;
+ 		fl->fl_start = op->info.start;
+@@ -243,9 +327,14 @@ static ssize_t dev_write(struct file *file, const char __user *u, size_t count,
+ 	}
+ 	spin_unlock(&ops_lock);
+ 
+-	if (found)
+-		wake_up(&recv_wq);
+-	else
++	if (found) {
++		struct plock_xop *xop;
++		xop = (struct plock_xop *)op;
++		if (xop->callback)
++			count = gdlm_plock_callback(op);
++		else
++			wake_up(&recv_wq);
++	} else
+ 		printk(KERN_INFO "gdlm dev_write no op %x %llx\n", info.fsid,
+ 			(unsigned long long)info.number);
+ 	return count;
+diff --git a/fs/gfs2/locking/nolock/main.c b/fs/gfs2/locking/nolock/main.c
+index acfbc94..5cc1dfa 100644
+--- a/fs/gfs2/locking/nolock/main.c
++++ b/fs/gfs2/locking/nolock/main.c
+@@ -164,13 +164,7 @@ static void nolock_unhold_lvb(void *lock, char *lvb)
+ static int nolock_plock_get(void *lockspace, struct lm_lockname *name,
+ 			    struct file *file, struct file_lock *fl)
+ {
+-	struct file_lock tmp;
+-	int ret;
+-
+-	ret = posix_test_lock(file, fl, &tmp);
+-	fl->fl_type = F_UNLCK;
+-	if (ret)
+-		memcpy(fl, &tmp, sizeof(struct file_lock));
++	posix_test_lock(file, fl);
+ 
+ 	return 0;
+ }
+diff --git a/fs/gfs2/ops_file.c b/fs/gfs2/ops_file.c
+index b50180e..329c4dc 100644
+--- a/fs/gfs2/ops_file.c
++++ b/fs/gfs2/ops_file.c
+@@ -513,18 +513,18 @@ static int gfs2_lock(struct file *file, int cmd, struct file_lock *fl)
+ 
+ 	if (sdp->sd_args.ar_localflocks) {
+ 		if (IS_GETLK(cmd)) {
+-			struct file_lock tmp;
+-			int ret;
+-			ret = posix_test_lock(file, fl, &tmp);
+-			fl->fl_type = F_UNLCK;
+-			if (ret)
+-				memcpy(fl, &tmp, sizeof(struct file_lock));
++			posix_test_lock(file, fl);
+ 			return 0;
+ 		} else {
+ 			return posix_lock_file_wait(file, fl);
+ 		}
+ 	}
+ 
++	if (cmd == F_CANCELLK) {
++		/* Hack: */
++		cmd = F_SETLK;
++		fl->fl_type = F_UNLCK;
++	}
+ 	if (IS_GETLK(cmd))
+ 		return gfs2_lm_plock_get(sdp, &name, file, fl);
+ 	else if (fl->fl_type == F_UNLCK)
+diff --git a/fs/lockd/svc.c b/fs/lockd/svc.c
+index 126b1bf..d2de19b 100644
+--- a/fs/lockd/svc.c
++++ b/fs/lockd/svc.c
+@@ -75,18 +75,32 @@ static const int		nlm_port_min = 0, nlm_port_max = 65535;
+ 
+ static struct ctl_table_header * nlm_sysctl_table;
+ 
+-static unsigned long set_grace_period(void)
++static time_t get_lockd_grace_period(void)
+ {
+-	unsigned long grace_period;
+-
+ 	/* Note: nlm_timeout should always be nonzero */
+ 	if (nlm_grace_period)
+-		grace_period = ((nlm_grace_period + nlm_timeout - 1)
+-				/ nlm_timeout) * nlm_timeout * HZ;
++		return ((nlm_grace_period + nlm_timeout - 1)
++				/ nlm_timeout) * nlm_timeout;
+ 	else
+-		grace_period = nlm_timeout * 5 * HZ;
++		return nlm_timeout * 5;
++}
++
++time_t get_nfs_grace_period(void)
++{
++	time_t lockdgrace = get_lockd_grace_period();
++	time_t nfsdgrace = get_nfs4_grace_period();
++
++	return max(lockdgrace, nfsdgrace);
++}
++EXPORT_SYMBOL(get_nfs_grace_period);
++
++static unsigned long set_grace_period(void)
++{
++	time_t grace_period;
++
++	grace_period = get_nfs_grace_period();
+ 	nlmsvc_grace_period = 1;
+-	return grace_period + jiffies;
++	return grace_period * HZ + jiffies;
+ }
+ 
+ static inline void clear_grace_period(void)
+diff --git a/fs/lockd/svc4proc.c b/fs/lockd/svc4proc.c
+index 47a66aa..bf27b6c 100644
+--- a/fs/lockd/svc4proc.c
++++ b/fs/lockd/svc4proc.c
+@@ -99,7 +99,9 @@ nlm4svc_proc_test(struct svc_rqst *rqstp, struct nlm_args *argp,
+ 		return resp->status == nlm_drop_reply ? rpc_drop_reply :rpc_success;
+ 
+ 	/* Now check for conflicting locks */
+-	resp->status = nlmsvc_testlock(file, &argp->lock, &resp->lock);
++	resp->status = nlmsvc_testlock(rqstp, file, &argp->lock, &resp->lock, &resp->cookie);
++	if (resp->status == nlm_drop_reply)
++		return rpc_drop_reply;
+ 
+ 	dprintk("lockd: TEST4          status %d\n", ntohl(resp->status));
+ 	nlm_release_host(host);
+@@ -143,6 +145,8 @@ nlm4svc_proc_lock(struct svc_rqst *rqstp, struct nlm_args *argp,
+ 	/* Now try to lock the file */
+ 	resp->status = nlmsvc_lock(rqstp, file, &argp->lock,
+ 					argp->block, &argp->cookie);
++	if (resp->status == nlm_drop_reply)
++		return rpc_drop_reply;
+ 
+ 	dprintk("lockd: LOCK          status %d\n", ntohl(resp->status));
+ 	nlm_release_host(host);
+diff --git a/fs/lockd/svclock.c b/fs/lockd/svclock.c
+index cf51f84..b3efa45 100644
+--- a/fs/lockd/svclock.c
++++ b/fs/lockd/svclock.c
+@@ -173,7 +173,7 @@ found:
+  */
+ static inline struct nlm_block *
+ nlmsvc_create_block(struct svc_rqst *rqstp, struct nlm_file *file,
+-				struct nlm_lock *lock, struct nlm_cookie *cookie)
++		struct nlm_lock *lock, struct nlm_cookie *cookie)
+ {
+ 	struct nlm_block	*block;
+ 	struct nlm_host		*host;
+@@ -210,6 +210,7 @@ nlmsvc_create_block(struct svc_rqst *rqstp, struct nlm_file *file,
+ 	block->b_daemon = rqstp->rq_server;
+ 	block->b_host   = host;
+ 	block->b_file   = file;
++	block->b_fl = NULL;
+ 	file->f_count++;
+ 
+ 	/* Add to file's list of blocks */
+@@ -261,6 +262,7 @@ static void nlmsvc_free_block(struct kref *kref)
+ 	nlmsvc_freegrantargs(block->b_call);
+ 	nlm_release_call(block->b_call);
+ 	nlm_release_file(block->b_file);
++	kfree(block->b_fl);
+ 	kfree(block);
+ }
+ 
+@@ -331,6 +333,31 @@ static void nlmsvc_freegrantargs(struct nlm_rqst *call)
+ }
+ 
+ /*
++ * Deferred lock request handling for non-blocking lock
++ */
++static u32
++nlmsvc_defer_lock_rqst(struct svc_rqst *rqstp, struct nlm_block *block)
++{
++	u32 status = nlm_lck_denied_nolocks;
++
++	block->b_flags |= B_QUEUED;
++
++	nlmsvc_insert_block(block, NLM_TIMEOUT);
++
++	block->b_cache_req = &rqstp->rq_chandle;
++	if (rqstp->rq_chandle.defer) {
++		block->b_deferred_req =
++			rqstp->rq_chandle.defer(block->b_cache_req);
++		if (block->b_deferred_req != NULL)
++			status = nlm_drop_reply;
++	}
++	dprintk("lockd: nlmsvc_defer_lock_rqst block %p flags %d status %d\n",
++		block, block->b_flags, status);
++
++	return status;
++}
++
++/*
+  * Attempt to establish a lock, and if it can't be granted, block it
+  * if required.
+  */
+@@ -338,7 +365,7 @@ __be32
+ nlmsvc_lock(struct svc_rqst *rqstp, struct nlm_file *file,
+ 			struct nlm_lock *lock, int wait, struct nlm_cookie *cookie)
+ {
+-	struct nlm_block	*block, *newblock = NULL;
++	struct nlm_block	*block = NULL;
+ 	int			error;
+ 	__be32			ret;
+ 
+@@ -351,29 +378,58 @@ nlmsvc_lock(struct svc_rqst *rqstp, struct nlm_file *file,
+ 				wait);
+ 
+ 
+-	lock->fl.fl_flags &= ~FL_SLEEP;
+-again:
+ 	/* Lock file against concurrent access */
+ 	mutex_lock(&file->f_mutex);
+-	/* Get existing block (in case client is busy-waiting) */
++	/* Get existing block (in case client is busy-waiting)
++	 * or create new block
++	 */
+ 	block = nlmsvc_lookup_block(file, lock);
+ 	if (block == NULL) {
+-		if (newblock != NULL)
+-			lock = &newblock->b_call->a_args.lock;
+-	} else
++		block = nlmsvc_create_block(rqstp, file, lock, cookie);
++		ret = nlm_lck_denied_nolocks;
++		if (block == NULL)
++			goto out;
+ 		lock = &block->b_call->a_args.lock;
++	} else
++		lock->fl.fl_flags &= ~FL_SLEEP;
+ 
+-	error = posix_lock_file(file->f_file, &lock->fl);
+-	lock->fl.fl_flags &= ~FL_SLEEP;
++	if (block->b_flags & B_QUEUED) {
++		dprintk("lockd: nlmsvc_lock deferred block %p flags %d\n",
++							block, block->b_flags);
++		if (block->b_granted) {
++			nlmsvc_unlink_block(block);
++			ret = nlm_granted;
++			goto out;
++		}
++		if (block->b_flags & B_TIMED_OUT) {
++			nlmsvc_unlink_block(block);
++			ret = nlm_lck_denied;
++			goto out;
++		}
++		ret = nlm_drop_reply;
++		goto out;
++	}
+ 
+-	dprintk("lockd: posix_lock_file returned %d\n", error);
++	if (!wait)
++		lock->fl.fl_flags &= ~FL_SLEEP;
++	error = vfs_lock_file(file->f_file, F_SETLK, &lock->fl, NULL);
++	lock->fl.fl_flags &= ~FL_SLEEP;
+ 
++	dprintk("lockd: vfs_lock_file returned %d\n", error);
+ 	switch(error) {
+ 		case 0:
+ 			ret = nlm_granted;
+ 			goto out;
+ 		case -EAGAIN:
++			ret = nlm_lck_denied;
+ 			break;
++		case -EINPROGRESS:
++			if (wait)
++				break;
++			/* Filesystem lock operation is in progress
++			   Add it to the queue waiting for callback */
++			ret = nlmsvc_defer_lock_rqst(rqstp, block);
++			goto out;
+ 		case -EDEADLK:
+ 			ret = nlm_deadlock;
+ 			goto out;
+@@ -387,26 +443,11 @@ again:
+ 		goto out;
+ 
+ 	ret = nlm_lck_blocked;
+-	if (block != NULL)
+-		goto out;
+-
+-	/* If we don't have a block, create and initialize it. Then
+-	 * retry because we may have slept in kmalloc. */
+-	/* We have to release f_mutex as nlmsvc_create_block may try to
+-	 * to claim it while doing host garbage collection */
+-	if (newblock == NULL) {
+-		mutex_unlock(&file->f_mutex);
+-		dprintk("lockd: blocking on this lock (allocating).\n");
+-		if (!(newblock = nlmsvc_create_block(rqstp, file, lock, cookie)))
+-			return nlm_lck_denied_nolocks;
+-		goto again;
+-	}
+ 
+ 	/* Append to list of blocked */
+-	nlmsvc_insert_block(newblock, NLM_NEVER);
++	nlmsvc_insert_block(block, NLM_NEVER);
+ out:
+ 	mutex_unlock(&file->f_mutex);
+-	nlmsvc_release_block(newblock);
+ 	nlmsvc_release_block(block);
+ 	dprintk("lockd: nlmsvc_lock returned %u\n", ret);
+ 	return ret;
+@@ -416,9 +457,14 @@ out:
+  * Test for presence of a conflicting lock.
+  */
+ __be32
+-nlmsvc_testlock(struct nlm_file *file, struct nlm_lock *lock,
+-				       struct nlm_lock *conflock)
++nlmsvc_testlock(struct svc_rqst *rqstp, struct nlm_file *file,
++		struct nlm_lock *lock, struct nlm_lock *conflock,
++		struct nlm_cookie *cookie)
+ {
++	struct nlm_block 	*block = NULL;
++	int			error;
++	__be32			ret;
++
+ 	dprintk("lockd: nlmsvc_testlock(%s/%ld, ty=%d, %Ld-%Ld)\n",
+ 				file->f_file->f_path.dentry->d_inode->i_sb->s_id,
+ 				file->f_file->f_path.dentry->d_inode->i_ino,
+@@ -426,19 +472,70 @@ nlmsvc_testlock(struct nlm_file *file, struct nlm_lock *lock,
+ 				(long long)lock->fl.fl_start,
+ 				(long long)lock->fl.fl_end);
+ 
+-	if (posix_test_lock(file->f_file, &lock->fl, &conflock->fl)) {
+-		dprintk("lockd: conflicting lock(ty=%d, %Ld-%Ld)\n",
+-				conflock->fl.fl_type,
+-				(long long)conflock->fl.fl_start,
+-				(long long)conflock->fl.fl_end);
+-		conflock->caller = "somehost";	/* FIXME */
+-		conflock->len = strlen(conflock->caller);
+-		conflock->oh.len = 0;		/* don't return OH info */
+-		conflock->svid = conflock->fl.fl_pid;
+-		return nlm_lck_denied;
++	/* Get existing block (in case client is busy-waiting) */
++	block = nlmsvc_lookup_block(file, lock);
++
++	if (block == NULL) {
++		struct file_lock *conf = kzalloc(sizeof(*conf), GFP_KERNEL);
++
++		if (conf == NULL)
++			return nlm_granted;
++		block = nlmsvc_create_block(rqstp, file, lock, cookie);
++		if (block == NULL) {
++			kfree(conf);
++			return nlm_granted;
++		}
++		block->b_fl = conf;
++	}
++	if (block->b_flags & B_QUEUED) {
++		dprintk("lockd: nlmsvc_testlock deferred block %p flags %d fl %p\n",
++			block, block->b_flags, block->b_fl);
++		if (block->b_flags & B_TIMED_OUT) {
++			nlmsvc_unlink_block(block);
++			return nlm_lck_denied;
++		}
++		if (block->b_flags & B_GOT_CALLBACK) {
++			if (block->b_fl != NULL
++					&& block->b_fl->fl_type != F_UNLCK) {
++				lock->fl = *block->b_fl;
++				goto conf_lock;
++			}
++			else {
++				nlmsvc_unlink_block(block);
++				return nlm_granted;
++			}
++		}
++		return nlm_drop_reply;
+ 	}
+ 
+-	return nlm_granted;
++	error = vfs_test_lock(file->f_file, &lock->fl);
++	if (error == -EINPROGRESS)
++		return nlmsvc_defer_lock_rqst(rqstp, block);
++	if (error) {
++		ret = nlm_lck_denied_nolocks;
++		goto out;
++	}
++	if (lock->fl.fl_type == F_UNLCK) {
++		ret = nlm_granted;
++		goto out;
++	}
++
++conf_lock:
++	dprintk("lockd: conflicting lock(ty=%d, %Ld-%Ld)\n",
++		lock->fl.fl_type, (long long)lock->fl.fl_start,
++		(long long)lock->fl.fl_end);
++	conflock->caller = "somehost";	/* FIXME */
++	conflock->len = strlen(conflock->caller);
++	conflock->oh.len = 0;		/* don't return OH info */
++	conflock->svid = lock->fl.fl_pid;
++	conflock->fl.fl_type = lock->fl.fl_type;
++	conflock->fl.fl_start = lock->fl.fl_start;
++	conflock->fl.fl_end = lock->fl.fl_end;
++	ret = nlm_lck_denied;
++out:
++	if (block)
++		nlmsvc_release_block(block);
++	return ret;
+ }
+ 
+ /*
+@@ -464,7 +561,7 @@ nlmsvc_unlock(struct nlm_file *file, struct nlm_lock *lock)
+ 	nlmsvc_cancel_blocked(file, lock);
+ 
+ 	lock->fl.fl_type = F_UNLCK;
+-	error = posix_lock_file(file->f_file, &lock->fl);
++	error = vfs_lock_file(file->f_file, F_SETLK, &lock->fl, NULL);
+ 
+ 	return (error < 0)? nlm_lck_denied_nolocks : nlm_granted;
+ }
+@@ -493,6 +590,8 @@ nlmsvc_cancel_blocked(struct nlm_file *file, struct nlm_lock *lock)
+ 	block = nlmsvc_lookup_block(file, lock);
+ 	mutex_unlock(&file->f_mutex);
+ 	if (block != NULL) {
++		vfs_cancel_lock(block->b_file->f_file,
++				&block->b_call->a_args.lock.fl);
+ 		status = nlmsvc_unlink_block(block);
+ 		nlmsvc_release_block(block);
+ 	}
+@@ -500,6 +599,63 @@ nlmsvc_cancel_blocked(struct nlm_file *file, struct nlm_lock *lock)
+ }
+ 
+ /*
++ * This is a callback from the filesystem for VFS file lock requests.
++ * It will be used if fl_grant is defined and the filesystem can not
++ * respond to the request immediately.
++ * For GETLK request it will copy the reply to the nlm_block.
++ * For SETLK or SETLKW request it will get the local posix lock.
++ * In all cases it will move the block to the head of nlm_blocked q where
++ * nlmsvc_retry_blocked() can send back a reply for SETLKW or revisit the
++ * deferred rpc for GETLK and SETLK.
++ */
++static void
++nlmsvc_update_deferred_block(struct nlm_block *block, struct file_lock *conf,
++			     int result)
++{
++	block->b_flags |= B_GOT_CALLBACK;
++	if (result == 0)
++		block->b_granted = 1;
++	else
++		block->b_flags |= B_TIMED_OUT;
++	if (conf) {
++		if (block->b_fl)
++			locks_copy_lock(block->b_fl, conf);
++	}
++}
++
++static int nlmsvc_grant_deferred(struct file_lock *fl, struct file_lock *conf,
++					int result)
++{
++	struct nlm_block *block;
++	int rc = -ENOENT;
++
++	lock_kernel();
++	list_for_each_entry(block, &nlm_blocked, b_list) {
++		if (nlm_compare_locks(&block->b_call->a_args.lock.fl, fl)) {
++			dprintk("lockd: nlmsvc_notify_blocked block %p flags %d\n",
++							block, block->b_flags);
++			if (block->b_flags & B_QUEUED) {
++				if (block->b_flags & B_TIMED_OUT) {
++					rc = -ENOLCK;
++					break;
++				}
++				nlmsvc_update_deferred_block(block, conf, result);
++			} else if (result == 0)
++				block->b_granted = 1;
++
++			nlmsvc_insert_block(block, 0);
++			svc_wake_up(block->b_daemon);
++			rc = 0;
++			break;
++		}
++	}
++	unlock_kernel();
++	if (rc == -ENOENT)
++		printk(KERN_WARNING "lockd: grant for unknown block\n");
++	return rc;
++}
++
++/*
+  * Unblock a blocked lock request. This is a callback invoked from the
+  * VFS layer when a lock on which we blocked is removed.
+  *
+@@ -531,6 +687,7 @@ static int nlmsvc_same_owner(struct file_lock *fl1, struct file_lock *fl2)
+ struct lock_manager_operations nlmsvc_lock_operations = {
+ 	.fl_compare_owner = nlmsvc_same_owner,
+ 	.fl_notify = nlmsvc_notify_blocked,
++	.fl_grant = nlmsvc_grant_deferred,
+ };
+ 
+ /*
+@@ -553,6 +710,8 @@ nlmsvc_grant_blocked(struct nlm_block *block)
+ 
+ 	dprintk("lockd: grant blocked lock %p\n", block);
+ 
++	kref_get(&block->b_count);
++
+ 	/* Unlink block request from list */
+ 	nlmsvc_unlink_block(block);
+ 
+@@ -566,20 +725,23 @@ nlmsvc_grant_blocked(struct nlm_block *block)
+ 
+ 	/* Try the lock operation again */
+ 	lock->fl.fl_flags |= FL_SLEEP;
+-	error = posix_lock_file(file->f_file, &lock->fl);
++	error = vfs_lock_file(file->f_file, F_SETLK, &lock->fl, NULL);
+ 	lock->fl.fl_flags &= ~FL_SLEEP;
+ 
+ 	switch (error) {
+ 	case 0:
+ 		break;
+ 	case -EAGAIN:
+-		dprintk("lockd: lock still blocked\n");
++	case -EINPROGRESS:
++		dprintk("lockd: lock still blocked error %d\n", error);
+ 		nlmsvc_insert_block(block, NLM_NEVER);
++		nlmsvc_release_block(block);
+ 		return;
+ 	default:
+ 		printk(KERN_WARNING "lockd: unexpected error %d in %s!\n",
+ 				-error, __FUNCTION__);
+ 		nlmsvc_insert_block(block, 10 * HZ);
++		nlmsvc_release_block(block);
+ 		return;
+ 	}
+ 
+@@ -592,7 +754,6 @@ callback:
+ 	nlmsvc_insert_block(block, 30 * HZ);
+ 
+ 	/* Call the client */
+-	kref_get(&block->b_count);
+ 	nlm_async_call(block->b_call, NLMPROC_GRANTED_MSG, &nlmsvc_grant_ops);
+ }
+ 
+@@ -665,6 +826,23 @@ nlmsvc_grant_reply(struct nlm_cookie *cookie, __be32 status)
+ 	nlmsvc_release_block(block);
+ }
+ 
++/* Helper function to handle retry of a deferred block.
++ * If it is a blocking lock, call grant_blocked.
++ * For a non-blocking lock or test lock, revisit the request.
++ */
++static void
++retry_deferred_block(struct nlm_block *block)
++{
++	if (!(block->b_flags & B_GOT_CALLBACK))
++		block->b_flags |= B_TIMED_OUT;
++	nlmsvc_insert_block(block, NLM_TIMEOUT);
++	dprintk("revisit block %p flags %d\n",	block, block->b_flags);
++	if (block->b_deferred_req) {
++		block->b_deferred_req->revisit(block->b_deferred_req, 0);
++		block->b_deferred_req = NULL;
++	}
++}
++
+ /*
+  * Retry all blocked locks that have been notified. This is where lockd
+  * picks up locks that can be granted, or grant notifications that must
+@@ -688,9 +866,12 @@ nlmsvc_retry_blocked(void)
+ 
+ 		dprintk("nlmsvc_retry_blocked(%p, when=%ld)\n",
+ 			block, block->b_when);
+-		kref_get(&block->b_count);
+-		nlmsvc_grant_blocked(block);
+-		nlmsvc_release_block(block);
++		if (block->b_flags & B_QUEUED) {
++			dprintk("nlmsvc_retry_blocked delete block (%p, granted=%d, flags=%d)\n",
++				block, block->b_granted, block->b_flags);
++			retry_deferred_block(block);
++		} else
++			nlmsvc_grant_blocked(block);
+ 	}
+ 
+ 	return timeout;
+diff --git a/fs/lockd/svcproc.c b/fs/lockd/svcproc.c
+index 31cb484..9cd5c8b 100644
+--- a/fs/lockd/svcproc.c
++++ b/fs/lockd/svcproc.c
+@@ -33,6 +33,7 @@ cast_to_nlm(__be32 status, u32 vers)
+ 		case nlm_lck_denied_nolocks:
+ 		case nlm_lck_blocked:
+ 		case nlm_lck_denied_grace_period:
++		case nlm_drop_reply:
+ 			break;
+ 		case nlm4_deadlock:
+ 			status = nlm_lck_denied;
+@@ -127,7 +128,9 @@ nlmsvc_proc_test(struct svc_rqst *rqstp, struct nlm_args *argp,
+ 		return resp->status == nlm_drop_reply ? rpc_drop_reply :rpc_success;
+ 
+ 	/* Now check for conflicting locks */
+-	resp->status = cast_status(nlmsvc_testlock(file, &argp->lock, &resp->lock));
++	resp->status = cast_status(nlmsvc_testlock(rqstp, file, &argp->lock, &resp->lock, &resp->cookie));
++	if (resp->status == nlm_drop_reply)
++		return rpc_drop_reply;
+ 
+ 	dprintk("lockd: TEST          status %d vers %d\n",
+ 		ntohl(resp->status), rqstp->rq_vers);
+@@ -172,6 +175,8 @@ nlmsvc_proc_lock(struct svc_rqst *rqstp, struct nlm_args *argp,
+ 	/* Now try to lock the file */
+ 	resp->status = cast_status(nlmsvc_lock(rqstp, file, &argp->lock,
+ 					       argp->block, &argp->cookie));
++	if (resp->status == nlm_drop_reply)
++		return rpc_drop_reply;
+ 
+ 	dprintk("lockd: LOCK          status %d\n", ntohl(resp->status));
+ 	nlm_release_host(host);
+diff --git a/fs/lockd/svcsubs.c b/fs/lockd/svcsubs.c
+index c0df00c..84ebba3 100644
+--- a/fs/lockd/svcsubs.c
++++ b/fs/lockd/svcsubs.c
+@@ -182,7 +182,7 @@ again:
+ 			lock.fl_type  = F_UNLCK;
+ 			lock.fl_start = 0;
+ 			lock.fl_end   = OFFSET_MAX;
+-			if (posix_lock_file(file->f_file, &lock) < 0) {
++			if (vfs_lock_file(file->f_file, F_SETLK, &lock, NULL) < 0) {
+ 				printk("lockd: unlock failure in %s:%d\n",
+ 						__FILE__, __LINE__);
+ 				return 1;
+diff --git a/fs/locks.c b/fs/locks.c
+index 52a8100..503b719 100644
+--- a/fs/locks.c
++++ b/fs/locks.c
+@@ -666,11 +666,11 @@ static int locks_block_on_timeout(struct file_lock *blocker, struct file_lock *w
+ }
+ 
+ int
+-posix_test_lock(struct file *filp, struct file_lock *fl,
+-		struct file_lock *conflock)
++posix_test_lock(struct file *filp, struct file_lock *fl)
+ {
+ 	struct file_lock *cfl;
+ 
++	fl->fl_type = F_UNLCK;
+ 	lock_kernel();
+ 	for (cfl = filp->f_path.dentry->d_inode->i_flock; cfl; cfl = cfl->fl_next) {
+ 		if (!IS_POSIX(cfl))
+@@ -679,7 +679,7 @@ posix_test_lock(struct file *filp, struct file_lock *fl,
+ 			break;
+ 	}
+ 	if (cfl) {
+-		__locks_copy_lock(conflock, cfl);
++		__locks_copy_lock(fl, cfl);
+ 		unlock_kernel();
+ 		return 1;
+ 	}
+@@ -801,7 +801,7 @@ out:
+ 	return error;
+ }
+ 
+-static int __posix_lock_file_conf(struct inode *inode, struct file_lock *request, struct file_lock *conflock)
++static int __posix_lock_file(struct inode *inode, struct file_lock *request, struct file_lock *conflock)
+ {
+ 	struct file_lock *fl;
+ 	struct file_lock *new_fl = NULL;
+@@ -827,7 +827,7 @@ static int __posix_lock_file_conf(struct inode *inode, struct file_lock *request
+ 	lock_kernel();
+ 	if (request->fl_type != F_UNLCK) {
+ 		for_each_lock(inode, before) {
+-			struct file_lock *fl = *before;
++			fl = *before;
+ 			if (!IS_POSIX(fl))
+ 				continue;
+ 			if (!posix_locks_conflict(request, fl))
+@@ -1007,6 +1007,7 @@ static int __posix_lock_file_conf(struct inode *inode, struct file_lock *request
+  * posix_lock_file - Apply a POSIX-style lock to a file
+  * @filp: The file to apply the lock to
+  * @fl: The lock to be applied
++ * @conflock: Place to return a copy of the conflicting lock, if found.
+  *
+  * Add a POSIX style lock to a file.
+  * We merge adjacent & overlapping locks whenever possible.
+@@ -1016,26 +1017,12 @@ static int __posix_lock_file_conf(struct inode *inode, struct file_lock *request
+  * whether or not a lock was successfully freed by testing the return
+  * value for -ENOENT.
+  */
+-int posix_lock_file(struct file *filp, struct file_lock *fl)
+-{
+-	return __posix_lock_file_conf(filp->f_path.dentry->d_inode, fl, NULL);
+-}
+-EXPORT_SYMBOL(posix_lock_file);
+-
+-/**
+- * posix_lock_file_conf - Apply a POSIX-style lock to a file
+- * @filp: The file to apply the lock to
+- * @fl: The lock to be applied
+- * @conflock: Place to return a copy of the conflicting lock, if found.
+- *
+- * Except for the conflock parameter, acts just like posix_lock_file.
+- */
+-int posix_lock_file_conf(struct file *filp, struct file_lock *fl,
++int posix_lock_file(struct file *filp, struct file_lock *fl,
+ 			struct file_lock *conflock)
+ {
+-	return __posix_lock_file_conf(filp->f_path.dentry->d_inode, fl, conflock);
++	return __posix_lock_file(filp->f_path.dentry->d_inode, fl, conflock);
+ }
+-EXPORT_SYMBOL(posix_lock_file_conf);
++EXPORT_SYMBOL(posix_lock_file);
+ 
+ /**
+  * posix_lock_file_wait - Apply a POSIX-style lock to a file
+@@ -1051,7 +1038,7 @@ int posix_lock_file_wait(struct file *filp, struct file_lock *fl)
+ 	int error;
+ 	might_sleep ();
+ 	for (;;) {
+-		error = posix_lock_file(filp, fl);
++		error = posix_lock_file(filp, fl, NULL);
+ 		if ((error != -EAGAIN) || !(fl->fl_flags & FL_SLEEP))
+ 			break;
+ 		error = wait_event_interruptible(fl->fl_wait, !fl->fl_next);
+@@ -1123,7 +1110,7 @@ int locks_mandatory_area(int read_write, struct inode *inode,
+ 	fl.fl_end = offset + count - 1;
+ 
+ 	for (;;) {
+-		error = __posix_lock_file_conf(inode, &fl, NULL);
++		error = __posix_lock_file(inode, &fl, NULL);
+ 		if (error != -EAGAIN)
+ 			break;
+ 		if (!(fl.fl_flags & FL_SLEEP))
+@@ -1611,12 +1598,62 @@ asmlinkage long sys_flock(unsigned int fd, unsigned int cmd)
+ 	return error;
+ }
+ 
++/**
++ * vfs_test_lock - test file byte range lock
++ * @filp: The file to test lock for
++ * @fl: The lock to test
++ * @conf: Place to return a copy of the conflicting lock, if found
++ *
++ * Returns -ERRNO on failure.  Indicates presence of conflicting lock by
++ * setting conf->fl_type to something other than F_UNLCK.
++ */
++int vfs_test_lock(struct file *filp, struct file_lock *fl)
++{
++	if (filp->f_op && filp->f_op->lock)
++		return filp->f_op->lock(filp, F_GETLK, fl);
++	posix_test_lock(filp, fl);
++	return 0;
++}
++EXPORT_SYMBOL_GPL(vfs_test_lock);
++
++static int posix_lock_to_flock(struct flock *flock, struct file_lock *fl)
++{
++	flock->l_pid = fl->fl_pid;
++#if BITS_PER_LONG == 32
++	/*
++	 * Make sure we can represent the posix lock via
++	 * legacy 32bit flock.
++	 */
++	if (fl->fl_start > OFFT_OFFSET_MAX)
++		return -EOVERFLOW;
++	if (fl->fl_end != OFFSET_MAX && fl->fl_end > OFFT_OFFSET_MAX)
++		return -EOVERFLOW;
++#endif
++	flock->l_start = fl->fl_start;
++	flock->l_len = fl->fl_end == OFFSET_MAX ? 0 :
++		fl->fl_end - fl->fl_start + 1;
++	flock->l_whence = 0;
++	return 0;
++}
++
++#if BITS_PER_LONG == 32
++static void posix_lock_to_flock64(struct flock64 *flock, struct file_lock *fl)
++{
++	flock->l_pid = fl->fl_pid;
++	flock->l_start = fl->fl_start;
++	flock->l_len = fl->fl_end == OFFSET_MAX ? 0 :
++		fl->fl_end - fl->fl_start + 1;
++	flock->l_whence = 0;
++	flock->l_type = fl->fl_type;
++}
++#endif
++
+ /* Report the first existing lock that would conflict with l.
+  * This implements the F_GETLK command of fcntl().
+  */
+ int fcntl_getlk(struct file *filp, struct flock __user *l)
+ {
+-	struct file_lock *fl, cfl, file_lock;
++	struct file_lock file_lock;
+ 	struct flock flock;
+ 	int error;
+ 
+@@ -1631,38 +1668,15 @@ int fcntl_getlk(struct file *filp, struct flock __user *l)
+ 	if (error)
+ 		goto out;
+ 
+-	if (filp->f_op && filp->f_op->lock) {
+-		error = filp->f_op->lock(filp, F_GETLK, &file_lock);
+-		if (file_lock.fl_ops && file_lock.fl_ops->fl_release_private)
+-			file_lock.fl_ops->fl_release_private(&file_lock);
+-		if (error < 0)
+-			goto out;
+-		else
+-		  fl = (file_lock.fl_type == F_UNLCK ? NULL : &file_lock);
+-	} else {
+-		fl = (posix_test_lock(filp, &file_lock, &cfl) ? &cfl : NULL);
+-	}
++	error = vfs_test_lock(filp, &file_lock);
++	if (error)
++		goto out;
+  
+-	flock.l_type = F_UNLCK;
+-	if (fl != NULL) {
+-		flock.l_pid = fl->fl_pid;
+-#if BITS_PER_LONG == 32
+-		/*
+-		 * Make sure we can represent the posix lock via
+-		 * legacy 32bit flock.
+-		 */
+-		error = -EOVERFLOW;
+-		if (fl->fl_start > OFFT_OFFSET_MAX)
+-			goto out;
+-		if ((fl->fl_end != OFFSET_MAX)
+-		    && (fl->fl_end > OFFT_OFFSET_MAX))
++	flock.l_type = file_lock.fl_type;
++	if (file_lock.fl_type != F_UNLCK) {
++		error = posix_lock_to_flock(&flock, &file_lock);
++		if (error)
+ 			goto out;
+-#endif
+-		flock.l_start = fl->fl_start;
+-		flock.l_len = fl->fl_end == OFFSET_MAX ? 0 :
+-			fl->fl_end - fl->fl_start + 1;
+-		flock.l_whence = 0;
+-		flock.l_type = fl->fl_type;
+ 	}
+ 	error = -EFAULT;
+ 	if (!copy_to_user(l, &flock, sizeof(flock)))
+@@ -1671,6 +1685,48 @@ out:
+ 	return error;
+ }
+ 
++/**
++ * vfs_lock_file - file byte range lock
++ * @filp: The file to apply the lock to
++ * @cmd: type of locking operation (F_SETLK, F_GETLK, etc.)
++ * @fl: The lock to be applied
++ * @conf: Place to return a copy of the conflicting lock, if found.
++ *
++ * A caller that doesn't care about the conflicting lock may pass NULL
++ * as the final argument.
++ *
++ * If the filesystem defines a private ->lock() method, then @conf will
++ * be left unchanged; so a caller that cares should initialize it to
++ * some acceptable default.
++ *
++ * To avoid blocking kernel daemons, such as lockd, that need to acquire POSIX
++ * locks, the ->lock() interface may return asynchronously, before the lock has
++ * been granted or denied by the underlying filesystem, if (and only if)
++ * fl_grant is set. Callers expecting ->lock() to return asynchronously
++ * will only use F_SETLK, not F_SETLKW; they will set FL_SLEEP if (and only if)
++ * the request is for a blocking lock. When ->lock() does return asynchronously,
++ * it must return -EINPROGRESS, and call ->fl_grant() when the lock
++ * request completes.
++ * If the request is for non-blocking lock the file system should return
++ * -EINPROGRESS then try to get the lock and call the callback routine with
++ * the result. If the request timed out the callback routine will return a
++ * nonzero return code and the file system should release the lock. The file
++ * system is also responsible to keep a corresponding posix lock when it
++ * grants a lock so the VFS can find out which locks are locally held and do
++ * the correct lock cleanup when required.
++ * The underlying filesystem must not drop the kernel lock or call
++ * ->fl_grant() before returning to the caller with a -EINPROGRESS
++ * return code.
++ */
++int vfs_lock_file(struct file *filp, unsigned int cmd, struct file_lock *fl, struct file_lock *conf)
++{
++	if (filp->f_op && filp->f_op->lock)
++		return filp->f_op->lock(filp, cmd, fl);
++	else
++		return posix_lock_file(filp, fl, conf);
++}
++EXPORT_SYMBOL_GPL(vfs_lock_file);
++
+ /* Apply the lock described by l to an open file descriptor.
+  * This implements both the F_SETLK and F_SETLKW commands of fcntl().
+  */
+@@ -1733,21 +1789,17 @@ again:
+ 	if (error)
+ 		goto out;
+ 
+-	if (filp->f_op && filp->f_op->lock != NULL)
+-		error = filp->f_op->lock(filp, cmd, file_lock);
+-	else {
+-		for (;;) {
+-			error = posix_lock_file(filp, file_lock);
+-			if ((error != -EAGAIN) || (cmd == F_SETLK))
+-				break;
+-			error = wait_event_interruptible(file_lock->fl_wait,
+-					!file_lock->fl_next);
+-			if (!error)
+-				continue;
+-
+-			locks_delete_block(file_lock);
++	for (;;) {
++		error = vfs_lock_file(filp, cmd, file_lock, NULL);
++		if (error != -EAGAIN || cmd == F_SETLK)
+ 			break;
+-		}
++		error = wait_event_interruptible(file_lock->fl_wait,
++				!file_lock->fl_next);
++		if (!error)
++			continue;
++
++		locks_delete_block(file_lock);
++		break;
+ 	}
+ 
+ 	/*
+@@ -1770,7 +1822,7 @@ out:
+  */
+ int fcntl_getlk64(struct file *filp, struct flock64 __user *l)
+ {
+-	struct file_lock *fl, cfl, file_lock;
++	struct file_lock file_lock;
+ 	struct flock64 flock;
+ 	int error;
+ 
+@@ -1785,27 +1837,14 @@ int fcntl_getlk64(struct file *filp, struct flock64 __user *l)
+ 	if (error)
+ 		goto out;
+ 
+-	if (filp->f_op && filp->f_op->lock) {
+-		error = filp->f_op->lock(filp, F_GETLK, &file_lock);
+-		if (file_lock.fl_ops && file_lock.fl_ops->fl_release_private)
+-			file_lock.fl_ops->fl_release_private(&file_lock);
+-		if (error < 0)
+-			goto out;
+-		else
+-		  fl = (file_lock.fl_type == F_UNLCK ? NULL : &file_lock);
+-	} else {
+-		fl = (posix_test_lock(filp, &file_lock, &cfl) ? &cfl : NULL);
+-	}
+- 
+-	flock.l_type = F_UNLCK;
+-	if (fl != NULL) {
+-		flock.l_pid = fl->fl_pid;
+-		flock.l_start = fl->fl_start;
+-		flock.l_len = fl->fl_end == OFFSET_MAX ? 0 :
+-			fl->fl_end - fl->fl_start + 1;
+-		flock.l_whence = 0;
+-		flock.l_type = fl->fl_type;
+-	}
++	error = vfs_test_lock(filp, &file_lock);
++	if (error)
++		goto out;
++
++	flock.l_type = file_lock.fl_type;
++	if (file_lock.fl_type != F_UNLCK)
++		posix_lock_to_flock64(&flock, &file_lock);
++
+ 	error = -EFAULT;
+ 	if (!copy_to_user(l, &flock, sizeof(flock)))
+ 		error = 0;
+@@ -1876,21 +1915,17 @@ again:
+ 	if (error)
+ 		goto out;
+ 
+-	if (filp->f_op && filp->f_op->lock != NULL)
+-		error = filp->f_op->lock(filp, cmd, file_lock);
+-	else {
+-		for (;;) {
+-			error = posix_lock_file(filp, file_lock);
+-			if ((error != -EAGAIN) || (cmd == F_SETLK64))
+-				break;
+-			error = wait_event_interruptible(file_lock->fl_wait,
+-					!file_lock->fl_next);
+-			if (!error)
+-				continue;
+-
+-			locks_delete_block(file_lock);
++	for (;;) {
++		error = vfs_lock_file(filp, cmd, file_lock, NULL);
++		if (error != -EAGAIN || cmd == F_SETLK64)
+ 			break;
+-		}
++		error = wait_event_interruptible(file_lock->fl_wait,
++				!file_lock->fl_next);
++		if (!error)
++			continue;
++
++		locks_delete_block(file_lock);
++		break;
+ 	}
+ 
+ 	/*
+@@ -1935,10 +1970,7 @@ void locks_remove_posix(struct file *filp, fl_owner_t owner)
+ 	lock.fl_ops = NULL;
+ 	lock.fl_lmops = NULL;
+ 
+-	if (filp->f_op && filp->f_op->lock != NULL)
+-		filp->f_op->lock(filp, F_SETLK, &lock);
+-	else
+-		posix_lock_file(filp, &lock);
++	vfs_lock_file(filp, F_SETLK, &lock, NULL);
+ 
+ 	if (lock.fl_ops && lock.fl_ops->fl_release_private)
+ 		lock.fl_ops->fl_release_private(&lock);
+@@ -2015,6 +2047,22 @@ posix_unblock_lock(struct file *filp, struct file_lock *waiter)
+ 
+ EXPORT_SYMBOL(posix_unblock_lock);
+ 
++/**
++ * vfs_cancel_lock - file byte range unblock lock
++ * @filp: The file to apply the unblock to
++ * @fl: The lock to be unblocked
++ *
++ * Used by lock managers to cancel blocked requests
++ */
++int vfs_cancel_lock(struct file *filp, struct file_lock *fl)
++{
++	if (filp->f_op && filp->f_op->lock)
++		return filp->f_op->lock(filp, F_CANCELLK, fl);
++	return 0;
++}
++
++EXPORT_SYMBOL_GPL(vfs_cancel_lock);
++
+ static void lock_get_status(char* out, struct file_lock *fl, int id, char *pfx)
+ {
+ 	struct inode *inode = NULL;
+diff --git a/fs/nfs/file.c b/fs/nfs/file.c
+index 8e66b5a..5eaee6d 100644
+--- a/fs/nfs/file.c
++++ b/fs/nfs/file.c
+@@ -391,17 +391,12 @@ out_swapfile:
+ 
+ static int do_getlk(struct file *filp, int cmd, struct file_lock *fl)
+ {
+-	struct file_lock cfl;
+ 	struct inode *inode = filp->f_mapping->host;
+ 	int status = 0;
+ 
+ 	lock_kernel();
+ 	/* Try local locking first */
+-	if (posix_test_lock(filp, fl, &cfl)) {
+-		fl->fl_start = cfl.fl_start;
+-		fl->fl_end = cfl.fl_end;
+-		fl->fl_type = cfl.fl_type;
+-		fl->fl_pid = cfl.fl_pid;
++	if (posix_test_lock(filp, fl)) {
+ 		goto out;
+ 	}
+ 
+diff --git a/fs/nfs/nfs4proc.c b/fs/nfs/nfs4proc.c
+index f52cf5c..d6a30e9 100644
+--- a/fs/nfs/nfs4proc.c
++++ b/fs/nfs/nfs4proc.c
+@@ -2647,8 +2647,7 @@ static int __nfs4_proc_set_acl(struct inode *inode, const void *buf, size_t bufl
+ 	nfs_inode_return_delegation(inode);
+ 	buf_to_pages(buf, buflen, arg.acl_pages, &arg.acl_pgbase);
+ 	ret = rpc_call_sync(NFS_CLIENT(inode), &msg, 0);
+-	if (ret == 0)
+-		nfs4_write_cached_acl(inode, buf, buflen);
++	nfs_zap_caches(inode);
+ 	return ret;
+ }
+ 
+@@ -3018,6 +3017,7 @@ static int _nfs4_proc_getlk(struct nfs4_state *state, int cmd, struct file_lock
+ 		case -NFS4ERR_DENIED:
+ 			status = 0;
+ 	}
++	request->fl_ops->fl_release_private(request);
+ out:
+ 	up_read(&clp->cl_sem);
+ 	return status;
+diff --git a/fs/nfsd/export.c b/fs/nfsd/export.c
+index 6f24768..4454ae6 100644
+--- a/fs/nfsd/export.c
++++ b/fs/nfsd/export.c
+@@ -32,6 +32,8 @@
+ #include <linux/nfsd/nfsfh.h>
+ #include <linux/nfsd/syscall.h>
+ #include <linux/lockd/bind.h>
++#include <linux/sunrpc/msg_prot.h>
++#include <linux/sunrpc/gss_api.h>
+ 
+ #define NFSDDBG_FACILITY	NFSDDBG_EXPORT
+ 
+@@ -451,8 +453,43 @@ out_free_all:
+ 	return err;
+ }
+ 
++static int secinfo_parse(char **mesg, char *buf, struct svc_export *exp)
++{
++	int listsize, err;
++	struct exp_flavor_info *f;
++
++	err = get_int(mesg, &listsize);
++	if (err)
++		return err;
++	if (listsize < 0 || listsize > MAX_SECINFO_LIST)
++		return -EINVAL;
++
++	for (f=exp->ex_flavors; f < exp->ex_flavors + listsize; f++) {
++		err = get_int(mesg, &f->pseudoflavor);
++		if (err)
++			return err;
++		/*
++		 * Just a quick sanity check; we could also try to check
++		 * whether this pseudoflavor is supported, but at worst
++		 * an unsupported pseudoflavor on the export would just
++		 * be a pseudoflavor that won't match the flavor of any
++		 * authenticated request.  The administrator will
++		 * probably discover the problem when someone fails to
++		 * authenticate.
++		 */
++		if (f->pseudoflavor < 0)
++			return -EINVAL;
++		err = get_int(mesg, &f->flags);
++		if (err)
++			return err;
++	}
++	exp->ex_nflavors = listsize;
++	return 0;
++}
++
+ #else /* CONFIG_NFSD_V4 */
+ static inline int fsloc_parse(char **mesg, char *buf, struct nfsd4_fs_locations *fsloc) { return 0; }
++static inline int secinfo_parse(char **mesg, char *buf, struct svc_export *exp) { return 0; }
+ #endif
+ 
+ static int svc_export_parse(struct cache_detail *cd, char *mesg, int mlen)
+@@ -516,6 +553,9 @@ static int svc_export_parse(struct cache_detail *cd, char *mesg, int mlen)
+ 
+ 	exp.ex_uuid = NULL;
+ 
++	/* secinfo */
++	exp.ex_nflavors = 0;
++
+ 	/* flags */
+ 	err = get_int(&mesg, &an_int);
+ 	if (err == -ENOENT)
+@@ -553,7 +593,9 @@ static int svc_export_parse(struct cache_detail *cd, char *mesg, int mlen)
+ 					if (exp.ex_uuid == NULL)
+ 						err = -ENOMEM;
+ 				}
+-			} else
++			} if (strcmp(buf, "secinfo") == 0)
++				err = secinfo_parse(&mesg, buf, &exp);
++			else
+ 				/* quietly ignore unknown words and anything
+ 				 * following. Newer user-space can try to set
+ 				 * new values, then see what the result was.
+@@ -654,6 +696,7 @@ static void export_update(struct cache_head *cnew, struct cache_head *citem)
+ {
+ 	struct svc_export *new = container_of(cnew, struct svc_export, h);
+ 	struct svc_export *item = container_of(citem, struct svc_export, h);
++	int i;
+ 
+ 	new->ex_flags = item->ex_flags;
+ 	new->ex_anon_uid = item->ex_anon_uid;
+@@ -669,6 +712,10 @@ static void export_update(struct cache_head *cnew, struct cache_head *citem)
+ 	item->ex_fslocs.locations_count = 0;
+ 	new->ex_fslocs.migrated = item->ex_fslocs.migrated;
+ 	item->ex_fslocs.migrated = 0;
++	new->ex_nflavors = item->ex_nflavors;
++	for (i = 0; i < MAX_SECINFO_LIST; i++){
++		new->ex_flavors[i] = item->ex_flavors[i];
++	}
+ }
+ 
+ static struct cache_head *svc_export_alloc(void)
+@@ -745,9 +792,19 @@ exp_find_key(svc_client *clp, int fsid_type, u32 *fsidv, struct cache_req *reqp)
+ 	memcpy(key.ek_fsid, fsidv, key_len(fsid_type));
+ 
+ 	ek = svc_expkey_lookup(&key);
+-	if (ek != NULL)
+-		if ((err = cache_check(&svc_expkey_cache, &ek->h, reqp)))
++	if (ek != NULL) {
++		err = cache_check(&svc_expkey_cache, &ek->h, reqp);
++		switch (err) {
++		case 0:
++			break;
++		case -EAGAIN:
++		case -ETIMEDOUT:
+ 			ek = ERR_PTR(err);
++			break;
++		default:
++			ek = NULL;
++		}
++	}
+ 	return ek;
+ }
+ 
+@@ -1187,6 +1244,119 @@ exp_find(struct auth_domain *clp, int fsid_type, u32 *fsidv,
+ 	return exp;
+ }
+ 
++__be32 check_nfsd_access(struct svc_export *exp, struct svc_rqst *rqstp)
++{
++	struct exp_flavor_info *f;
++	struct exp_flavor_info *end = exp->ex_flavors + exp->ex_nflavors;
++
++	/* legacy gss-only clients are always OK: */
++	if (exp->ex_client == rqstp->rq_gssclient)
++		return 0;
++	/* ip-address based client; check sec= export option: */
++	for (f = exp->ex_flavors; f < end; f++) {
++		if (f->pseudoflavor == rqstp->rq_flavor)
++			return 0;
++	}
++	/* defaults in absence of sec= options: */
++	if (exp->ex_nflavors == 0) {
++		if (rqstp->rq_flavor == RPC_AUTH_NULL ||
++		    rqstp->rq_flavor == RPC_AUTH_UNIX)
++			return 0;
++	}
++	return nfserr_wrongsec;
++}
++
++/*
++ * Uses rq_client and rq_gssclient to find an export; uses rq_client (an
++ * auth_unix client) if it's available and has secinfo information;
++ * otherwise, will try to use rq_gssclient.
++ *
++ * Called from functions that handle requests; functions that do work on
++ * behalf of mountd are passed a single client name to use, and should
++ * use exp_get_by_name() or exp_find().
++ */
++struct svc_export *
++rqst_exp_get_by_name(struct svc_rqst *rqstp, struct vfsmount *mnt,
++		struct dentry *dentry)
++{
++	struct svc_export *gssexp, *exp = NULL;
++
++	if (rqstp->rq_client == NULL)
++		goto gss;
++
++	/* First try the auth_unix client: */
++	exp = exp_get_by_name(rqstp->rq_client, mnt, dentry,
++						&rqstp->rq_chandle);
++	if (exp == NULL)
++		goto gss;
++	if (IS_ERR(exp))
++		return exp;
++	/* If it has secinfo, assume there are no gss/... clients */
++	if (exp->ex_nflavors > 0)
++		return exp;
++gss:
++	/* Otherwise, try falling back on gss client */
++	if (rqstp->rq_gssclient == NULL)
++		return exp;
++	gssexp = exp_get_by_name(rqstp->rq_gssclient, mnt, dentry,
++						&rqstp->rq_chandle);
++	if (gssexp == NULL)
++		return exp;
++	if (exp)
++		exp_put(exp);
++	return gssexp;
++}
++
++struct svc_export *
++rqst_exp_find(struct svc_rqst *rqstp, int fsid_type, u32 *fsidv)
++{
++	struct svc_export *gssexp, *exp = NULL;
++
++	if (rqstp->rq_client == NULL)
++		goto gss;
++
++	/* First try the auth_unix client: */
++	exp = exp_find(rqstp->rq_client, fsid_type, fsidv, &rqstp->rq_chandle);
++	if (exp == NULL)
++		goto gss;
++	if (IS_ERR(exp))
++		return exp;
++	/* If it has secinfo, assume there are no gss/... clients */
++	if (exp->ex_nflavors > 0)
++		return exp;
++gss:
++	/* Otherwise, try falling back on gss client */
++	if (rqstp->rq_gssclient == NULL)
++		return exp;
++	gssexp = exp_find(rqstp->rq_gssclient, fsid_type, fsidv,
++						&rqstp->rq_chandle);
++	if (gssexp == NULL)
++		return exp;
++	if (exp)
++		exp_put(exp);
++	return gssexp;
++}
++
++struct svc_export *
++rqst_exp_parent(struct svc_rqst *rqstp, struct vfsmount *mnt,
++		struct dentry *dentry)
++{
++	struct svc_export *exp;
++
++	dget(dentry);
++	exp = rqst_exp_get_by_name(rqstp, mnt, dentry);
++
++	while (exp == NULL && !IS_ROOT(dentry)) {
++		struct dentry *parent;
++
++		parent = dget_parent(dentry);
++		dput(dentry);
++		dentry = parent;
++		exp = rqst_exp_get_by_name(rqstp, mnt, dentry);
++	}
++	dput(dentry);
++	return exp;
++}
+ 
+ /*
+  * Called when we need the filehandle for the root of the pseudofs,
+@@ -1194,8 +1364,7 @@ exp_find(struct auth_domain *clp, int fsid_type, u32 *fsidv,
+  * export point with fsid==0
+  */
+ __be32
+-exp_pseudoroot(struct auth_domain *clp, struct svc_fh *fhp,
+-	       struct cache_req *creq)
++exp_pseudoroot(struct svc_rqst *rqstp, struct svc_fh *fhp)
+ {
+ 	struct svc_export *exp;
+ 	__be32 rv;
+@@ -1203,12 +1372,16 @@ exp_pseudoroot(struct auth_domain *clp, struct svc_fh *fhp,
+ 
+ 	mk_fsid(FSID_NUM, fsidv, 0, 0, 0, NULL);
+ 
+-	exp = exp_find(clp, FSID_NUM, fsidv, creq);
++	exp = rqst_exp_find(rqstp, FSID_NUM, fsidv);
+ 	if (IS_ERR(exp))
+ 		return nfserrno(PTR_ERR(exp));
+ 	if (exp == NULL)
+ 		return nfserr_perm;
+ 	rv = fh_compose(fhp, exp, exp->ex_dentry, NULL);
++	if (rv)
++		goto out;
++	rv = check_nfsd_access(exp, rqstp);
++out:
+ 	exp_put(exp);
+ 	return rv;
+ }
+diff --git a/fs/nfsd/nfs4acl.c b/fs/nfsd/nfs4acl.c
+index 673a53c..cc3b7ba 100644
+--- a/fs/nfsd/nfs4acl.c
++++ b/fs/nfsd/nfs4acl.c
+@@ -137,7 +137,6 @@ struct ace_container {
+ static short ace2type(struct nfs4_ace *);
+ static void _posix_to_nfsv4_one(struct posix_acl *, struct nfs4_acl *,
+ 				unsigned int);
+-void nfs4_acl_add_ace(struct nfs4_acl *, u32, u32, u32, int, uid_t);
+ 
+ struct nfs4_acl *
+ nfs4_acl_posix_to_nfsv4(struct posix_acl *pacl, struct posix_acl *dpacl,
+@@ -785,21 +784,6 @@ nfs4_acl_new(int n)
+ 	return acl;
+ }
+ 
+-void
+-nfs4_acl_add_ace(struct nfs4_acl *acl, u32 type, u32 flag, u32 access_mask,
+-		int whotype, uid_t who)
+-{
+-	struct nfs4_ace *ace = acl->aces + acl->naces;
+-
+-	ace->type = type;
+-	ace->flag = flag;
+-	ace->access_mask = access_mask;
+-	ace->whotype = whotype;
+-	ace->who = who;
+-
+-	acl->naces++;
+-}
+-
+ static struct {
+ 	char *string;
+ 	int   stringlen;
+@@ -851,6 +835,5 @@ nfs4_acl_write_who(int who, char *p)
+ }
+ 
+ EXPORT_SYMBOL(nfs4_acl_new);
+-EXPORT_SYMBOL(nfs4_acl_add_ace);
+ EXPORT_SYMBOL(nfs4_acl_get_whotype);
+ EXPORT_SYMBOL(nfs4_acl_write_who);
+diff --git a/fs/nfsd/nfs4idmap.c b/fs/nfsd/nfs4idmap.c
+index e4a83d7..dd361d2 100644
+--- a/fs/nfsd/nfs4idmap.c
++++ b/fs/nfsd/nfs4idmap.c
+@@ -588,6 +588,15 @@ idmap_lookup(struct svc_rqst *rqstp,
+ 	return ret;
+ }
+ 
++static char *
++rqst_authname(struct svc_rqst *rqstp)
++{
++	struct auth_domain *clp;
++
++	clp = rqstp->rq_gssclient ? rqstp->rq_gssclient : rqstp->rq_client;
++	return clp->name;
++}
++
+ static int
+ idmap_name_to_id(struct svc_rqst *rqstp, int type, const char *name, u32 namelen,
+ 		uid_t *id)
+@@ -601,7 +610,7 @@ idmap_name_to_id(struct svc_rqst *rqstp, int type, const char *name, u32 namelen
+ 		return -EINVAL;
+ 	memcpy(key.name, name, namelen);
+ 	key.name[namelen] = '\0';
+-	strlcpy(key.authname, rqstp->rq_client->name, sizeof(key.authname));
++	strlcpy(key.authname, rqst_authname(rqstp), sizeof(key.authname));
+ 	ret = idmap_lookup(rqstp, nametoid_lookup, &key, &nametoid_cache, &item);
+ 	if (ret == -ENOENT)
+ 		ret = -ESRCH; /* nfserr_badname */
+@@ -621,7 +630,7 @@ idmap_id_to_name(struct svc_rqst *rqstp, int type, uid_t id, char *name)
+ 	};
+ 	int ret;
+ 
+-	strlcpy(key.authname, rqstp->rq_client->name, sizeof(key.authname));
++	strlcpy(key.authname, rqst_authname(rqstp), sizeof(key.authname));
+ 	ret = idmap_lookup(rqstp, idtoname_lookup, &key, &idtoname_cache, &item);
+ 	if (ret == -ENOENT)
+ 		return sprintf(name, "%u", id);
+diff --git a/fs/nfsd/nfs4proc.c b/fs/nfsd/nfs4proc.c
+index 8522729..88d9368 100644
+--- a/fs/nfsd/nfs4proc.c
++++ b/fs/nfsd/nfs4proc.c
+@@ -47,6 +47,7 @@
+ #include <linux/nfsd/state.h>
+ #include <linux/nfsd/xdr4.h>
+ #include <linux/nfs4_acl.h>
++#include <linux/sunrpc/gss_api.h>
+ 
+ #define NFSDDBG_FACILITY		NFSDDBG_PROC
+ 
+@@ -286,8 +287,7 @@ nfsd4_putrootfh(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
+ 	__be32 status;
+ 
+ 	fh_put(&cstate->current_fh);
+-	status = exp_pseudoroot(rqstp->rq_client, &cstate->current_fh,
+-			      &rqstp->rq_chandle);
++	status = exp_pseudoroot(rqstp, &cstate->current_fh);
+ 	return status;
+ }
+ 
+@@ -474,8 +474,8 @@ nfsd4_lookupp(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
+ 	__be32 ret;
+ 
+ 	fh_init(&tmp_fh, NFS4_FHSIZE);
+-	if((ret = exp_pseudoroot(rqstp->rq_client, &tmp_fh,
+-			      &rqstp->rq_chandle)) != 0)
++	ret = exp_pseudoroot(rqstp, &tmp_fh);
++	if (ret)
+ 		return ret;
+ 	if (tmp_fh.fh_dentry == cstate->current_fh.fh_dentry) {
+ 		fh_put(&tmp_fh);
+@@ -611,6 +611,25 @@ nfsd4_rename(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
+ }
+ 
+ static __be32
++nfsd4_secinfo(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate, struct nfsd4_secinfo *secinfo)
++{
++	struct svc_fh resfh;
++	struct svc_export *exp;
++	struct dentry *dentry;
++	__be32 err;
++
++	fh_init(&resfh, NFS4_FHSIZE);
++	err = nfsd_lookup_dentry(rqstp, &cstate->current_fh,
++				    secinfo->si_name, secinfo->si_namelen,
++				    &exp, &dentry);
++	if (err)
++		return err;
++	dput(dentry);
++	secinfo->si_exp = exp;
++	return nfs_ok;
++}
++
++static __be32
+ nfsd4_setattr(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
+ 	      struct nfsd4_setattr *setattr)
+ {
+@@ -810,6 +829,33 @@ struct nfsd4_operation {
+ 
+ static struct nfsd4_operation nfsd4_ops[];
+ 
++static inline int putfh_like(struct nfsd4_op *op)
++{
++	return op->opnum == OP_PUTROOTFH || op->opnum == OP_PUTFH
++		|| op->opnum == OP_PUTPUBFH;
++}
++
++static inline int wrongsec_ok(struct nfsd4_op *op, struct nfsd4_op *next)
++{
++	/*
++	 * See the NFSv4 minor version 1 ietf draft, whose recommendations
++	 * also apply to 4.0.   The problem is that there's no way for a
++         * client to perform a mountpoint-crossing operation with the parent
++	 * and child exported under disjoint set of security flavors.
++	 * Really, administrators just shouldn't do that.  But we
++	 * haven't taken the trouble to forbid it, so what the heck,
++	 * let's give them a little more rope to hang themselves with:
++	 */
++	if (!putfh_like(op))
++		return 0;
++	/*
++	 * The draft claims we should also make an exception for open by
++	 * name.  That would only matter in the case of an export
++	 * consisting of a single file.  Do we even allow that?
++	 */
++	return next->opnum == OP_LOOKUP || next->opnum == OP_SECINFO;
++}
++
+ /*
+  * COMPOUND call.
+  */
+@@ -892,6 +938,11 @@ nfsd4_proc_compound(struct svc_rqst *rqstp,
+ 		else
+ 			BUG_ON(op->status == nfs_ok);
+ 
++		if (op->status == nfserr_wrongsec
++				&& op + 1 < args->ops + args->opcnt
++				&& wrongsec_ok(op, op + 1))
++			op->status = nfs_ok;
++
+ encode_op:
+ 		if (op->status == nfserr_replay_me) {
+ 			op->replay = &cstate->replay_owner->so_replay;
+@@ -1009,6 +1060,9 @@ static struct nfsd4_operation nfsd4_ops[OP_RELEASE_LOCKOWNER+1] = {
+ 	[OP_SAVEFH] = {
+ 		.op_func = (nfsd4op_func)nfsd4_savefh,
+ 	},
++	[OP_SECINFO] = {
++		.op_func = (nfsd4op_func)nfsd4_secinfo,
++	},
+ 	[OP_SETATTR] = {
+ 		.op_func = (nfsd4op_func)nfsd4_setattr,
+ 	},
+diff --git a/fs/nfsd/nfs4state.c b/fs/nfsd/nfs4state.c
+index af36070..d4a3f5d 100644
+--- a/fs/nfsd/nfs4state.c
++++ b/fs/nfsd/nfs4state.c
+@@ -50,6 +50,8 @@
+ #include <linux/nfsd/xdr4.h>
+ #include <linux/namei.h>
+ #include <linux/mutex.h>
++#include <linux/lockd/bind.h>
++#include <linux/module.h>
+ 
+ #define NFSDDBG_FACILITY                NFSDDBG_PROC
+ 
+@@ -2657,6 +2659,7 @@ nfsd4_lock(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
+ 	struct file_lock conflock;
+ 	__be32 status = 0;
+ 	unsigned int strhashval;
++	unsigned int cmd;
+ 	int err;
+ 
+ 	dprintk("NFSD: nfsd4_lock: start=%Ld length=%Ld\n",
+@@ -2739,10 +2742,12 @@ nfsd4_lock(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
+ 		case NFS4_READ_LT:
+ 		case NFS4_READW_LT:
+ 			file_lock.fl_type = F_RDLCK;
++			cmd = F_SETLK;
+ 		break;
+ 		case NFS4_WRITE_LT:
+ 		case NFS4_WRITEW_LT:
+ 			file_lock.fl_type = F_WRLCK;
++			cmd = F_SETLK;
+ 		break;
+ 		default:
+ 			status = nfserr_inval;
+@@ -2769,9 +2774,8 @@ nfsd4_lock(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
+ 
+ 	/* XXX?: Just to divert the locks_release_private at the start of
+ 	 * locks_copy_lock: */
+-	conflock.fl_ops = NULL;
+-	conflock.fl_lmops = NULL;
+-	err = posix_lock_file_conf(filp, &file_lock, &conflock);
++	locks_init_lock(&conflock);
++	err = vfs_lock_file(filp, cmd, &file_lock, &conflock);
+ 	switch (-err) {
+ 	case 0: /* success! */
+ 		update_stateid(&lock_stp->st_stateid);
+@@ -2788,7 +2792,7 @@ nfsd4_lock(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
+ 		status = nfserr_deadlock;
+ 		break;
+ 	default:        
+-		dprintk("NFSD: nfsd4_lock: posix_lock_file_conf() failed! status %d\n",err);
++		dprintk("NFSD: nfsd4_lock: vfs_lock_file() failed! status %d\n",err);
+ 		status = nfserr_resource;
+ 		break;
+ 	}
+@@ -2813,7 +2817,7 @@ nfsd4_lockt(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
+ 	struct inode *inode;
+ 	struct file file;
+ 	struct file_lock file_lock;
+-	struct file_lock conflock;
++	int error;
+ 	__be32 status;
+ 
+ 	if (nfs4_in_grace())
+@@ -2869,18 +2873,23 @@ nfsd4_lockt(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
+ 
+ 	nfs4_transform_lock_offset(&file_lock);
+ 
+-	/* posix_test_lock uses the struct file _only_ to resolve the inode.
++	/* vfs_test_lock uses the struct file _only_ to resolve the inode.
+ 	 * since LOCKT doesn't require an OPEN, and therefore a struct
+-	 * file may not exist, pass posix_test_lock a struct file with
++	 * file may not exist, pass vfs_test_lock a struct file with
+ 	 * only the dentry:inode set.
+ 	 */
+ 	memset(&file, 0, sizeof (struct file));
+ 	file.f_path.dentry = cstate->current_fh.fh_dentry;
+ 
+ 	status = nfs_ok;
+-	if (posix_test_lock(&file, &file_lock, &conflock)) {
++	error = vfs_test_lock(&file, &file_lock);
++	if (error) {
++		status = nfserrno(error);
++		goto out;
++	}
++	if (file_lock.fl_type != F_UNLCK) {
+ 		status = nfserr_denied;
+-		nfs4_set_lock_denied(&conflock, &lockt->lt_denied);
++		nfs4_set_lock_denied(&file_lock, &lockt->lt_denied);
+ 	}
+ out:
+ 	nfs4_unlock_state();
+@@ -2933,9 +2942,9 @@ nfsd4_locku(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
+ 	/*
+ 	*  Try to unlock the file in the VFS.
+ 	*/
+-	err = posix_lock_file(filp, &file_lock);
++	err = vfs_lock_file(filp, F_SETLK, &file_lock, NULL);
+ 	if (err) {
+-		dprintk("NFSD: nfs4_locku: posix_lock_file failed!\n");
++		dprintk("NFSD: nfs4_locku: vfs_lock_file failed!\n");
+ 		goto out_nfserr;
+ 	}
+ 	/*
+@@ -3185,6 +3194,13 @@ nfsd4_load_reboot_recovery_data(void)
+ 		printk("NFSD: Failure reading reboot recovery data\n");
+ }
+ 
++time_t
++get_nfs4_grace_period(void)
++{
++	return max(user_lease_time, lease_time);
++}
++EXPORT_SYMBOL(get_nfs4_grace_period);
++
+ /* initialization to perform when the nfsd service is started: */
+ 
+ static void
+@@ -3193,7 +3209,7 @@ __nfs4_state_start(void)
+ 	time_t grace_time;
+ 
+ 	boot_time = get_seconds();
+-	grace_time = max(user_lease_time, lease_time);
++	grace_time = get_nfs_grace_period();
+ 	lease_time = user_lease_time;
+ 	in_grace = 1;
+ 	printk("NFSD: starting %ld-second grace period\n", grace_time);
+diff --git a/fs/nfsd/nfs4xdr.c b/fs/nfsd/nfs4xdr.c
+index 5d090f1..af61a15 100644
+--- a/fs/nfsd/nfs4xdr.c
++++ b/fs/nfsd/nfs4xdr.c
+@@ -57,6 +57,8 @@
+ #include <linux/nfsd_idmap.h>
+ #include <linux/nfs4.h>
+ #include <linux/nfs4_acl.h>
++#include <linux/sunrpc/gss_api.h>
++#include <linux/sunrpc/svcauth_gss.h>
+ 
+ #define NFSDDBG_FACILITY		NFSDDBG_XDR
+ 
+@@ -820,6 +822,22 @@ nfsd4_decode_renew(struct nfsd4_compoundargs *argp, clientid_t *clientid)
+ }
+ 
+ static __be32
++nfsd4_decode_secinfo(struct nfsd4_compoundargs *argp, struct nfsd4_secinfo *secinfo)
++{
++	DECODE_HEAD;
++
++	READ_BUF(4);
++	READ32(secinfo->si_namelen);
++	READ_BUF(secinfo->si_namelen);
++	SAVEMEM(secinfo->si_name, secinfo->si_namelen);
++	status = check_filename(secinfo->si_name, secinfo->si_namelen,
++								nfserr_noent);
++	if (status)
++		return status;
++	DECODE_TAIL;
++}
++
++static __be32
+ nfsd4_decode_setattr(struct nfsd4_compoundargs *argp, struct nfsd4_setattr *setattr)
+ {
+ 	DECODE_HEAD;
+@@ -1132,6 +1150,9 @@ nfsd4_decode_compound(struct nfsd4_compoundargs *argp)
+ 		case OP_SAVEFH:
+ 			op->status = nfs_ok;
+ 			break;
++		case OP_SECINFO:
++			op->status = nfsd4_decode_secinfo(argp, &op->u.secinfo);
++			break;
+ 		case OP_SETATTR:
+ 			op->status = nfsd4_decode_setattr(argp, &op->u.setattr);
+ 			break;
+@@ -1297,7 +1318,7 @@ static char *nfsd4_path(struct svc_rqst *rqstp, struct svc_export *exp, __be32 *
+ 	char *path, *rootpath;
+ 
+ 	fh_init(&tmp_fh, NFS4_FHSIZE);
+-	*stat = exp_pseudoroot(rqstp->rq_client, &tmp_fh, &rqstp->rq_chandle);
++	*stat = exp_pseudoroot(rqstp, &tmp_fh);
+ 	if (*stat)
+ 		return NULL;
+ 	rootpath = tmp_fh.fh_export->ex_path;
+@@ -1848,11 +1869,19 @@ nfsd4_encode_dirent_fattr(struct nfsd4_readdir *cd,
+ 	if (d_mountpoint(dentry)) {
+ 		int err;
+ 
++		/*
++		 * Why the heck aren't we just using nfsd_lookup??
++		 * Different "."/".." handling?  Something else?
++		 * At least, add a comment here to explain....
++		 */
+ 		err = nfsd_cross_mnt(cd->rd_rqstp, &dentry, &exp);
+ 		if (err) {
+ 			nfserr = nfserrno(err);
+ 			goto out_put;
+ 		}
++		nfserr = check_nfsd_access(exp, cd->rd_rqstp);
++		if (nfserr)
++			goto out_put;
+ 
+ 	}
+ 	nfserr = nfsd4_encode_fattr(NULL, exp, dentry, p, buflen, cd->rd_bmval,
+@@ -2420,6 +2449,71 @@ nfsd4_encode_rename(struct nfsd4_compoundres *resp, __be32 nfserr, struct nfsd4_
+ 	}
+ }
+ 
++static void
++nfsd4_encode_secinfo(struct nfsd4_compoundres *resp, int nfserr, struct nfsd4_secinfo *secinfo)
++{
++	int i = 0;
++	struct svc_export *exp = secinfo->si_exp;
++	u32 nflavs;
++	struct exp_flavor_info *flavs;
++	struct exp_flavor_info def_flavs[2];
++	ENCODE_HEAD;
++
++	if (nfserr)
++		goto out;
++	if (exp->ex_nflavors) {
++		flavs = exp->ex_flavors;
++		nflavs = exp->ex_nflavors;
++	} else { /* Handling of some defaults in absence of real secinfo: */
++		flavs = def_flavs;
++		if (exp->ex_client->flavour->flavour == RPC_AUTH_UNIX) {
++			nflavs = 2;
++			flavs[0].pseudoflavor = RPC_AUTH_UNIX;
++			flavs[1].pseudoflavor = RPC_AUTH_NULL;
++		} else if (exp->ex_client->flavour->flavour == RPC_AUTH_GSS) {
++			nflavs = 1;
++			flavs[0].pseudoflavor
++					= svcauth_gss_flavor(exp->ex_client);
++		} else {
++			nflavs = 1;
++			flavs[0].pseudoflavor
++					= exp->ex_client->flavour->flavour;
++		}
++	}
++
++	RESERVE_SPACE(4);
++	WRITE32(nflavs);
++	ADJUST_ARGS();
++	for (i = 0; i < nflavs; i++) {
++		u32 flav = flavs[i].pseudoflavor;
++		struct gss_api_mech *gm = gss_mech_get_by_pseudoflavor(flav);
++
++		if (gm) {
++			RESERVE_SPACE(4);
++			WRITE32(RPC_AUTH_GSS);
++			ADJUST_ARGS();
++			RESERVE_SPACE(4 + gm->gm_oid.len);
++			WRITE32(gm->gm_oid.len);
++			WRITEMEM(gm->gm_oid.data, gm->gm_oid.len);
++			ADJUST_ARGS();
++			RESERVE_SPACE(4);
++			WRITE32(0); /* qop */
++			ADJUST_ARGS();
++			RESERVE_SPACE(4);
++			WRITE32(gss_pseudoflavor_to_service(gm, flav));
++			ADJUST_ARGS();
++			gss_mech_put(gm);
++		} else {
++			RESERVE_SPACE(4);
++			WRITE32(flav);
++			ADJUST_ARGS();
++		}
++	}
++out:
++	if (exp)
++		exp_put(exp);
++}
++
+ /*
+  * The SETATTR encode routine is special -- it always encodes a bitmap,
+  * regardless of the error status.
+@@ -2560,6 +2654,9 @@ nfsd4_encode_operation(struct nfsd4_compoundres *resp, struct nfsd4_op *op)
+ 		break;
+ 	case OP_SAVEFH:
+ 		break;
++	case OP_SECINFO:
++		nfsd4_encode_secinfo(resp, op->status, &op->u.secinfo);
++		break;
+ 	case OP_SETATTR:
+ 		nfsd4_encode_setattr(resp, op->status, &op->u.setattr);
+ 		break;
+diff --git a/fs/nfsd/nfsfh.c b/fs/nfsd/nfsfh.c
+index 8d995bc..325152d 100644
+--- a/fs/nfsd/nfsfh.c
++++ b/fs/nfsd/nfsfh.c
+@@ -20,6 +20,7 @@
+ 
+ #include <linux/sunrpc/clnt.h>
+ #include <linux/sunrpc/svc.h>
++#include <linux/sunrpc/svcauth_gss.h>
+ #include <linux/nfsd/nfsd.h>
+ 
+ #define NFSDDBG_FACILITY		NFSDDBG_FH
+@@ -108,7 +109,7 @@ nfsd_mode_check(struct svc_rqst *rqstp, umode_t mode, int type)
+  * a svc_fh which is all 0 except for the over-the-wire file handle.
+  */
+ __be32
+-fh_verify(struct svc_rqst *rqstp, struct svc_fh *fhp, int type, int access)
++fh_verify_anysec(struct svc_rqst *rqstp, struct svc_fh *fhp, int type, int access)
+ {
+ 	struct knfsd_fh	*fh = &fhp->fh_handle;
+ 	struct svc_export *exp = NULL;
+@@ -124,8 +125,6 @@ fh_verify(struct svc_rqst *rqstp, struct svc_fh *fhp, int type, int access)
+ 		int data_left = fh->fh_size/4;
+ 
+ 		error = nfserr_stale;
+-		if (rqstp->rq_client == NULL)
+-			goto out;
+ 		if (rqstp->rq_vers > 2)
+ 			error = nfserr_badhandle;
+ 		if (rqstp->rq_vers == 4 && fh->fh_size == 0)
+@@ -149,7 +148,7 @@ fh_verify(struct svc_rqst *rqstp, struct svc_fh *fhp, int type, int access)
+ 				fh->fh_fsid[1] = fh->fh_fsid[2];
+ 			}
+ 			if ((data_left -= len)<0) goto out;
+-			exp = exp_find(rqstp->rq_client, fh->fh_fsid_type, datap, &rqstp->rq_chandle);
++			exp = rqst_exp_find(rqstp, fh->fh_fsid_type, datap);
+ 			datap += len;
+ 		} else {
+ 			dev_t xdev;
+@@ -160,18 +159,16 @@ fh_verify(struct svc_rqst *rqstp, struct svc_fh *fhp, int type, int access)
+ 			xdev = old_decode_dev(fh->ofh_xdev);
+ 			xino = u32_to_ino_t(fh->ofh_xino);
+ 			mk_fsid(FSID_DEV, tfh, xdev, xino, 0, NULL);
+-			exp = exp_find(rqstp->rq_client, FSID_DEV, tfh,
+-				       &rqstp->rq_chandle);
++			exp = rqst_exp_find(rqstp, FSID_DEV, tfh);
+ 		}
+ 
+-		if (IS_ERR(exp) && (PTR_ERR(exp) == -EAGAIN
+-				|| PTR_ERR(exp) == -ETIMEDOUT)) {
++		if (IS_ERR(exp)) {
+ 			error = nfserrno(PTR_ERR(exp));
+ 			goto out;
+ 		}
+ 
+ 		error = nfserr_stale; 
+-		if (!exp || IS_ERR(exp))
++		if (!exp)
+ 			goto out;
+ 
+ 		/* Check if the request originated from a secure port. */
+@@ -259,7 +256,7 @@ fh_verify(struct svc_rqst *rqstp, struct svc_fh *fhp, int type, int access)
+ 		goto out;
+ 
+ 	/* Finally, check access permissions. */
+-	error = nfsd_permission(exp, dentry, access);
++	error = nfsd_permission(rqstp->rq_flavor, exp, dentry, access);
+ 
+ 	if (error) {
+ 		dprintk("fh_verify: %s/%s permission failure, "
+@@ -276,6 +273,19 @@ out:
+ 	return error;
+ }
+ 
++__be32
++fh_verify(struct svc_rqst *rqstp, struct svc_fh *fhp, int type, int access)
++{
++	__be32 error;
++
++	error = fh_verify_anysec(rqstp, fhp, type, access);
++	if (error)
++		return error;
++	/* Check security flavor */
++	error = check_nfsd_access(fhp->fh_export, rqstp);
++	/* XXX: do we need to put anything on failure?? */
++	return error;
++}
+ 
+ /*
+  * Compose a file handle for an NFS reply.
+diff --git a/fs/nfsd/nfsproc.c b/fs/nfsd/nfsproc.c
+index 5cc2eec..30af072 100644
+--- a/fs/nfsd/nfsproc.c
++++ b/fs/nfsd/nfsproc.c
+@@ -278,7 +278,8 @@ nfsd_proc_create(struct svc_rqst *rqstp, struct nfsd_createargs *argp,
+ 					 *   echo thing > device-special-file-or-pipe
+ 					 * by doing a CREATE with type==0
+ 					 */
+-					nfserr = nfsd_permission(newfhp->fh_export,
++					nfserr = nfsd_permission(rqstp->rq_flavor,
++								 newfhp->fh_export,
+ 								 newfhp->fh_dentry,
+ 								 MAY_WRITE|MAY_LOCAL_ACCESS);
+ 					if (nfserr && nfserr != nfserr_rofs)
+diff --git a/fs/nfsd/nfssvc.c b/fs/nfsd/nfssvc.c
+index d7759ce..2f91514 100644
+--- a/fs/nfsd/nfssvc.c
++++ b/fs/nfsd/nfssvc.c
+@@ -492,6 +492,15 @@ out:
+ 	module_put_and_exit(0);
+ }
+ 
++static __be32 map_new_errors(u32 vers, __be32 nfserr)
++{
++	if (nfserr == nfserr_jukebox && vers == 2)
++		return nfserr_dropit;
++	if (nfserr == nfserr_wrongsec && vers < 4)
++		return nfserr_perm;
++	return nfserr;
++}
++
+ int
+ nfsd_dispatch(struct svc_rqst *rqstp, __be32 *statp)
+ {
+@@ -534,6 +543,7 @@ nfsd_dispatch(struct svc_rqst *rqstp, __be32 *statp)
+ 
+ 	/* Now call the procedure handler, and encode NFS status. */
+ 	nfserr = proc->pc_func(rqstp, rqstp->rq_argp, rqstp->rq_resp);
++	nfserr = map_new_errors(rqstp->rq_vers, nfserr);
+ 	if (nfserr == nfserr_jukebox && rqstp->rq_vers == 2)
+ 		nfserr = nfserr_dropit;
+ 	if (nfserr == nfserr_dropit) {
+diff --git a/fs/nfsd/vfs.c b/fs/nfsd/vfs.c
+index 7e6aa24..8ec75a9 100644
+--- a/fs/nfsd/vfs.c
++++ b/fs/nfsd/vfs.c
+@@ -113,7 +113,7 @@ nfsd_cross_mnt(struct svc_rqst *rqstp, struct dentry **dpp,
+ 
+ 	while (follow_down(&mnt,&mounts)&&d_mountpoint(mounts));
+ 
+-	exp2 = exp_get_by_name(exp->ex_client, mnt, mounts, &rqstp->rq_chandle);
++	exp2 = rqst_exp_get_by_name(rqstp, mnt, mounts);
+ 	if (IS_ERR(exp2)) {
+ 		err = PTR_ERR(exp2);
+ 		dput(mounts);
+@@ -135,21 +135,10 @@ out:
+ 	return err;
+ }
+ 
+-/*
+- * Look up one component of a pathname.
+- * N.B. After this call _both_ fhp and resfh need an fh_put
+- *
+- * If the lookup would cross a mountpoint, and the mounted filesystem
+- * is exported to the client with NFSEXP_NOHIDE, then the lookup is
+- * accepted as it stands and the mounted directory is
+- * returned. Otherwise the covered directory is returned.
+- * NOTE: this mountpoint crossing is not supported properly by all
+- *   clients and is explicitly disallowed for NFSv3
+- *      NeilBrown <neilb@cse.unsw.edu.au>
+- */
+ __be32
+-nfsd_lookup(struct svc_rqst *rqstp, struct svc_fh *fhp, const char *name,
+-					int len, struct svc_fh *resfh)
++nfsd_lookup_dentry(struct svc_rqst *rqstp, struct svc_fh *fhp,
++		   const char *name, int len,
++		   struct svc_export **exp_ret, struct dentry **dentry_ret)
+ {
+ 	struct svc_export	*exp;
+ 	struct dentry		*dparent;
+@@ -161,15 +150,13 @@ nfsd_lookup(struct svc_rqst *rqstp, struct svc_fh *fhp, const char *name,
+ 
+ 	/* Obtain dentry and export. */
+ 	err = fh_verify(rqstp, fhp, S_IFDIR, MAY_EXEC);
+-	if (err)
++	if (err && err != nfserr_wrongsec)
+ 		return err;
+ 
+ 	dparent = fhp->fh_dentry;
+ 	exp  = fhp->fh_export;
+ 	exp_get(exp);
+ 
+-	err = nfserr_acces;
+-
+ 	/* Lookup the name, but don't follow links */
+ 	if (isdotent(name, len)) {
+ 		if (len==1)
+@@ -190,8 +177,7 @@ nfsd_lookup(struct svc_rqst *rqstp, struct svc_fh *fhp, const char *name,
+ 			dput(dentry);
+ 			dentry = dp;
+ 
+-			exp2 = exp_parent(exp->ex_client, mnt, dentry,
+-					  &rqstp->rq_chandle);
++			exp2 = rqst_exp_parent(rqstp, mnt, dentry);
+ 			if (IS_ERR(exp2)) {
+ 				host_err = PTR_ERR(exp2);
+ 				dput(dentry);
+@@ -223,6 +209,41 @@ nfsd_lookup(struct svc_rqst *rqstp, struct svc_fh *fhp, const char *name,
+ 			}
+ 		}
+ 	}
++	*dentry_ret = dentry;
++	*exp_ret = exp;
++	return 0;
++
++out_nfserr:
++	exp_put(exp);
++	return nfserrno(host_err);
++}
++
++/*
++ * Look up one component of a pathname.
++ * N.B. After this call _both_ fhp and resfh need an fh_put
++ *
++ * If the lookup would cross a mountpoint, and the mounted filesystem
++ * is exported to the client with NFSEXP_NOHIDE, then the lookup is
++ * accepted as it stands and the mounted directory is
++ * returned. Otherwise the covered directory is returned.
++ * NOTE: this mountpoint crossing is not supported properly by all
++ *   clients and is explicitly disallowed for NFSv3
++ *      NeilBrown <neilb@cse.unsw.edu.au>
++ */
++__be32
++nfsd_lookup(struct svc_rqst *rqstp, struct svc_fh *fhp, const char *name,
++					int len, struct svc_fh *resfh)
++{
++	struct svc_export	*exp;
++	struct dentry		*dentry;
++	__be32 err;
++
++	err = nfsd_lookup_dentry(rqstp, fhp, name, len, &exp, &dentry);
++	if (err)
++		return err;
++	err = check_nfsd_access(exp, rqstp);
++	if (err)
++		goto out;
+ 	/*
+ 	 * Note: we compose the file handle now, but as the
+ 	 * dentry may be negative, it may need to be updated.
+@@ -230,16 +251,13 @@ nfsd_lookup(struct svc_rqst *rqstp, struct svc_fh *fhp, const char *name,
+ 	err = fh_compose(resfh, exp, dentry, fhp);
+ 	if (!err && !dentry->d_inode)
+ 		err = nfserr_noent;
+-	dput(dentry);
+ out:
++	dput(dentry);
+ 	exp_put(exp);
+ 	return err;
+-
+-out_nfserr:
+-	err = nfserrno(host_err);
+-	goto out;
+ }
+ 
++
+ /*
+  * Set various file attributes.
+  * N.B. After this call fhp needs an fh_put
+@@ -311,7 +329,7 @@ nfsd_setattr(struct svc_rqst *rqstp, struct svc_fh *fhp, struct iattr *iap,
+ 	/* The size case is special. It changes the file as well as the attributes.  */
+ 	if (iap->ia_valid & ATTR_SIZE) {
+ 		if (iap->ia_size < inode->i_size) {
+-			err = nfsd_permission(fhp->fh_export, dentry, MAY_TRUNC|MAY_OWNER_OVERRIDE);
++			err = nfsd_permission(rqstp->rq_flavor, fhp->fh_export, dentry, MAY_TRUNC|MAY_OWNER_OVERRIDE);
+ 			if (err)
+ 				goto out;
+ 		}
+@@ -607,7 +625,7 @@ nfsd_access(struct svc_rqst *rqstp, struct svc_fh *fhp, u32 *access, u32 *suppor
+ 
+ 			sresult |= map->access;
+ 
+-			err2 = nfsd_permission(export, dentry, map->how);
++			err2 = nfsd_permission(rqstp->rq_flavor, export, dentry, map->how);
+ 			switch (err2) {
+ 			case nfs_ok:
+ 				result |= map->access;
+@@ -1018,7 +1036,7 @@ nfsd_read(struct svc_rqst *rqstp, struct svc_fh *fhp, struct file *file,
+ 	__be32		err;
+ 
+ 	if (file) {
+-		err = nfsd_permission(fhp->fh_export, fhp->fh_dentry,
++		err = nfsd_permission(rqstp->rq_flavor, fhp->fh_export, fhp->fh_dentry,
+ 				MAY_READ|MAY_OWNER_OVERRIDE);
+ 		if (err)
+ 			goto out;
+@@ -1047,7 +1065,7 @@ nfsd_write(struct svc_rqst *rqstp, struct svc_fh *fhp, struct file *file,
+ 	__be32			err = 0;
+ 
+ 	if (file) {
+-		err = nfsd_permission(fhp->fh_export, fhp->fh_dentry,
++		err = nfsd_permission(rqstp->rq_flavor, fhp->fh_export, fhp->fh_dentry,
+ 				MAY_WRITE|MAY_OWNER_OVERRIDE);
+ 		if (err)
+ 			goto out;
+@@ -1776,7 +1794,7 @@ nfsd_statfs(struct svc_rqst *rqstp, struct svc_fh *fhp, struct kstatfs *stat)
+  * Check for a user's access permissions to this inode.
+  */
+ __be32
+-nfsd_permission(struct svc_export *exp, struct dentry *dentry, int acc)
++nfsd_permission(int flavor, struct svc_export *exp, struct dentry *dentry, int acc)
+ {
+ 	struct inode	*inode = dentry->d_inode;
+ 	int		err;
+@@ -1807,7 +1825,7 @@ nfsd_permission(struct svc_export *exp, struct dentry *dentry, int acc)
+ 	 */
+ 	if (!(acc & MAY_LOCAL_ACCESS))
+ 		if (acc & (MAY_WRITE | MAY_SATTR | MAY_TRUNC)) {
+-			if (EX_RDONLY(exp) || IS_RDONLY(inode))
++			if (EX_RDONLY(exp, flavor) || IS_RDONLY(inode))
+ 				return nfserr_rofs;
+ 			if (/* (acc & MAY_WRITE) && */ IS_IMMUTABLE(inode))
+ 				return nfserr_perm;
+diff --git a/include/linux/fcntl.h b/include/linux/fcntl.h
+index 996f561..40b9326 100644
+--- a/include/linux/fcntl.h
++++ b/include/linux/fcntl.h
+@@ -3,6 +3,10 @@
+ 
+ #include <asm/fcntl.h>
+ 
++/* Cancel a blocking posix lock; internal use only until we expose an
++ * asynchronous lock api to userspace: */
++#define F_CANCELLK	(F_LINUX_SPECIFIC_BASE+5)
++
+ #define F_SETLEASE	(F_LINUX_SPECIFIC_BASE+0)
+ #define F_GETLEASE	(F_LINUX_SPECIFIC_BASE+1)
+ 
+diff --git a/include/linux/fs.h b/include/linux/fs.h
+index 86ec3f4..b22991d 100644
+--- a/include/linux/fs.h
++++ b/include/linux/fs.h
+@@ -785,6 +785,7 @@ struct file_lock_operations {
+ struct lock_manager_operations {
+ 	int (*fl_compare_owner)(struct file_lock *, struct file_lock *);
+ 	void (*fl_notify)(struct file_lock *);	/* unblock callback */
++	int (*fl_grant)(struct file_lock *, struct file_lock *, int);
+ 	void (*fl_copy_lock)(struct file_lock *, struct file_lock *);
+ 	void (*fl_release_private)(struct file_lock *);
+ 	void (*fl_break)(struct file_lock *);
+@@ -851,11 +852,13 @@ extern void locks_init_lock(struct file_lock *);
+ extern void locks_copy_lock(struct file_lock *, struct file_lock *);
+ extern void locks_remove_posix(struct file *, fl_owner_t);
+ extern void locks_remove_flock(struct file *);
+-extern int posix_test_lock(struct file *, struct file_lock *, struct file_lock *);
+-extern int posix_lock_file_conf(struct file *, struct file_lock *, struct file_lock *);
+-extern int posix_lock_file(struct file *, struct file_lock *);
++extern int posix_test_lock(struct file *, struct file_lock *);
++extern int posix_lock_file(struct file *, struct file_lock *, struct file_lock *);
+ extern int posix_lock_file_wait(struct file *, struct file_lock *);
+ extern int posix_unblock_lock(struct file *, struct file_lock *);
++extern int vfs_test_lock(struct file *, struct file_lock *);
++extern int vfs_lock_file(struct file *, unsigned int, struct file_lock *, struct file_lock *);
++extern int vfs_cancel_lock(struct file *filp, struct file_lock *fl);
+ extern int flock_lock_file_wait(struct file *filp, struct file_lock *fl);
+ extern int __break_lease(struct inode *inode, unsigned int flags);
+ extern void lease_get_mtime(struct inode *, struct timespec *time);
+diff --git a/include/linux/lockd/bind.h b/include/linux/lockd/bind.h
+index 246de1d..0af4204 100644
+--- a/include/linux/lockd/bind.h
++++ b/include/linux/lockd/bind.h
+@@ -38,4 +38,12 @@ extern int	nlmclnt_proc(struct inode *, int, struct file_lock *);
+ extern int	lockd_up(int proto);
+ extern void	lockd_down(void);
+ 
++time_t get_nfs_grace_period(void);
++
++#ifdef CONFIG_NFSD_V4
++time_t get_nfs4_grace_period(void);
++#else
++static inline void get_nfs4_grace_period(void) {return 0;}
++#endif
++
+ #endif /* LINUX_LOCKD_BIND_H */
+diff --git a/include/linux/lockd/lockd.h b/include/linux/lockd/lockd.h
+index ac25b56..424c3de 100644
+--- a/include/linux/lockd/lockd.h
++++ b/include/linux/lockd/lockd.h
+@@ -119,6 +119,9 @@ struct nlm_file {
+  * couldn't be granted because of a conflicting lock).
+  */
+ #define NLM_NEVER		(~(unsigned long) 0)
++/* timeout on non-blocking call: */
++#define NLM_TIMEOUT		(7 * HZ)
++
+ struct nlm_block {
+ 	struct kref		b_count;	/* Reference count */
+ 	struct list_head	b_list;		/* linked list of all blocks */
+@@ -130,6 +133,13 @@ struct nlm_block {
+ 	unsigned int		b_id;		/* block id */
+ 	unsigned char		b_granted;	/* VFS granted lock */
+ 	struct nlm_file *	b_file;		/* file in question */
++	struct cache_req *	b_cache_req;	/* deferred request handling */
++	struct file_lock *	b_fl;		/* set for GETLK */
++	struct cache_deferred_req * b_deferred_req;
++	unsigned int		b_flags;	/* block flags */
++#define B_QUEUED		1	/* lock queued */
++#define B_GOT_CALLBACK		2	/* got lock or conflicting lock */
++#define B_TIMED_OUT		4	/* filesystem too slow to respond */
+ };
+ 
+ /*
+@@ -185,8 +195,8 @@ typedef int	  (*nlm_host_match_fn_t)(struct nlm_host *cur, struct nlm_host *ref)
+ __be32		  nlmsvc_lock(struct svc_rqst *, struct nlm_file *,
+ 					struct nlm_lock *, int, struct nlm_cookie *);
+ __be32		  nlmsvc_unlock(struct nlm_file *, struct nlm_lock *);
+-__be32		  nlmsvc_testlock(struct nlm_file *, struct nlm_lock *,
+-					struct nlm_lock *);
++__be32		  nlmsvc_testlock(struct svc_rqst *, struct nlm_file *,
++			struct nlm_lock *, struct nlm_lock *, struct nlm_cookie *);
+ __be32		  nlmsvc_cancel_blocked(struct nlm_file *, struct nlm_lock *);
+ unsigned long	  nlmsvc_retry_blocked(void);
+ void		  nlmsvc_traverse_blocks(struct nlm_host *, struct nlm_file *,
+diff --git a/include/linux/nfs4_acl.h b/include/linux/nfs4_acl.h
+index 409b6e0..c9c05a7 100644
+--- a/include/linux/nfs4_acl.h
++++ b/include/linux/nfs4_acl.h
+@@ -44,7 +44,6 @@
+ #define NFS4_ACL_MAX 170
+ 
+ struct nfs4_acl *nfs4_acl_new(int);
+-void nfs4_acl_add_ace(struct nfs4_acl *, u32, u32, u32, int, uid_t);
+ int nfs4_acl_get_whotype(char *, u32);
+ int nfs4_acl_write_who(int who, char *p);
+ int nfs4_acl_permission(struct nfs4_acl *acl, uid_t owner, gid_t group,
+diff --git a/include/linux/nfsd/export.h b/include/linux/nfsd/export.h
+index 9f62d61..3402290 100644
+--- a/include/linux/nfsd/export.h
++++ b/include/linux/nfsd/export.h
+@@ -64,6 +64,19 @@ struct nfsd4_fs_locations {
+ 	int migrated;
+ };
+ 
++/*
++ * We keep an array of pseudoflavors with the export, in order from most
++ * to least preferred.  For the forseeable future, we don't expect more
++ * than the eight pseudoflavors null, unix, krb5, krb5i, krb5p, skpm3,
++ * spkm3i, and spkm3p (and using all 8 at once should be rare).
++ */
++#define MAX_SECINFO_LIST	8
++
++struct exp_flavor_info {
++	u32	pseudoflavor;
++	u32	flags;
++};
++
+ struct svc_export {
+ 	struct cache_head	h;
+ 	struct auth_domain *	ex_client;
+@@ -76,6 +89,8 @@ struct svc_export {
+ 	int			ex_fsid;
+ 	unsigned char *		ex_uuid; /* 16 byte fsid */
+ 	struct nfsd4_fs_locations ex_fslocs;
++	int			ex_nflavors;
++	struct exp_flavor_info	ex_flavors[MAX_SECINFO_LIST];
+ };
+ 
+ /* an "export key" (expkey) maps a filehandlefragement to an
+@@ -95,10 +110,22 @@ struct svc_expkey {
+ 
+ #define EX_SECURE(exp)		(!((exp)->ex_flags & NFSEXP_INSECURE_PORT))
+ #define EX_ISSYNC(exp)		(!((exp)->ex_flags & NFSEXP_ASYNC))
+-#define EX_RDONLY(exp)		((exp)->ex_flags & NFSEXP_READONLY)
+ #define EX_NOHIDE(exp)		((exp)->ex_flags & NFSEXP_NOHIDE)
+ #define EX_WGATHER(exp)		((exp)->ex_flags & NFSEXP_GATHERED_WRITES)
+ 
++static inline int EX_RDONLY(struct svc_export *exp, u32 flavor)
++{
++	struct exp_flavor_info *f;
++	struct exp_flavor_info *end = exp->ex_flavors + exp->ex_nflavors;
++
++	for (f = exp->ex_flavors; f < end; f++) {
++		if (f->pseudoflavor == flavor)
++			return f->flags & NFSEXP_READONLY;
++	}
++	return exp->ex_flags & NFSEXP_READONLY;
++}
++
++__be32 check_nfsd_access(struct svc_export *exp, struct svc_rqst *rqstp);
+ 
+ /*
+  * Function declarations
+@@ -112,13 +139,19 @@ struct svc_export *	exp_get_by_name(struct auth_domain *clp,
+ 					struct vfsmount *mnt,
+ 					struct dentry *dentry,
+ 					struct cache_req *reqp);
++struct svc_export *	rqst_exp_get_by_name(struct svc_rqst *,
++					     struct vfsmount *,
++					     struct dentry *);
+ struct svc_export *	exp_parent(struct auth_domain *clp,
+ 				   struct vfsmount *mnt,
+ 				   struct dentry *dentry,
+ 				   struct cache_req *reqp);
++struct svc_export *	rqst_exp_parent(struct svc_rqst *,
++					struct vfsmount *mnt,
++					struct dentry *dentry);
+ int			exp_rootfh(struct auth_domain *, 
+ 					char *path, struct knfsd_fh *, int maxsize);
+-__be32			exp_pseudoroot(struct auth_domain *, struct svc_fh *fhp, struct cache_req *creq);
++__be32			exp_pseudoroot(struct svc_rqst *, struct svc_fh *);
+ __be32			nfserrno(int errno);
+ 
+ extern struct cache_detail svc_export_cache;
+@@ -135,6 +168,7 @@ static inline void exp_get(struct svc_export *exp)
+ extern struct svc_export *
+ exp_find(struct auth_domain *clp, int fsid_type, u32 *fsidv,
+ 	 struct cache_req *reqp);
++struct svc_export * rqst_exp_find(struct svc_rqst *, int, u32 *);
+ 
+ #endif /* __KERNEL__ */
+ 
+diff --git a/include/linux/nfsd/nfsd.h b/include/linux/nfsd/nfsd.h
+index 72feac5..f0d749e 100644
+--- a/include/linux/nfsd/nfsd.h
++++ b/include/linux/nfsd/nfsd.h
+@@ -72,6 +72,9 @@ int		nfsd_cross_mnt(struct svc_rqst *rqstp, struct dentry **dpp,
+ 		                struct svc_export **expp);
+ __be32		nfsd_lookup(struct svc_rqst *, struct svc_fh *,
+ 				const char *, int, struct svc_fh *);
++__be32		 nfsd_lookup_dentry(struct svc_rqst *, struct svc_fh *,
++				const char *, int,
++				struct svc_export **, struct dentry **);
+ __be32		nfsd_setattr(struct svc_rqst *, struct svc_fh *,
+ 				struct iattr *, int, time_t);
+ #ifdef CONFIG_NFSD_V4
+@@ -120,7 +123,7 @@ __be32		nfsd_statfs(struct svc_rqst *, struct svc_fh *,
+ 				struct kstatfs *);
+ 
+ int		nfsd_notify_change(struct inode *, struct iattr *);
+-__be32		nfsd_permission(struct svc_export *, struct dentry *, int);
++__be32		nfsd_permission(int, struct svc_export *, struct dentry *, int);
+ int		nfsd_sync_dir(struct dentry *dp);
+ 
+ #if defined(CONFIG_NFSD_V2_ACL) || defined(CONFIG_NFSD_V3_ACL)
+@@ -236,6 +239,7 @@ void		nfsd_lockd_shutdown(void);
+ #define	nfserr_badname		__constant_htonl(NFSERR_BADNAME)
+ #define	nfserr_cb_path_down	__constant_htonl(NFSERR_CB_PATH_DOWN)
+ #define	nfserr_locked		__constant_htonl(NFSERR_LOCKED)
++#define	nfserr_wrongsec		__constant_htonl(NFSERR_WRONGSEC)
+ #define	nfserr_replay_me	__constant_htonl(NFSERR_REPLAY_ME)
+ 
+ /* error codes for internal use */
+diff --git a/include/linux/nfsd/nfsfh.h b/include/linux/nfsd/nfsfh.h
+index 11e568e..c6d0d1e 100644
+--- a/include/linux/nfsd/nfsfh.h
++++ b/include/linux/nfsd/nfsfh.h
+@@ -262,6 +262,7 @@ extern char * SVCFH_fmt(struct svc_fh *fhp);
+ /*
+  * Function prototypes
+  */
++__be32	fh_verify_anysec(struct svc_rqst *, struct svc_fh *, int, int);
+ __be32	fh_verify(struct svc_rqst *, struct svc_fh *, int, int);
+ __be32	fh_compose(struct svc_fh *, struct svc_export *, struct dentry *, struct svc_fh *);
+ __be32	fh_update(struct svc_fh *);
+diff --git a/include/linux/nfsd/state.h b/include/linux/nfsd/state.h
+index ab5c236..732de9c 100644
+--- a/include/linux/nfsd/state.h
++++ b/include/linux/nfsd/state.h
+@@ -67,7 +67,7 @@ struct nfs4_cb_recall {
+ 	int			cbr_trunc;
+ 	stateid_t		cbr_stateid;
+ 	u32			cbr_fhlen;
+-	u32			cbr_fhval[NFS4_FHSIZE];
++	char			cbr_fhval[NFS4_FHSIZE];
+ 	struct nfs4_delegation	*cbr_dp;
+ };
+ 
+diff --git a/include/linux/nfsd/xdr4.h b/include/linux/nfsd/xdr4.h
+index 09799bc..1b65326 100644
+--- a/include/linux/nfsd/xdr4.h
++++ b/include/linux/nfsd/xdr4.h
+@@ -293,6 +293,12 @@ struct nfsd4_rename {
+ 	struct nfsd4_change_info  rn_tinfo; /* response */
+ };
+ 
++struct nfsd4_secinfo {
++	u32 si_namelen;					/* request */
++	char *si_name;					/* request */
++	struct svc_export *si_exp;			/* response */
++};
++
+ struct nfsd4_setattr {
+ 	stateid_t	sa_stateid;         /* request */
+ 	u32		sa_bmval[2];        /* request */
+@@ -365,6 +371,7 @@ struct nfsd4_op {
+ 		struct nfsd4_remove		remove;
+ 		struct nfsd4_rename		rename;
+ 		clientid_t			renew;
++		struct nfsd4_secinfo		secinfo;
+ 		struct nfsd4_setattr		setattr;
+ 		struct nfsd4_setclientid	setclientid;
+ 		struct nfsd4_setclientid_confirm setclientid_confirm;
+diff --git a/include/linux/sunrpc/gss_api.h b/include/linux/sunrpc/gss_api.h
+index 5eca9e4..f76f705 100644
+--- a/include/linux/sunrpc/gss_api.h
++++ b/include/linux/sunrpc/gss_api.h
+@@ -58,6 +58,7 @@ u32 gss_unwrap(
+ u32 gss_delete_sec_context(
+ 		struct gss_ctx		**ctx_id);
+ 
++u32 gss_svc_to_pseudoflavor(struct gss_api_mech *, u32 service);
+ u32 gss_pseudoflavor_to_service(struct gss_api_mech *, u32 pseudoflavor);
+ char *gss_service_to_auth_domain_name(struct gss_api_mech *, u32 service);
+ 
+diff --git a/include/linux/sunrpc/svc.h b/include/linux/sunrpc/svc.h
+index 35fa4d5..c22db92 100644
+--- a/include/linux/sunrpc/svc.h
++++ b/include/linux/sunrpc/svc.h
+@@ -212,6 +212,7 @@ struct svc_rqst {
+ 	struct svc_pool *	rq_pool;	/* thread pool */
+ 	struct svc_procedure *	rq_procinfo;	/* procedure info */
+ 	struct auth_ops *	rq_authop;	/* authentication flavour */
++	u32			rq_flavor;	/* pseudoflavor */
+ 	struct svc_cred		rq_cred;	/* auth info */
+ 	struct sk_buff *	rq_skbuff;	/* fast recv inet buffer */
+ 	struct svc_deferred_req*rq_deferred;	/* deferred request we are replaying */
+@@ -248,6 +249,7 @@ struct svc_rqst {
+ 						 */
+ 	/* Catering to nfsd */
+ 	struct auth_domain *	rq_client;	/* RPC peer info */
++	struct auth_domain *	rq_gssclient;	/* "gss/"-style peer info */
+ 	struct svc_cacherep *	rq_cacherep;	/* cache info */
+ 	struct knfsd_fh *	rq_reffh;	/* Referrence filehandle, used to
+ 						 * determine what device number
+diff --git a/include/linux/sunrpc/svcauth.h b/include/linux/sunrpc/svcauth.h
+index de92619..22e1ef8 100644
+--- a/include/linux/sunrpc/svcauth.h
++++ b/include/linux/sunrpc/svcauth.h
+@@ -127,6 +127,7 @@ extern struct auth_domain *auth_unix_lookup(struct in_addr addr);
+ extern int auth_unix_forget_old(struct auth_domain *dom);
+ extern void svcauth_unix_purge(void);
+ extern void svcauth_unix_info_release(void *);
++extern int svcauth_unix_set_client(struct svc_rqst *rqstp);
+ 
+ static inline unsigned long hash_str(char *name, int bits)
+ {
+diff --git a/include/linux/sunrpc/svcauth_gss.h b/include/linux/sunrpc/svcauth_gss.h
+index 5a5db16..442b061 100644
+--- a/include/linux/sunrpc/svcauth_gss.h
++++ b/include/linux/sunrpc/svcauth_gss.h
+@@ -22,6 +22,8 @@
+ int gss_svc_init(void);
+ void gss_svc_shutdown(void);
+ int svcauth_gss_register_pseudoflavor(u32 pseudoflavor, char * name);
++u32 svcauth_gss_flavor(struct auth_domain *dom);
++
+ 
+ #endif /* __KERNEL__ */
+ #endif /* _LINUX_SUNRPC_SVCAUTH_GSS_H */
+diff --git a/net/sunrpc/auth_gss/gss_krb5_mech.c b/net/sunrpc/auth_gss/gss_krb5_mech.c
+index 7b19432..03e0b8b 100644
+--- a/net/sunrpc/auth_gss/gss_krb5_mech.c
++++ b/net/sunrpc/auth_gss/gss_krb5_mech.c
+@@ -231,6 +231,7 @@ static struct pf_desc gss_kerberos_pfs[] = {
+ static struct gss_api_mech gss_kerberos_mech = {
+ 	.gm_name	= "krb5",
+ 	.gm_owner	= THIS_MODULE,
++	.gm_oid		= {9, (void *)"\x2a\x86\x48\x86\xf7\x12\x01\x02\x02"},
+ 	.gm_ops		= &gss_kerberos_ops,
+ 	.gm_pf_num	= ARRAY_SIZE(gss_kerberos_pfs),
+ 	.gm_pfs		= gss_kerberos_pfs,
+diff --git a/net/sunrpc/auth_gss/gss_mech_switch.c b/net/sunrpc/auth_gss/gss_mech_switch.c
+index 2687251..5c4e983 100644
+--- a/net/sunrpc/auth_gss/gss_mech_switch.c
++++ b/net/sunrpc/auth_gss/gss_mech_switch.c
+@@ -194,6 +194,21 @@ gss_mech_get_by_pseudoflavor(u32 pseudoflavor)
+ EXPORT_SYMBOL(gss_mech_get_by_pseudoflavor);
+ 
+ u32
++gss_svc_to_pseudoflavor(struct gss_api_mech *gm, u32 service)
++{
++	int i;
++
++	for (i = 0; i < gm->gm_pf_num; i++) {
++		if (gm->gm_pfs[i].service == service) {
++			return gm->gm_pfs[i].pseudoflavor;
++		}
++	}
++	return RPC_AUTH_MAXFLAVOR; /* illegal value */
++}
++
++EXPORT_SYMBOL(gss_svc_to_pseudoflavor);
++
++u32
+ gss_pseudoflavor_to_service(struct gss_api_mech *gm, u32 pseudoflavor)
+ {
+ 	int i;
+diff --git a/net/sunrpc/auth_gss/gss_spkm3_mech.c b/net/sunrpc/auth_gss/gss_spkm3_mech.c
+index 7e15aa6..9331119 100644
+--- a/net/sunrpc/auth_gss/gss_spkm3_mech.c
++++ b/net/sunrpc/auth_gss/gss_spkm3_mech.c
+@@ -217,6 +217,7 @@ static struct pf_desc gss_spkm3_pfs[] = {
+ static struct gss_api_mech gss_spkm3_mech = {
+ 	.gm_name	= "spkm3",
+ 	.gm_owner	= THIS_MODULE,
++	.gm_oid		= {7, "\053\006\001\005\005\001\003"},
+ 	.gm_ops		= &gss_spkm3_ops,
+ 	.gm_pf_num	= ARRAY_SIZE(gss_spkm3_pfs),
+ 	.gm_pfs		= gss_spkm3_pfs,
+diff --git a/net/sunrpc/auth_gss/gss_spkm3_seal.c b/net/sunrpc/auth_gss/gss_spkm3_seal.c
+index 104cbf4..d158635 100644
+--- a/net/sunrpc/auth_gss/gss_spkm3_seal.c
++++ b/net/sunrpc/auth_gss/gss_spkm3_seal.c
+@@ -123,9 +123,6 @@ spkm3_make_token(struct spkm3_ctx *ctx,
+ 
+ 	return  GSS_S_COMPLETE;
+ out_err:
+-	if (md5cksum.data)
+-		kfree(md5cksum.data);
+-
+ 	token->data = NULL;
+ 	token->len = 0;
+ 	return GSS_S_FAILURE;
+@@ -152,7 +149,7 @@ make_spkm3_checksum(s32 cksumtype, struct xdr_netobj *key, char *header,
+ 
+ 	switch (cksumtype) {
+ 		case CKSUMTYPE_HMAC_MD5:
+-			cksumname = "md5";
++			cksumname = "hmac(md5)";
+ 			break;
+ 		default:
+ 			dprintk("RPC:       spkm3_make_checksum:"
+@@ -172,8 +169,12 @@ make_spkm3_checksum(s32 cksumtype, struct xdr_netobj *key, char *header,
+ 	if (err)
+ 		goto out;
+ 
++	err = crypto_hash_init(&desc);
++	if (err)
++		goto out;
++
+ 	sg_set_buf(sg, header, hdrlen);
+-	crypto_hash_update(&desc, sg, 1);
++	crypto_hash_update(&desc, sg, sg->length);
+ 
+ 	xdr_process_buf(body, body_offset, body->len - body_offset,
+ 			spkm3_checksummer, &desc);
+@@ -184,5 +185,3 @@ out:
+ 
+ 	return err ? GSS_S_FAILURE : 0;
+ }
+-
+-EXPORT_SYMBOL(make_spkm3_checksum);
+diff --git a/net/sunrpc/auth_gss/svcauth_gss.c b/net/sunrpc/auth_gss/svcauth_gss.c
+index db298b5..34d6763 100644
+--- a/net/sunrpc/auth_gss/svcauth_gss.c
++++ b/net/sunrpc/auth_gss/svcauth_gss.c
+@@ -743,6 +743,15 @@ find_gss_auth_domain(struct gss_ctx *ctx, u32 svc)
+ 
+ static struct auth_ops svcauthops_gss;
+ 
++u32 svcauth_gss_flavor(struct auth_domain *dom)
++{
++	struct gss_domain *gd = container_of(dom, struct gss_domain, h);
++
++	return gd->pseudoflavor;
++}
++
++EXPORT_SYMBOL(svcauth_gss_flavor);
++
+ int
+ svcauth_gss_register_pseudoflavor(u32 pseudoflavor, char * name)
+ {
+@@ -913,10 +922,23 @@ svcauth_gss_set_client(struct svc_rqst *rqstp)
+ 	struct gss_svc_data *svcdata = rqstp->rq_auth_data;
+ 	struct rsc *rsci = svcdata->rsci;
+ 	struct rpc_gss_wire_cred *gc = &svcdata->clcred;
++	int stat;
+ 
+-	rqstp->rq_client = find_gss_auth_domain(rsci->mechctx, gc->gc_svc);
+-	if (rqstp->rq_client == NULL)
++	/*
++	 * A gss export can be specified either by:
++	 * 	export	*(sec=krb5,rw)
++	 * or by
++	 * 	export gss/krb5(rw)
++	 * The latter is deprecated; but for backwards compatibility reasons
++	 * the nfsd code will still fall back on trying it if the former
++	 * doesn't work; so we try to make both available to nfsd, below.
++	 */
++	rqstp->rq_gssclient = find_gss_auth_domain(rsci->mechctx, gc->gc_svc);
++	if (rqstp->rq_gssclient == NULL)
+ 		return SVC_DENIED;
++	stat = svcauth_unix_set_client(rqstp);
++	if (stat == SVC_DROP)
++		return stat;
+ 	return SVC_OK;
+ }
+ 
+@@ -924,6 +946,7 @@ static inline int
+ gss_write_init_verf(struct svc_rqst *rqstp, struct rsi *rsip)
+ {
+ 	struct rsc *rsci;
++	int        rc;
+ 
+ 	if (rsip->major_status != GSS_S_COMPLETE)
+ 		return gss_write_null_verf(rqstp);
+@@ -932,7 +955,9 @@ gss_write_init_verf(struct svc_rqst *rqstp, struct rsi *rsip)
+ 		rsip->major_status = GSS_S_NO_CONTEXT;
+ 		return gss_write_null_verf(rqstp);
+ 	}
+-	return gss_write_verf(rqstp, rsci->mechctx, GSS_SEQ_WIN);
++	rc = gss_write_verf(rqstp, rsci->mechctx, GSS_SEQ_WIN);
++	cache_put(&rsci->h, &rsc_cache);
++	return rc;
+ }
+ 
+ /*
+@@ -1085,10 +1110,11 @@ svcauth_gss_accept(struct svc_rqst *rqstp, __be32 *authp)
+ 			svc_putnl(resv, GSS_SEQ_WIN);
+ 			if (svc_safe_putnetobj(resv, &rsip->out_token))
+ 				goto drop;
+-			rqstp->rq_client = NULL;
+ 		}
+ 		goto complete;
+ 	case RPC_GSS_PROC_DESTROY:
++		if (gss_write_verf(rqstp, rsci->mechctx, gc->gc_seq))
++			goto auth_err;
+ 		set_bit(CACHE_NEGATIVE, &rsci->h.flags);
+ 		if (resv->iov_len + 4 > PAGE_SIZE)
+ 			goto drop;
+@@ -1126,6 +1152,8 @@ svcauth_gss_accept(struct svc_rqst *rqstp, __be32 *authp)
+ 		}
+ 		svcdata->rsci = rsci;
+ 		cache_get(&rsci->h);
++		rqstp->rq_flavor = gss_svc_to_pseudoflavor(
++					rsci->mechctx->mech_type, gc->gc_svc);
+ 		ret = SVC_OK;
+ 		goto out;
+ 	}
+@@ -1196,13 +1224,7 @@ svcauth_gss_wrap_resp_integ(struct svc_rqst *rqstp)
+ 	if (xdr_buf_subsegment(resbuf, &integ_buf, integ_offset,
+ 				integ_len))
+ 		BUG();
+-	if (resbuf->page_len == 0
+-			&& resbuf->head[0].iov_len + RPC_MAX_AUTH_SIZE
+-			< PAGE_SIZE) {
+-		BUG_ON(resbuf->tail[0].iov_len);
+-		/* Use head for everything */
+-		resv = &resbuf->head[0];
+-	} else if (resbuf->tail[0].iov_base == NULL) {
++	if (resbuf->tail[0].iov_base == NULL) {
+ 		if (resbuf->head[0].iov_len + RPC_MAX_AUTH_SIZE > PAGE_SIZE)
+ 			goto out_err;
+ 		resbuf->tail[0].iov_base = resbuf->head[0].iov_base
+@@ -1318,6 +1340,9 @@ out_err:
+ 	if (rqstp->rq_client)
+ 		auth_domain_put(rqstp->rq_client);
+ 	rqstp->rq_client = NULL;
++	if (rqstp->rq_gssclient)
++		auth_domain_put(rqstp->rq_gssclient);
++	rqstp->rq_gssclient = NULL;
+ 	if (rqstp->rq_cred.cr_group_info)
+ 		put_group_info(rqstp->rq_cred.cr_group_info);
+ 	rqstp->rq_cred.cr_group_info = NULL;
+diff --git a/net/sunrpc/svcauth_unix.c b/net/sunrpc/svcauth_unix.c
+index 2bd23ea..e94fa6b 100644
+--- a/net/sunrpc/svcauth_unix.c
++++ b/net/sunrpc/svcauth_unix.c
+@@ -5,6 +5,7 @@
+ #include <linux/sunrpc/xdr.h>
+ #include <linux/sunrpc/svcsock.h>
+ #include <linux/sunrpc/svcauth.h>
++#include <linux/sunrpc/gss_api.h>
+ #include <linux/err.h>
+ #include <linux/seq_file.h>
+ #include <linux/hash.h>
+@@ -637,7 +638,7 @@ static int unix_gid_find(uid_t uid, struct group_info **gip,
+ 	}
+ }
+ 
+-static int
++int
+ svcauth_unix_set_client(struct svc_rqst *rqstp)
+ {
+ 	struct sockaddr_in *sin = svc_addr_in(rqstp);
+@@ -672,6 +673,8 @@ svcauth_unix_set_client(struct svc_rqst *rqstp)
+ 	return SVC_OK;
+ }
+ 
++EXPORT_SYMBOL(svcauth_unix_set_client);
++
+ static int
+ svcauth_null_accept(struct svc_rqst *rqstp, __be32 *authp)
+ {
+@@ -707,6 +710,7 @@ svcauth_null_accept(struct svc_rqst *rqstp, __be32 *authp)
+ 	svc_putnl(resv, RPC_AUTH_NULL);
+ 	svc_putnl(resv, 0);
+ 
++	rqstp->rq_flavor = RPC_AUTH_NULL;
+ 	return SVC_OK;
+ }
+ 
+@@ -784,6 +788,7 @@ svcauth_unix_accept(struct svc_rqst *rqstp, __be32 *authp)
+ 	svc_putnl(resv, RPC_AUTH_NULL);
+ 	svc_putnl(resv, 0);
+ 
++	rqstp->rq_flavor = RPC_AUTH_UNIX;
+ 	return SVC_OK;
+ 
+ badcred:

@@ -1,0 +1,79 @@
+xenon: add CPU support
+
+This patch adds CPU support for the 'Xenon' CPU used in the 'Xenon' plaform
+(Xbox 360).
+
+I believe the CELL TB bug also applies for the xenon. Microsoft
+describes the bug in "Xbox 360 CPU Performance Update" (which is
+available on http://msdn2.microsoft.com/en-us/xna/aa937787.aspx),
+but I have not verified it's existence.
+
+The Xenon does not support VMX as we know it, but instead an extension called
+"VMX128" (http://biallas.net/doc/vmx128/vmx128.txt). However, VMX128 is
+unfortunately not backward compatible with VMX, as some instructions are 
+missing. As there is currently no VMX128 support in the kernel, we don't use
+it yet.
+
+Signed-off-by: Felix Domke <tmbinc@elitedvb.net>
+
+---
+ arch/powerpc/kernel/cputable.c |   11 +++++++++++
+ include/asm-powerpc/cputable.h |    9 +++++++--
+ 2 files changed, 18 insertions(+), 2 deletions(-)
+
+Index: linux-2.6.21/arch/powerpc/kernel/cputable.c
+===================================================================
+--- linux-2.6.21.orig/arch/powerpc/kernel/cputable.c	2007-05-01 14:12:29.000000000 +0200
++++ linux-2.6.21/arch/powerpc/kernel/cputable.c	2007-05-01 14:12:32.000000000 +0200
+@@ -377,6 +377,17 @@
+ 		.oprofile_type		= PPC_OPROFILE_CELL,
+ 		.platform		= "ppc-cell-be",
+ 	},
++	{	/* Xenon */
++		.pvr_mask		= 0xffff0000,
++		.pvr_value	= 0x00710000,
++		.cpu_name		= "Xenon",
++		.cpu_features		= CPU_FTRS_XENON,
++		.cpu_user_features	= COMMON_USER_PPC64 |
++			PPC_FEATURE_SMT,
++		.icache_bsize		= 128,
++		.dcache_bsize		= 128,
++		.platform		= "xenon",
++	},
+ 	{	/* PA Semi PA6T */
+ 		.pvr_mask		= 0x7fff0000,
+ 		.pvr_value		= 0x00900000,
+Index: linux-2.6.21/include/asm-powerpc/cputable.h
+===================================================================
+--- linux-2.6.21.orig/include/asm-powerpc/cputable.h	2007-05-01 14:12:29.000000000 +0200
++++ linux-2.6.21/include/asm-powerpc/cputable.h	2007-05-01 14:12:32.000000000 +0200
+@@ -348,6 +348,10 @@
+ 	    CPU_FTR_HPTE_TABLE | CPU_FTR_PPCAS_ARCH_V2 | CPU_FTR_CTRL | \
+ 	    CPU_FTR_ALTIVEC_COMP | CPU_FTR_MMCRA | CPU_FTR_SMT | \
+ 	    CPU_FTR_PAUSE_ZERO | CPU_FTR_CI_LARGE_PAGE | CPU_FTR_CELL_TB_BUG)
++#define CPU_FTRS_XENON (CPU_FTR_SPLIT_ID_CACHE | CPU_FTR_USE_TB | \
++	    CPU_FTR_HPTE_TABLE | CPU_FTR_PPCAS_ARCH_V2 | \
++	    CPU_FTR_MMCRA | CPU_FTR_SMT | \
++	    CPU_FTR_CTRL | CPU_FTR_CI_LARGE_PAGE | CPU_FTR_CELL_TB_BUG )
+ #define CPU_FTRS_PA6T (CPU_FTR_SPLIT_ID_CACHE | CPU_FTR_USE_TB | \
+ 	    CPU_FTR_HPTE_TABLE | CPU_FTR_PPCAS_ARCH_V2 | \
+ 	    CPU_FTR_ALTIVEC_COMP | CPU_FTR_CI_LARGE_PAGE | \
+@@ -359,7 +363,7 @@
+ #define CPU_FTRS_POSSIBLE	\
+ 	    (CPU_FTRS_POWER3 | CPU_FTRS_RS64 | CPU_FTRS_POWER4 |	\
+ 	    CPU_FTRS_PPC970 | CPU_FTRS_POWER5 | CPU_FTRS_POWER6 |	\
+-	    CPU_FTRS_CELL | CPU_FTRS_PA6T)
++	    CPU_FTRS_CELL | CPU_FTRS_XENON | CPU_FTRS_PA6T)
+ #else
+ enum {
+ 	CPU_FTRS_POSSIBLE =
+@@ -399,7 +403,8 @@
+ #define CPU_FTRS_ALWAYS		\
+ 	    (CPU_FTRS_POWER3 & CPU_FTRS_RS64 & CPU_FTRS_POWER4 &	\
+ 	    CPU_FTRS_PPC970 & CPU_FTRS_POWER5 & CPU_FTRS_POWER6 &	\
+-	    CPU_FTRS_CELL & CPU_FTRS_PA6T & CPU_FTRS_POSSIBLE)
++	    CPU_FTRS_CELL & CPU_FTRS_XENON & CPU_FTRS_PA6T & \
++	    CPU_FTRS_POSSIBLE)
+ #else
+ enum {
+ 	CPU_FTRS_ALWAYS =

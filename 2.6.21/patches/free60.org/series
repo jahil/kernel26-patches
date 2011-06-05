@@ -1,0 +1,9 @@
+pci_ids.h.diff
+linux-2.6.21-xenon-cpu.diff
+linux-2.6.21-xenon-platform.diff
+linux-2.6.21-xenon-ugly-udbg.diff
+linux-2.6.21-xenon-enet.diff
+linux-2.6.21-xenon-sata.diff
+linux-2.6.21-xenon-smc.diff
+linux-2.6.21-xenon-ugly-fb.diff
+interlace.diff

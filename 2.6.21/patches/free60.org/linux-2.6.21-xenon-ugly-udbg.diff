@@ -1,0 +1,92 @@
+[RFC] xenon: udbg support (ugly)
+
+This adds support for a serial kernel output on the Xenon platform.
+
+Signed-off-by: Felix Domke <tmbinc@elitedvb.net>
+
+---
+ arch/powerpc/Kconfig.debug            |    6 ++++++
+ arch/powerpc/kernel/misc_64.S         |    2 +-
+ arch/powerpc/kernel/udbg.c            |    2 ++
+ arch/powerpc/platforms/xenon/Makefile |    2 +-
+ arch/powerpc/platforms/xenon/udbg.c   |   20 ++++++++++++++++++++
+ 5 files changed, 30 insertions(+), 2 deletions(-)
+
+Index: linux-2.6.21/arch/powerpc/kernel/misc_64.S
+===================================================================
+--- linux-2.6.21.orig/arch/powerpc/kernel/misc_64.S	2007-05-01 14:12:29.000000000 +0200
++++ linux-2.6.21/arch/powerpc/kernel/misc_64.S	2007-05-01 14:12:33.000000000 +0200
+@@ -247,7 +247,7 @@
+ 	blr
+ 
+ 
+-#if defined(CONFIG_PPC_PMAC) || defined(CONFIG_PPC_MAPLE)
++#if defined(CONFIG_PPC_PMAC) || defined(CONFIG_PPC_MAPLE) || defined(CONFIG_PPC_XENON)
+ /*
+  * Do an IO access in real mode
+  */
+Index: linux-2.6.21/arch/powerpc/kernel/udbg.c
+===================================================================
+--- linux-2.6.21.orig/arch/powerpc/kernel/udbg.c	2007-05-01 14:12:29.000000000 +0200
++++ linux-2.6.21/arch/powerpc/kernel/udbg.c	2007-05-01 14:12:33.000000000 +0200
+@@ -51,6 +51,8 @@
+ 	udbg_init_pas_realmode();
+ #elif defined(CONFIG_BOOTX_TEXT)
+ 	udbg_init_btext();
++#elif defined(CONFIG_PPC_EARLY_DEBUG_XENON)
++	udbg_init_xenon();
+ #endif
+ }
+ 
+Index: linux-2.6.21/arch/powerpc/Kconfig.debug
+===================================================================
+--- linux-2.6.21.orig/arch/powerpc/Kconfig.debug	2007-05-01 14:12:29.000000000 +0200
++++ linux-2.6.21/arch/powerpc/Kconfig.debug	2007-05-01 14:12:33.000000000 +0200
+@@ -199,6 +199,12 @@
+ 	help
+ 	  Select this to enable early debugging for Celleb with Beat.
+ 
++config PPC_EARLY_DEBUG_XENON
++	bool "Xenon serial port"
++	depends on PPC_XENON
++	help
++	  Select this to enable early debugging via Xenon serial port.
++
+ endchoice
+ 
+ endmenu
+Index: linux-2.6.21/arch/powerpc/platforms/xenon/udbg.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ linux-2.6.21/arch/powerpc/platforms/xenon/udbg.c	2007-05-01 14:12:33.000000000 +0200
+@@ -0,0 +1,20 @@
++#include <asm/udbg.h>
++#include <asm/io.h>
++
++extern u8 real_readb(volatile u8 __iomem  *addr);
++extern void real_writeb(u8 data, volatile u8 __iomem *addr);
++
++static void udbg_xenon_real_putc(char c)
++{
++	if (c == '\n')
++		udbg_xenon_real_putc('\r');
++	while (!(real_readb((void*)0x200ea001018ULL)&0x02));
++	real_writeb(c, (void*)0x200ea001014ULL);
++}
++
++int udbg_init_xenon(void)
++{
++	udbg_putc = udbg_xenon_real_putc;
++
++	return 0;
++}
+Index: linux-2.6.21/arch/powerpc/platforms/xenon/Makefile
+===================================================================
+--- linux-2.6.21.orig/arch/powerpc/platforms/xenon/Makefile	2007-05-01 14:12:33.000000000 +0200
++++ linux-2.6.21/arch/powerpc/platforms/xenon/Makefile	2007-05-01 14:12:33.000000000 +0200
+@@ -1,4 +1,4 @@
+-obj-$(CONFIG_PPC_XENON)		+= setup.o interrupt.o pci.o
++obj-$(CONFIG_PPC_XENON)		+= setup.o interrupt.o pci.o udbg.o
+ ifeq ($(CONFIG_SMP),y)
+ obj-$(CONFIG_PPC_XENON)		+= smp.o
+ endif

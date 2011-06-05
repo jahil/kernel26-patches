@@ -1,0 +1,27 @@
+[RFC] xenon: add platform support
+
+This patch adds platform support for the 'Xenon' platform (Xbox 360).
+
+I believe the CELL TB bug also applies for the xenon. Microsoft
+describes the bug in "Xbox 360 CPU Performance Update" (which is 
+available on http://msdn2.microsoft.com/en-us/xna/aa937787.aspx),
+but I have not verified it's existence. 
+
+Signed-off-by: Felix Domke <tmbinc@elitedvb.net>
+
+---
+ arch/powerpc/Kconfig                     |    7 
+ arch/powerpc/boot/Makefile               |    5 
+ arch/powerpc/kernel/cputable.c           |   12 +
+ arch/powerpc/platforms/Makefile          |    1 
+ arch/powerpc/platforms/xenon/Makefile    |    4 
+ arch/powerpc/platforms/xenon/interrupt.c |  310 +++++++++++++++++++++++++++++++
+ arch/powerpc/platforms/xenon/interrupt.h |    9 
+ arch/powerpc/platforms/xenon/pci.c       |  189 ++++++++++++++++++
+ arch/powerpc/platforms/xenon/pci.h       |    6 
+ arch/powerpc/platforms/xenon/setup.c     |   92 +++++++++
+ arch/powerpc/platforms/xenon/smp.c       |  134 +++++++++++++
+ arch/powerpc/platforms/xenon/smp.h       |    8 
+ include/asm-powerpc/cputable.h           |    9 
+ 13 files changed, 784 insertions(+), 2 deletions(-)
+

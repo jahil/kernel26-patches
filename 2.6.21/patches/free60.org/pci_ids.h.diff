@@ -1,0 +1,18 @@
+[RFC] xenon: add PCI Vendor ID: Microsoft
+
+Signed-off-by: Felix Domke <tmbinc@elitedvb.net>
+
+---
+ include/linux/pci_ids.h |    2 ++
+ 1 file changed, 2 insertions(+)
+
+Index: linux-2.6.21/include/linux/pci_ids.h
+===================================================================
+--- linux-2.6.21.orig/include/linux/pci_ids.h	2007-05-01 14:12:29.000000000 +0200
++++ linux-2.6.21/include/linux/pci_ids.h	2007-05-01 14:12:32.000000000 +0200
+@@ -2408,3 +2408,5 @@
+ 
+ #define PCI_VENDOR_ID_QUICKNET		0x15E2
+ #define PCI_DEVICE_ID_QUICKNET_XJ	0x0500
++
++#define PCI_VENDOR_ID_MICROSOFT		0x1414

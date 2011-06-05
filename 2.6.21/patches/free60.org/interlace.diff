@@ -1,0 +1,34 @@
+--- linux-2.6.21.orig/drivers/video/xenonfb.c	2007-05-02 20:03:43.906027946 +0200
++++ linux-2.6.21/drivers/video/xenonfb.c	2007-05-02 20:03:28.873088446 +0200
+@@ -182,17 +182,20 @@
+ 	int nyres = (vyres - offset_y * 2) * 0x1000 / (scl_v/0x1000) + black_top * 2;
+ 	printk("native resolution: %d x %d\n", nxres, nyres);
+ 
+-	gfx[0x44/4] = 0; // disable black bar
+-	gfx[0x48/4] = 0;
+-	gfx[0x4c/4] = 0;
+-	gfx[0x50/4] = 0;
+-
+-	gfx[0x590/4] = 0; // disable scaling
+-	gfx[0x584/4] = (nxres << 16) | nyres;
+-	gfx[0x580/4] = 0; // disable offset
+-	gfx[0x5e8/4] = (nxres * 4) / 0x10 - 1; // fix pitch
+-	gfx[0x134/4] = nxres;
+-	gfx[0x138/4] = nyres;
++	/* don't update interlaced displays */
++	if (gfx[0x30/4] == 0) {
++		gfx[0x44/4] = 0; // disable black bar
++		gfx[0x48/4] = 0;
++		gfx[0x4c/4] = 0;
++		gfx[0x50/4] = 0;
++
++		gfx[0x590/4] = 0; // disable scaling
++		gfx[0x584/4] = (nxres << 16) | nyres;
++		gfx[0x580/4] = 0; // disable offset
++		gfx[0x5e8/4] = (nxres * 4) / 0x10 - 1; // fix pitch
++		gfx[0x134/4] = nxres;
++		gfx[0x138/4] = nyres;
++	}
+ 
+ 	ai->base &= ~0xFFFF; // page-align.
+ 
