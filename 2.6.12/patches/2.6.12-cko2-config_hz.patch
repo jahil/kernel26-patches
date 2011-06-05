@@ -1,0 +1,13 @@
+Index: linux/arch/i386/Kconfig
+===================================================================
+--- linux.orig/arch/i386/Kconfig
++++ linux/arch/i386/Kconfig
+@@ -1007,7 +1007,7 @@ config HZ
+ 	int
+ 	default "1000" if HZ_1000
+ 	default "500" if HZ_500
+-	default "200" if HZ_200
++	default "250" if HZ_250
+ 	default "100" if HZ_100
+ 
+ endmenu

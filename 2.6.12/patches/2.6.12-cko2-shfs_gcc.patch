@@ -1,0 +1,90 @@
+diff -uNr linux-2.6.12-cko2.orig/fs/shfs/dir.c linux-2.6.12-cko2/fs/shfs/dir.c
+--- linux-2.6.12-cko2.orig/fs/shfs/dir.c	2005-07-04 15:35:35.000000000 +0200
++++ linux-2.6.12-cko2/fs/shfs/dir.c	2005-07-04 15:42:33.000000000 +0200
+@@ -19,6 +19,8 @@
+ #include "shfs_debug.h"
+ #include "proc.h"
+ 
++static struct dentry_operations shfs_dentry_operations;
++	
+ static int
+ shfs_dir_open(struct inode *inode, struct file *filp)
+ {
+diff -uNr linux-2.6.12-cko2.orig/fs/shfs/shell.c linux-2.6.12-cko2/fs/shfs/shell.c
+--- linux-2.6.12-cko2.orig/fs/shfs/shell.c	2005-07-04 15:35:35.000000000 +0200
++++ linux-2.6.12-cko2/fs/shfs/shell.c	2005-07-04 15:42:33.000000000 +0200
+@@ -225,6 +225,7 @@
+ 	int c = 0;
+ 	int is_space = 1;
+ 	int device = 0;
++	char *start = s;
+ 
+ 	while (*s) {
+ 		if (c == DIR_COLS)
+@@ -239,17 +240,20 @@
+ 						s++;
+ 				}
+ 				*s = '\0';
++				start = s+1;
+ 				is_space = 1;
++			} else {
++				if (c != DIR_NAME)
++					start = s+1;
+ 			}
+ 		} else {
+ 			if (is_space) {
+ 				/* (b)lock/(c)haracter device hack */
+-				col[c++] = s;
++				col[c++] = start;
+ 				is_space = 0;
+ 				if ((c-1 == DIR_PERM) && ((*s == 'b')||(*s == 'c'))) {
+ 					device = 1;
+ 				}
+-
+ 			}
+ 		}
+ 		s++;
+@@ -970,11 +974,11 @@
+ 
+ 	s = info->sockbuf;
+ 	if ((p = strsep(&s, " ")))
+-		attr->f_blocks = simple_strtoull(p, NULL, 10);
++		attr->f_blocks = simple_strtoull(p, NULL, 10) >> 2;
+ 	if ((p = strsep(&s, " ")))
+-		attr->f_bfree = attr->f_blocks - simple_strtoull(p, NULL, 10);
++		attr->f_bfree = attr->f_blocks - (simple_strtoull(p, NULL, 10) >> 2);
+ 	if ((p = strsep(&s, " ")))
+-		attr->f_bavail = simple_strtoull(p, NULL, 10);
++		attr->f_bavail = simple_strtoull(p, NULL, 10) >> 2;
+ 
+ 	result = sock_readln(info, info->sockbuf, SOCKBUF_SIZE);
+ 	if (result < 0)
+diff -uNr linux-2.6.12-cko2.orig/include/linux/shfs_fs.h linux-2.6.12-cko2/include/linux/shfs_fs.h
+--- linux-2.6.12-cko2.orig/include/linux/shfs_fs.h	2005-07-04 15:35:50.000000000 +0200
++++ linux-2.6.12-cko2/include/linux/shfs_fs.h	2005-07-04 15:42:33.000000000 +0200
+@@ -50,7 +50,6 @@
+ #define ROUND_TO_MINS(x) do { (x).tv_sec = ((x).tv_sec / 60) * 60; (x).tv_nsec = 0; } while (0)
+ 
+ /* shfs/dir.c */
+-extern struct dentry_operations shfs_dentry_operations;
+ extern struct file_operations shfs_dir_operations;
+ extern struct inode_operations shfs_dir_inode_operations;
+ extern void shfs_new_dentry(struct dentry *dentry);
+diff -uNr linux-2.6.12-cko2.orig/include/linux/shfs_fs_sb.h linux-2.6.12-cko2/include/linux/shfs_fs_sb.h
+--- linux-2.6.12-cko2.orig/include/linux/shfs_fs_sb.h	2005-07-04 15:35:50.000000000 +0200
++++ linux-2.6.12-cko2/include/linux/shfs_fs_sb.h	2005-07-04 15:42:33.000000000 +0200
+@@ -38,10 +38,10 @@
+ 	struct shfs_fileops fops;
+ 	int version;
+ 	int ttl;
+-	__kernel_uid_t uid;
+-	__kernel_gid_t gid;
+-	__kernel_mode_t root_mode;
+-	__kernel_mode_t fmask;
++	uid_t uid;
++	gid_t gid;
++	mode_t root_mode;
++	mode_t fmask;
+ 	char mount_point[SHFS_PATH_MAX];
+ 	struct semaphore sock_sem;	/* next 4 vars are guarded */
+ 	struct file *sock;

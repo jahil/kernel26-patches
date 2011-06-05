@@ -1,0 +1,4337 @@
+diff -Nru linux-2.6.12/security/lids/include/linux/lidsif.h linux/security/lids/include/linux/lidsif.h
+--- linux-2.6.12/security/lids/include/linux/lidsif.h	1969-12-31 16:00:00.000000000 -0800
++++ linux/security/lids/include/linux/lidsif.h	2004-12-31 20:56:04.000000000 -0800
+@@ -0,0 +1,218 @@
++#ifndef LIDSIF_H
++#define LIDSIF_H
++
++/*
++ * This file contains every definitions needed for interfacing
++ * kernel part and user space part of LIDS
++ *
++ */
++
++/* 
++ * If the file is not compiled for the kernel,
++ * it must include  replacement file which contains
++ * a copy of every internal structure needed 
++ *
++ */
++#ifdef __KERNEL__
++#include <linux/kdev_t.h>
++#include <linux/capability.h>
++#else
++#include <kernel_inc.h>
++#include <linux/dcache.h>
++#include <limits.h>
++#endif
++
++/* LIDS add-on Capabilities */
++/* Allow to hide the proceed from the system */
++#define CAP_HIDDEN      29
++
++/* Allow the process to KILL the init children */
++#define CAP_KILL_PROTECTED 	30
++
++#define CAP_PROTECTED		31
++
++/* 
++ * Here begin the common structures, shared by LIDS and 
++ * lidstools
++ *
++ */
++
++#define LIDS_FLAGS_LIDS_ON            	0
++#define LIDS_FLAGS_RELOAD_CONF        	1
++#define LIDS_FLAGS_LIDS_LOCAL_ON      	2
++#define LIDS_FLAGS_STATUS      		3
++#define LIDS_FLAGS_INIT			4
++#define LIDS_FLAGS_POSTBOOT		5
++#define LIDS_FLAGS_SHUTDOWN		6
++#define LIDS_FLAGS_ACL_DISCOVERY_ON	7
++
++/*
++ *      ACL target.
++ */
++
++#define LIDS_DENY       0	/* DENY ACCESS */
++#define LIDS_READONLY   1	/* Read Only File */
++#define LIDS_APPEND     2	/* APPEND ONLY FILE */
++#define LIDS_WRITE      4	/* Protect Writing to device */
++#define LIDS_IGNORE     8	/* Ignore the protection */
++#define LIDS_CAP        16	/* acl type is capability */
++#define LIDS_SOCKET	32	/* acl type is socket */
++
++/*  SOCKET CAP */
++
++#define LIDS_SOCKET_CREATE	0
++#define LIDS_SOCKET_CONNECT	1
++#define LIDS_SOCKET_BIND	2
++#define LIDS_SOCKET_LISTEN	3
++#define LIDS_SOCKET_ACCEPT	4
++#define LIDS_SOCKET_SENDMSG	5
++#define LIDS_SOCKET_RECVMSG	6
++#define LIDS_SOCKET_GETSOCKNAME	7
++#define LIDS_SOCKET_GETPEERNAME	8
++#define LIDS_SOCKET_GETSOCKOPT	9
++#define LIDS_SOCKET_SETSOCKOPT	10
++#define LIDS_SOCKET_SHUTDOWN	11
++#define LIDS_SOCKET_CREATE_TCP	12
++#define LIDS_SOCKET_CREATE_UDP	13
++#define LIDS_SOCKET_NF_MARK	14
++#define LIDS_EXEC		15
++
++/* LIDS STATE */
++#define LIDS_STATE_GLOBAL	0
++#define LIDS_STATE_BOOT		1
++#define LIDS_STATE_POSTBOOT	2
++#define LIDS_STATE_SHUTDOWN	3
++
++/* CONF FILE definition */
++#define LIDS_CONF_DIR "/etc/lids"
++
++#define LIDS_PW_FILE "/etc/lids/lids.pw"
++#define LIDS_PW_LEN  32
++
++#define XATTR_NAME_LIDS "security.lids"
++#define XATTR_NAME_LIDS_BOOT "security.lids.boot"
++#define XATTR_NAME_LIDS_POSTBOOT "security.lids.postboot"
++#define XATTR_NAME_LIDS_SHUTDOWN "security.lids.shutdown"
++
++#define LIDS_BOOT_ACL_FILE	"/etc/lids/lids.boot.acl"	/* the acligure boot file */
++#define LIDS_POSTBOOT_ACL_FILE	"/etc/lids/lids.postboot.acl"	/* the acligure boot file */
++#define LIDS_SHUTDOWN_ACL_FILE	"/etc/lids/lids.shutdown.acl"	/* the acligure boot file */
++/* 
++ * Me ? Paranoiac !?
++ *
++ * The magic numbers are all around the encrypted password.
++ * They have a null byte to bother ASCIIZ functions.
++ */
++
++#define LIDS_MAGIC   0x5344494c
++#define LIDS_MAGIC_1 0x004e6741
++#define LIDS_MAGIC_2 0x68002d62
++#define LIDS_MAGIC_3 0xe68400c3
++#define LIDS_MAGIC_4 0xd94aa400
++
++#define LIDS_FLAG_FULL_SET            (~0)
++#define LIDS_FLAG_TO_MASK(flag)       (1 << (flag))
++#define lids_flag_raise(flag, bit)    ((flag) |= LIDS_FLAG_TO_MASK(bit))
++#define lids_flag_lower(flag, bit)    ((flag) &= ~LIDS_FLAG_TO_MASK(bit))
++#define lids_flag_raised(flag, bit)   ((flag) & LIDS_FLAG_TO_MASK(bit) & LIDS_FLAG_FULL_SET)
++
++#define LIDS_TIME_ITEM  2
++#define LIDS_PORT_ITEM  16
++#define LIDS_MAX_TRY 	3
++#define LIDS_TTW_FAIL	3
++
++#define LIDS_MAX_XATTR_LEN 	8096
++
++typedef __u32 lids_flags_t;
++
++typedef char passwd_t[64];
++
++typedef struct lids_locks_s {
++	__u32 magic1;
++	kernel_cap_t cap_bset;
++	__u32 magic2;
++	lids_flags_t flags;
++	__u32 magic3;
++	passwd_t passwd;
++	__u32 magic4;
++} __attribute__ ((__packed__))  lids_locks_t ;
++
++struct lids_s_dev {
++	__u32 major;
++	__u32 minor;
++} __attribute__ ((__packed__));
++
++struct lids_s_inode {
++	__u32 ino;
++	struct lids_s_dev dev;
++} __attribute__ ((__packed__));
++struct lids_cap {
++	int inherit;		/* this capabilities inherit level */
++} __attribute__ ((__packed__));
++
++struct lids_object_acl {
++	__u32	sid;		/* subject id*/
++	__u32	oid;		/* object id*/
++	struct 	lids_s_inode inode;	/* point the the original inode */
++	__u32 	type;		/* READ WRITE APPEND DENY  */
++	__u32 	inherit;		/* the inherit level */
++	struct 	lids_object_acl *next;
++#ifdef __KERNEL__
++	char name[64];			/* filename of the inode */
++#else
++	char name[PATH_MAX];			/* filename of the inode */
++#endif
++} __attribute__ ((__packed__)) ;
++
++struct lids_subject_acl {
++	__u32	sid;				/* sid */
++	__u32 	ext_cap;			/* socket */
++	__u32	sys_cap;			/* Move from tsk */
++	__u32	o_acl_num;			/* the object number */
++	__u32 	port[16][2];			/* bind port */
++	struct lids_cap cap_inherit[32];	/* inheritable array */
++	struct lids_object_acl *o_acl;		/* object acl */
++} __attribute__ ((__packed__)) ;
++
++#ifdef __KERNEL__
++struct lids_task_acl {
++	__u32 magic;
++	struct task_struct *task;	/* back to the pointer */
++	struct lids_subject_acl *s_acl;
++	struct list_head list;
++	spinlock_t t_lock;	/* lock */
++
++} __attribute__ ((__packed__));
++#endif
++struct lids_perm {
++	__u32 sid;
++	__u32 oid;
++	__u32 type;
++} __attribute__ ((__packed__));
++
++struct lids_inode_acl {
++	__u32	magic;
++	__u32 	type;			/* READ WRITE APPEND DENY  */
++	__u32 	version;		/* current vesion of acl*/
++	__u32	flags;			/* inode flags */
++	struct lids_s_inode inode;	/* point the the original inode */
++	struct lids_perm perm[64];	/* the sid/oid that have perm on this file */
++	struct lids_subject_acl *s_acl;
++#ifdef __KERNEL__
++	char name[64];			/* filename of the inode */
++#else
++	char name[PATH_MAX];			/* filename of the inode */
++#endif
++}  __attribute__ ((__packed__)) ;
++struct lids_acl_header{
++	__u32 magic;		/* MAGIC */
++	__u32 version;		/* ACL Version */
++	__u32 sys_cap;		/* Overall Cap */
++	__u32 ext_cap;		/* Overall Ext Cap */
++	__u32 discovery;   	/* Discovery Mode*/
++	__u32 search;   	/* Search Matrix*/
++	__u32 u_size;		/* user size */
++	struct lids_s_inode lidsadm; 	/* lidsadm's inode value*/
++} __attribute__ ((__packed__));
++
++#endif
+diff -Nru linux-2.6.12/security/lids/include/linux/lidsext.h linux/security/lids/include/linux/lidsext.h
+--- linux-2.6.12/security/lids/include/linux/lidsext.h	1969-12-31 16:00:00.000000000 -0800
++++ linux/security/lids/include/linux/lidsext.h	2004-12-31 20:56:04.000000000 -0800
+@@ -0,0 +1,115 @@
++#ifndef LIDSEXT_H
++#define LIDSEXT_H
++
++/*
++ * This file contains LIDS macros needed for logging and debugging,
++ * used about everywhere in the kernel.
++ *
++ */
++
++/* needed extern declarations */
++
++#include <linux/config.h>
++
++extern void lids_cap_log(int);
++extern int lids_cap_time_checker(const int);
++extern int lids_local_off(void);
++extern int lids_reload_conf;
++extern int lids_load;
++extern int lids_local_on;
++extern int lids_local_pid;
++extern int lids_first_time;
++extern int lids_state;
++
++#ifdef CONFIG_LIDS_DEBUG
++#define LIDS_DEBUG
++#endif
++
++#define LIDS_STR2(x) #x
++#define LIDS_STR(X) LIDS_STR2(X)
++
++#ifdef LIDS_DEBUG
++#define LIDS_DBG(fmt, arg...)			\
++	printk(KERN_DEBUG "LIDS: %s:%i: " fmt,	\
++		__FUNCTION__, __LINE__, ## arg)
++#else
++#define LIDS_DBG(fmt, arg...)
++#endif
++
++#ifdef CONFIG_LIDS_RESTRICT_MODE_SWITCH
++
++static inline int
++lids_check_tty(struct tty_struct *tty)
++{
++	return (tty && !(0
++#ifdef CONFIG_LIDS_MODE_SWITCH_CONSOLE
++			 || tty->driver->type == TTY_DRIVER_TYPE_CONSOLE
++#endif
++#ifdef CONFIG_LIDS_MODE_SWITCH_SERIAL
++			 || tty->driver->type == TTY_DRIVER_TYPE_SERIAL
++#endif
++#ifdef CONFIG_LIDS_MODE_SWITCH_PTY
++			 || tty->driver->type == TTY_DRIVER_TYPE_PTY
++#endif
++		));
++}
++#else
++static inline int
++lids_check_tty(struct tty_struct *tty)
++{
++	return 0;
++}
++#endif				/* CONFIG_LIDS_RESTRICT_MODE_SWITCH */
++
++extern void lids_log(int flood, const char *message, ...);
++
++#define LIDS_TIMEOUT_AFTER_FLOOD 60
++
++#ifdef CONFIG_LIDS_NO_FLOOD_LOG
++
++#define lids_security_alert(message, args...)                                       \
++do {                                                                       	    \
++	if (lids_load && lids_local_load) {					    \
++		static unsigned long warning_time = 0, no_flood_yet = 0;            \
++		static spinlock_t lids_security_alert_lock = SPIN_LOCK_UNLOCKED;    \
++									   	    \
++		spin_lock(&lids_security_alert_lock);                               \
++										    \
++/* Make sure at least LIDS_TIMEOUT_AFTER_FLOOD 			   	    \
++ * passed since the last warning logged 				   	    \
++ */ 									   	    \
++		if ((!warning_time) || 					            \
++		    (jiffies-warning_time > LIDS_TIMEOUT_AFTER_FLOOD*HZ)) {  \
++			warning_time = jiffies; no_flood_yet = 1;                   \
++			lids_log(0, message , ## args);                             \
++		} else if (no_flood_yet) {                                          \
++			warning_time = jiffies; no_flood_yet = 0;                   \
++			lids_log(1, message , ## args);                             \
++		}                                                           	    \
++		spin_unlock(&lids_security_alert_lock);                             \
++	}									    \
++} while(0)
++
++#else				/* CONFIG_LIDS_NO_FLOOD_LOG */
++
++#define lids_security_alert(message, args...)                                      \
++do {                                                                       	   \
++	if (lids_load && lids_local_load) {					   \
++		static spinlock_t lids_security_alert_lock = SPIN_LOCK_UNLOCKED;   \
++										   \
++		spin_lock(&lids_security_alert_lock);                              \
++		lids_log(0, message , ## args);                                    \
++		spin_unlock(&lids_security_alert_lock);                            \
++	}				   					   \
++} while(0)
++
++#endif				/* CONFIG_LIDS_NO_FLOOD_LOG */
++
++//#ifdef CONFIG_LIDS_ALLOW_SWITCH
++#if 1
++#define lids_local_load ( lids_local_on || (!lids_local_off()) )
++#else
++#define lids_local_load 1
++#endif				/* CONFIG_LIDS_ALLOW_SWITCH */
++
++#endif				/* LIDSEXT_H */
+diff -Nru linux-2.6.12/security/lids/include/linux/lids.h linux/security/lids/include/linux/lids.h
+--- linux-2.6.12/security/lids/include/linux/lids.h	1969-12-31 16:00:00.000000000 -0800
++++ linux/security/lids/include/linux/lids.h	2005-03-14 11:44:08.000000000 -0800
+@@ -0,0 +1,100 @@
++#ifndef LIDS_H
++#define LIDS_H
++
++/*
++ * This file include everything needed for LIDS internals.
++ * The biggest part is included from in lidsif.h
++ *
++ */
++#include <linux/kernel.h>
++#include <linux/sysctl.h>
++#include <linux/slab.h>
++#include <linux/tty.h>
++#include <linux/binfmts.h>
++
++#include "lidsext.h"
++#include "lidsif.h"
++
++#ifndef KERNEL_VERSION
++#define KERNEL_VERSION(x,y,z) (((x)<<16)+((y)<<8)+(z))
++#endif
++
++#define LIDS_VERSION	"2.2.1rc2"
++
++#define LIDS_ERROR(value)	lids_acl_discovery?0:value
++
++#define LIDS_SHELLCODE_LENGTH 512
++#ifdef CONFIG_X86
++#define LIDS_SHELLCODE_STRING "\xcd\x80"	/* X86 int 80 */
++#endif
++#ifdef CONFIG_SPARC32
++#define LIDS_SHELLCODE_STRING "\x91\xd0\x20"	/* SPARC,  ta */
++#endif
++#ifdef CONFIG_PPC
++#define LIDS_SHELLCODE_STRING " \x44\xFF\xFF\x02\x7C\xE0\x3B\x78"	/* system call, PPC  */
++#endif
++#ifdef CONFIG_MIPS
++#define LIDS_SHELLCODE_STRING "\x02\x04\x8d\x0c"	/* system call, MIPS from irix  */
++#endif
++
++extern kernel_cap_t lids_cap_val;
++extern struct lids_s_inode lidsadm;
++extern char lids_state_name[3][9];
++extern int lids_load;		/* 1 = load ids protection , 0 = don't load */
++extern int lids_init_setup;	/* 1 = init the seutp, 0 = do not */
++extern lids_flags_t lids_flags;	/* 1 = load ids protection , 0 = don't load */
++extern int lids_local_on;
++extern lids_flags_t lids_flags;
++extern int lids_acl_discovery;	/* 1 = in ACL DISCOVERY MODE, 0 = in normal mode */
++extern int lids_update_version;
++
++int _open_namei(const char *pathname, int flag, int mode, struct nameidata *nd);
++struct file *_filp_open(const char *filename, int flags, int mode);
++
++extern void lids_free_task_security(struct task_struct *tsk);
++
++int lids_init_task_acl(struct lids_task_acl *acl);
++int lids_compute_acls(struct lids_subject_acl *current_s_acl,
++		      struct lids_subject_acl *new_s_acl,
++		      struct lids_subject_acl *computed_s_acl, int protect);
++void lids_set_task_acl(struct lids_subject_acl *acl, struct task_struct *task);
++void lids_free_lids_task_acl(struct lids_task_acl *acl);
++/*
++int lids_get_inode_security(struct dentry *o_dentry,
++				   struct inode *inode);
++*/
++extern struct lids_inode_acl * lids_do_get_acl(struct inode *inode); 
++
++
++extern struct lids_sys_acl *lids_search_acl(unsigned long int ino, dev_t dev,
++					    unsigned long lids_curr);
++extern int lids_check_base(struct dentry *dentry, int flag);
++extern int lids_check_hidden_inode(unsigned long int ino, dev_t dev);
++extern int lids_bind_checker(const int);
++extern int lids_local_off(void);
++extern int lids_execve(struct linux_binprm *);
++extern int lids_execve_check_envp(struct linux_binprm *bprm);
++extern int lids_fork_task(struct task_struct *tsk);
++extern int lids_sysctl_init(void);
++extern void lids_sysctl_reset(void);
++extern int lids_check_task_kill(struct task_struct *p, struct siginfo *info,
++				int sig);
++//extern struct lids_task_acl *lids_alloc_task_acl(struct task_struct *);
++extern void lids_free_task_acl(struct lids_task_acl *);
++extern void lids_free_inode_acl(struct lids_inode_acl *);
++extern void lids_free_subject_acl(struct lids_subject_acl *s_acl);
++
++extern void lids_do_inode_post_create(struct inode *inode,
++				      struct dentry *dentry);
++extern int lids_setup_task_acl(int state);
++extern struct dentry *lids_get_task_dentry(struct task_struct *task);
++
++extern int lids_check_capable(struct task_struct *tsk, int cap, int log);
++extern int lids_ext_capable(struct task_struct *tsk, int type);
++extern void lids_free_security(struct task_struct *p);
++
++extern void lids_alert(int type, long dst, long dst2, char *name, char *action);
++extern int lids_read_pw(void);
++extern int  do_lids_setup(void);
++
++#endif				/* LIDS_H */
+diff -Nru linux-2.6.12/security/lids/include/linux/lids_sysctl.h linux/security/lids/include/linux/lids_sysctl.h
+--- linux-2.6.12/security/lids/include/linux/lids_sysctl.h	1969-12-31 16:00:00.000000000 -0800
++++ linux/security/lids/include/linux/lids_sysctl.h	2005-03-14 11:42:35.000000000 -0800
+@@ -0,0 +1,168 @@
++#include <linux/lids.h>
++#include <linux/lidsext.h>
++#include <linux/lidsif.h>
++
++#ifdef CONFIG_LIDS_ALLOW_LFS
++#define lids_process_switch() \
++do { 		\
++	if (lids_load != (lids_flag_raised(flags, LIDS_FLAGS_LIDS_ON) != 0)) { \
++		lids_load = (lids_flag_raised(flags, LIDS_FLAGS_LIDS_ON) != 0);\
++		lids_security_alert("LIDS switched to %d", lids_load);\
++		if (lids_load) \
++			lids_flag_raise(lids_flags, LIDS_FLAGS_LIDS_ON); \
++		else								\
++			lids_flag_lower(lids_flags, LIDS_FLAGS_LIDS_ON);	\
++	}									\
++	if (lids_local_on !=							\
++	    (lids_flag_raised(flags, LIDS_FLAGS_LIDS_LOCAL_ON) != 0)) {		\
++		lids_local_on = (lids_flag_raised(flags, LIDS_FLAGS_LIDS_LOCAL_ON) != 0); \
++			/* XXX: Race condition here. We must first assign the PID */  \
++		lids_security_alert("LIDS locally switched to %i", 		\
++				    lids_local_on);				\
++		if (lids_local_on) {						\
++			lids_flag_raise(lids_flags, LIDS_FLAGS_LIDS_LOCAL_ON);	\
++		} else {							\
++			lids_local_pid = current->parent->pid;			\
++										\
++			if (lids_local_pid == 1) {	/* this doesn't apply to init */\
++				printk						\
++				    ("Can't give local lids deactivation to init!!\n"); \
++				lids_flag_raise(lids_flags,			\
++						LIDS_FLAGS_LIDS_LOCAL_ON);	\
++				lids_local_on = 1;				\
++			} else							\
++				lids_flag_lower(lids_flags, LIDS_FLAGS_LIDS_LOCAL_ON);	\
++		}								\
++	}	\
++}while(0);
++#else
++#define lids_process_switch() \
++do { 		\
++	if (!lids_flag_raised(flags, LIDS_FLAGS_LIDS_ON)) { \
++		lids_security_alert					\
++		    ("Attempt to switch LIDS off (feature disabled)");	\
++		return -1;						\
++	}	\
++}while(0);
++#endif
++
++#ifdef CONFIG_LIDS_ALLOW_SWITCH
++
++#define lids_process_password()  \
++do{	\
++	char lids_sig[LIDS_PW_LEN*2];					\
++	if ((!lids_first_time) || (locks.passwd[0])) {			\
++		lids_sha256(locks.passwd, LIDS_PW_LEN, lids_sig);	\
++		memset((char *)locks.passwd, '\0', sizeof(passwd_t));	\
++	}	\
++	if (((lids_first_time) && (!locks.passwd[0])) ||	\
++	    (!memcmp(lids_sig, lids_pw, LIDS_PW_LEN))) {	\
++		/* access granted ! */				\
++		number_failed = 0;				\
++		if (lids_process_flags(locks.flags) == 0) {	\
++			/* Seal the kernel,we can change the cap_set here */\
++			if (lids_first_time ||			\
++			    lids_flag_raised(locks.flags,	\
++					     LIDS_FLAGS_RELOAD_CONF)\
++			    || lids_flag_raised(locks.flags,	\
++						LIDS_FLAGS_SHUTDOWN))\
++				cap_bset = lids_cap_val;	\
++			else					\
++				cap_bset = locks.cap_bset;	\
++			lids_security_alert			\
++			    ("Changed: cap_bset=0x%x lids_flags=0x%x",\
++			     cap_t(cap_bset), lids_flags);	\
++		}	\
++		lids_first_time = 0;	\
++	} else {			\
++		number_failed++;	\
++		lids_security_alert	\
++		    ("Give incorrect password (try #%d) with caps=0x%x and flags=0x%x",\
++		     number_failed, cap_t(locks.cap_bset), locks.flags);	\
++		if (number_failed >= LIDS_MAX_TRY) {	\
++			wait_after_fail = 1;		\
++			init_timer(&fail_timer);	\
++			fail_timer.function = reenable_sysctl;	\
++			fail_timer.data = (unsigned long)NULL;	\
++			fail_timer.expires =		\
++			    jiffies + LIDS_TTW_FAIL * HZ;	\
++			add_timer(&fail_timer);		\
++		}	\
++	}		\
++}while(0);
++#else
++#define lids_process_password()  \
++do{ \
++	if ((lids_first_time) && (!locks.passwd[0])) {	\
++		/* access granted ! */			\
++		number_failed = 0;			\
++		if (lids_process_flags(locks.flags) == 0) {	\
++			if (lids_first_time ||		\
++			    lids_flag_raised(locks.flags,	\
++					     LIDS_FLAGS_RELOAD_CONF)\
++			    || lids_flag_raised(locks.flags,	\
++						LIDS_FLAGS_SHUTDOWN))\
++				cap_bset = lids_cap_val;	\
++			else					\
++				cap_bset = locks.cap_bset;	\
++			lids_security_alert			\
++			    ("Changed: cap_bset=0x%x lids_flags=0x%x",\
++			     cap_t(cap_bset), lids_flags);	\
++		}	\
++		lids_first_time = 0;\
++		lids_security_alert	\
++		    ("Attempt %d to switch caps/flags with caps=0x%x and flags=0x%x (feature disabled)",\
++		     number_failed, cap_t(locks.cap_bset), locks.flags);\
++	}	\
++}while(0);
++#endif
++
++#ifdef CONFIG_LIDS_ALLOW_SWITCH
++char lids_pw[LIDS_PW_LEN+16];
++int lids_read_pw()
++{
++	struct file *filp;
++	char buffer[LIDS_PW_LEN];
++	mm_segment_t oldfs;
++	int bytes;
++	int error = 0;
++
++	filp = filp_open(LIDS_PW_FILE, O_RDONLY, 0);
++	if (IS_ERR(filp) || (filp == NULL)) {
++		error = -1;
++		printk("LIDS: Error opening passwd file " LIDS_PW_FILE
++		       ". Does it exist?\n");
++		return error;
++	}
++
++	if (filp->f_op->read == NULL) {
++		fput(filp);
++		error = -3;
++		printk("LIDS: The file " LIDS_PW_FILE " can not be read\n");
++		return error;
++	}
++
++	/* Now read LIDS_PW_LEN bytes from postion "StartPos" */
++	filp->f_pos = 0;
++	oldfs = get_fs();
++	set_fs(KERNEL_DS);
++	bytes = filp->f_op->read(filp, buffer, LIDS_PW_LEN, &filp->f_pos);
++	set_fs(oldfs);
++
++	if (bytes < LIDS_PW_LEN) {
++		printk("LIDS: The file " LIDS_PW_FILE " is too short, need %d, got %d\n", LIDS_PW_LEN, bytes);
++		return -1;
++	}
++
++	memset(lids_pw,'\0',LIDS_PW_LEN);
++	memcpy(lids_pw, buffer, LIDS_PW_LEN);
++	/* Close the file */
++	fput(filp);
++	return error;
++}
++#else
++int lids_read_pw()
++{
++	return 0;
++}
++#endif
+diff -Nru linux-2.6.12/security/lids/lids_lsm.c linux/security/lids/lids_lsm.c
+--- linux-2.6.12/security/lids/lids_lsm.c	1969-12-31 16:00:00.000000000 -0800
++++ linux/security/lids/lids_lsm.c	2005-06-20 21:33:34.000000000 -0700
+@@ -0,0 +1,1127 @@
++/*
++ * Linux Intrusion Detectino System for Linux Security Modules project
++ *
++ * Copyright (C) 2002-2004 Huagang Xie (xie@www.lids.org) 
++ *
++ *	This program is free software; you can redistribute it and/or modify
++ *	it under the terms of the GNU General Public License as published by
++ *	the Free Software Foundation; either version 2 of the License, or
++ *	(at your option) any later version.
++ *
++ *  Feb 4th, 2002, Huagang, Initial the project  
++ *	
++ */
++
++#include <linux/config.h>
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/init.h>
++#include <linux/security.h>
++#include <linux/skbuff.h>
++#include <linux/netlink.h>
++#include <linux/ip.h>
++#include <linux/lids.h>
++#include <linux/lidsext.h>
++#include <linux/lidsif.h>
++#include <net/sock.h>
++#include <linux/in.h>
++#include <linux/time.h>
++#include <linux/mount.h>
++#include <linux/namei.h>
++
++struct security_operations *lids_secondary_ops;
++
++static int
++lids_ptrace(struct task_struct *parent, struct task_struct *child)
++{
++	if (lids_load && lids_local_load) {
++		if (lids_check_capable(parent, CAP_SYS_PTRACE, 1)) {
++			lids_security_alert("Attempt to trace pid %i\n",
++					    child->pid);
++			return -EPERM;
++		}
++	}
++	return 0;
++}
++
++/* from security/commoncap.c  */
++int lids_capget (struct task_struct *target, kernel_cap_t *effective,
++		kernel_cap_t *inheritable, kernel_cap_t *permitted)
++{
++	/* Derived from kernel/capability.c:sys_capget. */
++	*effective = cap_t (target->cap_effective);
++	*inheritable = cap_t (target->cap_inheritable);
++	*permitted = cap_t (target->cap_permitted);
++	return 0;
++}
++
++/* from security/commoncap.c  */
++void lids_capset_set (struct task_struct *target, kernel_cap_t *effective,
++		     kernel_cap_t *inheritable, kernel_cap_t *permitted)
++{
++	target->cap_effective = *effective;
++	target->cap_inheritable = *inheritable;
++	target->cap_permitted = *permitted;
++}
++
++/* derived from security/commoncap.c  */
++int lids_capset_check (struct task_struct *target, kernel_cap_t *effective,
++		      kernel_cap_t *inheritable, kernel_cap_t *permitted)
++{
++	if (lids_load && lids_local_load) {
++		if (lids_check_capable(target, CAP_SETPCAP, 1)) {
++			lids_security_alert("Attempt to setpcap pid %i\n",
++					    target->pid);
++			return -EPERM;
++		}
++	}
++	/* Derived from kernel/capability.c:sys_capset. */
++	/* verify restrictions on target's new Inheritable set */
++	if (!cap_issubset (*inheritable,
++			   cap_combine (target->cap_inheritable,
++					current->cap_permitted))) {
++		lids_security_alert("capset_check inheritable error, 0x%x, 0x%x\n",
++			*inheritable, cap_combine(target->cap_inheritable, 
++			current->cap_permitted)) ;
++		return -EPERM;
++	}
++
++	/* verify restrictions on target's new Permitted set */
++	if (!cap_issubset (*permitted,
++			   cap_combine (target->cap_permitted,
++					current->cap_permitted))) {
++		lids_security_alert("capset_check permitted error, 0x%x, 0x%x\n",
++			*permitted, cap_combine(target->cap_permitted, 
++			current->cap_permitted)) ;
++		return -EPERM;
++	}
++
++	/* verify the _new_Effective_ is a subset of the _new_Permitted_ */
++	if (!cap_issubset (*effective, *permitted)) {
++		lids_security_alert("capset_check effective error, 0x%x, 0x%x\n",
++			*effective, *permitted);
++		return -EPERM;
++	}
++
++	return 0;
++}
++
++static int
++lids_capable(struct task_struct *tsk, int cap)
++{
++	if (lids_load && lids_local_load) {
++		if (cap_raised (tsk->cap_effective, cap)) {
++			return 0;
++		}else{
++			return lids_check_capable(tsk, cap, 1);
++		}
++	}
++	/* if it is in LFS */
++	return 0;
++}
++
++static inline void lids_emulate_setxuid (int old_ruid, int old_euid,
++					int old_suid)
++{
++	if ((old_ruid == 0 || old_euid == 0 || old_suid == 0) &&
++	    (current->uid != 0 && current->euid != 0 && current->suid != 0) &&
++	    !current->keep_capabilities) {
++		cap_clear (current->cap_permitted);
++		cap_clear (current->cap_effective);
++	}
++	if (old_euid == 0 && current->euid != 0) {
++		cap_clear (current->cap_effective);
++	}
++	if (old_euid != 0 && current->euid == 0) {
++		current->cap_effective = current->cap_permitted;
++	}
++}
++
++int lids_task_post_setuid (uid_t old_ruid, uid_t old_euid, uid_t old_suid,
++			  int flags)
++{
++	switch (flags) {
++	case LSM_SETID_RE:
++	case LSM_SETID_ID:
++	case LSM_SETID_RES:
++		/* Copied from kernel/sys.c:setreuid/setuid/setresuid. */
++		if (!issecure (SECURE_NO_SETUID_FIXUP)) {
++			lids_emulate_setxuid (old_ruid, old_euid, old_suid);
++		}
++		break;
++	case LSM_SETID_FS:
++		{
++			uid_t old_fsuid = old_ruid;
++
++			/* Copied from kernel/sys.c:setfsuid. */
++
++			/*
++			 * FIXME - is fsuser used for all CAP_FS_MASK capabilities?
++			 *          if not, we might be a bit too harsh here.
++			 */
++
++			if (!issecure (SECURE_NO_SETUID_FIXUP)) {
++				if (old_fsuid == 0 && current->fsuid != 0) {
++					cap_t (current->cap_effective) &=
++					    ~CAP_FS_MASK;
++				}
++				if (old_fsuid != 0 && current->fsuid == 0) {
++					cap_t (current->cap_effective) |=
++					    (cap_t (current->cap_permitted) &
++					     CAP_FS_MASK);
++				}
++			}
++			break;
++		}
++	default:
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++
++static int
++lids_bprm_alloc_security(struct linux_binprm *bprm)
++{
++	int rc = 0;
++	if (lids_execve(bprm))
++		return -1;
++
++	if (lids_secondary_ops)
++		rc = lids_secondary_ops->bprm_alloc_security(bprm);
++
++	return rc;
++}
++
++static void
++lids_bprm_free_security(struct linux_binprm *bprm)
++{
++	if (lids_secondary_ops)
++		lids_secondary_ops->bprm_free_security(bprm);
++	return;
++}
++
++static void
++lids_bprm_apply_creds (struct linux_binprm *bprm, int unsafe)
++{
++	kernel_cap_t new_permitted, working;
++
++	new_permitted = cap_intersect (bprm->cap_permitted, cap_bset);
++	working = cap_intersect (bprm->cap_inheritable,
++				 current->cap_inheritable);
++	new_permitted = cap_combine (new_permitted, working);
++
++	if (bprm->e_uid != current->uid || bprm->e_gid != current->gid ||
++	    !cap_issubset (new_permitted, current->cap_permitted)) {
++		current->mm->dumpable = 0;
++
++		if (unsafe & ~LSM_UNSAFE_PTRACE_CAP) {
++			if (!capable(CAP_SETUID)) {
++				bprm->e_uid = current->uid;
++				bprm->e_gid = current->gid;
++			}
++			if (!capable (CAP_SETPCAP)) {
++				new_permitted = cap_intersect (new_permitted,
++							current->cap_permitted);
++			}
++		}
++/*
++		if ((unsafe & ~LSM_UNSAFE_PTRACE_CAP) && !capable(CAP_SETUID)) {
++			bprm->e_uid = current->uid;
++			bprm->e_gid = current->gid;
++		}
++*/
++	}
++
++	current->suid = current->euid = current->fsuid = bprm->e_uid;
++	current->sgid = current->egid = current->fsgid = bprm->e_gid;
++
++	if (current->pid != 1) {
++		current->cap_permitted = new_permitted;
++		current->cap_effective =
++		    cap_intersect (new_permitted, bprm->cap_effective);
++	}
++
++//	current->keep_capabilities = 0;
++
++	if (lids_secondary_ops)
++		lids_secondary_ops->bprm_apply_creds(bprm,unsafe);
++	return;
++}
++
++static int
++lids_bprm_set_security(struct linux_binprm *bprm)
++{
++	int rc = 0;
++
++	cap_clear (bprm->cap_inheritable);
++	cap_clear (bprm->cap_permitted);
++	cap_clear (bprm->cap_effective);
++
++	if (!issecure (SECURE_NOROOT)) {
++		if (bprm->e_uid == 0 || current->uid == 0) {
++			cap_set_full (bprm->cap_inheritable);
++			cap_set_full (bprm->cap_permitted);
++		}
++		if (bprm->e_uid == 0)
++			cap_set_full (bprm->cap_effective);
++	}
++	if (lids_secondary_ops)
++		rc = lids_secondary_ops->bprm_set_security(bprm);
++
++	return rc;
++}
++static int
++lids_bprm_check_security(struct linux_binprm *bprm)
++{
++	lids_execve_check_envp(bprm);
++	return 0;
++}
++
++#ifndef MODULE
++static int __init
++lids_load_setup(char *str)
++{
++	lids_load = simple_strtol(str, NULL, 0);
++	return 1;
++}
++#endif
++
++static int lids_sb_mount (char *dev_name, struct nameidata *nd, char *type,
++			   unsigned long flags, void *data)
++{
++	struct dentry *dentry = nd->dentry;
++
++	if(IS_ROOT(dentry)) {
++		if(!lids_init_setup) {
++			do_lids_setup();
++		}
++	}
++	return 0;
++}
++
++static int lids_sb_kern_mount (struct super_block *sb, void *data)
++{
++	return 0;
++}
++
++static void lids_sb_post_remount (struct vfsmount *mnt, unsigned long flags,
++				   void *data)
++{
++	struct vfsmount *parent;
++
++//	spin_lock(&vfsmount_lock);
++	parent=mnt->mnt_parent;
++
++        if (parent == mnt || IS_ROOT(mnt->mnt_mountpoint)) {
++		if(!lids_init_setup) {
++			do_lids_setup();
++		}
++        }
++//	spin_unlock(&vfsmount_lock);
++
++	return;
++}
++
++static void
++lids_sb_post_mountroot(void)
++{
++	if(!lids_init_setup) {
++		do_lids_setup();
++	}
++	return;
++}
++
++static void
++lids_inode_free_security(struct inode *inode)
++{
++#if 0
++	struct ipt_mark_target_info *markinfo = inode->i_security;
++
++	if (!markinfo)
++		return;
++	inode->i_security = NULL;
++	kfree(markinfo);
++#endif
++	lids_free_inode_acl(inode->i_security);
++	return;
++}
++
++static void
++lids_inode_post_create(struct inode *inode, struct dentry *dentry, int mask)
++{
++	lids_do_inode_post_create(inode, dentry);
++	return;
++}
++
++static int
++lids_inode_link(struct dentry *old_dentry, struct inode *inode,
++		struct dentry *new_dentry)
++{
++	int rc = 0;
++
++	if (lids_secondary_ops)
++		rc = lids_secondary_ops->inode_link(old_dentry, inode,
++						    new_dentry);
++
++	return rc;
++}
++
++static int
++lids_inode_unlink(struct inode *inode, struct dentry *dentry)
++{
++	if (lids_load && lids_local_load) {
++		if (lids_check_base(dentry, LIDS_WRITE)) {
++			lids_alert(LIDS_WRITE, inode->i_ino, inode->i_sb->s_dev,
++				   dentry->d_iname, "unlink");
++			return LIDS_ERROR(-EPERM);
++		}
++	}
++	return 0;
++}
++
++static int
++lids_inode_symlink(struct inode *inode, struct dentry *dentry, const char *name)
++{
++	if (lids_load && lids_local_load) {
++		if (lids_check_base(dentry, LIDS_WRITE)) {
++			lids_alert(LIDS_WRITE, inode->i_ino, inode->i_sb->s_dev,
++				   dentry->d_iname, "symlink");
++			return LIDS_ERROR(-EPERM);
++		}
++	}
++	return 0;
++}
++
++static int
++lids_inode_mkdir(struct inode *inode, struct dentry *dentry, int mask)
++{
++	if (lids_load && lids_local_load) {
++		if (lids_check_base(dentry, LIDS_WRITE)) {
++			lids_alert(LIDS_WRITE, inode->i_ino, inode->i_sb->s_dev,
++				   dentry->d_iname, "mkdir");
++			return LIDS_ERROR(-EPERM);
++		}
++	}
++	return 0;
++}
++
++static void
++lids_inode_post_mkdir(struct inode *inode, struct dentry *dentry, int mask)
++{
++	lids_do_inode_post_create(inode, dentry);
++	return;
++}
++
++static int
++lids_inode_rmdir(struct inode *inode, struct dentry *dentry)
++{
++	if (lids_load && lids_local_load) {
++		if (lids_check_base(dentry, LIDS_WRITE)) {
++			lids_alert(LIDS_WRITE, inode->i_ino, inode->i_sb->s_dev,
++				   dentry->d_iname, "rmdir");
++			return LIDS_ERROR(-EPERM);
++		}
++	}
++	return 0;
++}
++
++static int
++lids_inode_mknod(struct inode *inode, struct dentry *dentry,
++		 int major, dev_t minor)
++{
++	if (lids_load && lids_local_load) {
++		if (lids_check_base(dentry, LIDS_WRITE)) {
++			lids_alert(LIDS_WRITE, inode->i_ino, inode->i_sb->s_dev,
++				   dentry->d_iname, "mknod");
++			return LIDS_ERROR(-EPERM);
++		}
++	}
++	return 0;
++}
++
++static int
++lids_inode_rename(struct inode *old_inode,
++		  struct dentry *old_dentry,
++		  struct inode *new_inode, struct dentry *new_dentry)
++{
++	if (lids_load && lids_local_load) {
++		if (lids_check_base(old_dentry, LIDS_WRITE)) {
++			lids_alert(LIDS_WRITE, old_inode->i_ino,
++				   old_inode->i_sb->s_dev, old_dentry->d_iname,
++				   "rename to");
++			return LIDS_ERROR(-EPERM);
++		}
++		if (lids_check_base(new_dentry, LIDS_WRITE)) {
++			lids_alert(LIDS_WRITE, new_inode->i_ino,
++				   new_inode->i_sb->s_dev, new_dentry->d_iname,
++				   "rename from");
++			return LIDS_ERROR(-EPERM);
++		}
++	}
++	return 0;
++}
++
++static int
++lids_inode_readlink(struct dentry *dentry)
++{
++	if (lids_load && lids_local_load) {
++		if (lids_check_base(dentry, LIDS_READONLY)) {
++			lids_alert(LIDS_WRITE, dentry->d_inode->i_ino,
++				   dentry->d_inode->i_sb->s_dev,
++				   dentry->d_iname, "readlink");
++			return LIDS_ERROR(-EPERM);
++		}
++	}
++	return 0;
++}
++
++static int
++lids_inode_follow_link(struct dentry *dentry, struct nameidata *nameidata)
++{
++	int rc = 0;
++
++	if (lids_secondary_ops)
++		rc = lids_secondary_ops->inode_follow_link(dentry, nameidata);
++
++	if (rc)
++		return rc;
++
++	if (lids_load && lids_local_load) {
++		if (lids_check_base(dentry, LIDS_READONLY)) {
++			lids_alert(LIDS_WRITE, dentry->d_inode->i_ino,
++				   dentry->d_inode->i_sb->s_dev,
++				   dentry->d_iname, "followlink");
++			return LIDS_ERROR(-EPERM);
++		}
++	}
++	return 0;
++}
++
++static int
++lids_inode_permission(struct inode *inode, int mask, struct nameidata *nd)
++{
++	struct list_head *head, *next, *tmp;
++	int error = 0;
++	struct dentry *d;
++
++	if (!(lids_load && lids_local_load))
++		return 0;
++
++	/* we will not due with other type */
++
++	spin_lock(&dcache_lock);
++	head = &inode->i_dentry;
++	next = inode->i_dentry.next;
++
++	while (next != head) {
++		tmp = next;
++		next = tmp->next;
++		d = list_entry(tmp, struct dentry, d_alias);
++
++		spin_unlock(&dcache_lock);
++
++		if ((mask & MAY_APPEND)) {
++			error = lids_check_base(d, LIDS_APPEND);
++			if (error) {
++				lids_alert(LIDS_APPEND, inode->i_ino,
++					   inode->i_sb->s_dev, d->d_iname,
++					   "open");
++				error = LIDS_ERROR(-EPERM);
++			}
++		} else if ((mask & MAY_WRITE)) {
++			error = lids_check_base(d, LIDS_WRITE);
++			if (error) {
++				lids_alert(LIDS_WRITE, inode->i_ino,
++					   inode->i_sb->s_dev, d->d_iname,
++					   "open");
++				error = LIDS_ERROR(-EPERM);
++			}
++		} else {
++			error = lids_check_base(d, LIDS_READONLY);
++			if (error) {
++				lids_alert(LIDS_READONLY, inode->i_ino,
++					   inode->i_sb->s_dev, d->d_iname,
++					   "open");
++				error = LIDS_ERROR(-ENOENT);
++			}
++
++		}
++		spin_lock(&dcache_lock);
++	}
++	spin_unlock(&dcache_lock);
++	return error;
++}
++
++static int
++lids_inode_setattr(struct dentry *dentry, struct iattr *iattr)
++{
++	if (lids_load && lids_local_load) {
++		if (lids_check_base(dentry, LIDS_WRITE)) {
++			lids_alert(LIDS_WRITE, dentry->d_inode->i_ino,
++				   dentry->d_inode->i_sb->s_dev,
++				   dentry->d_iname, "setattr");
++			return LIDS_ERROR(-EPERM);
++		}
++	}
++	return 0;
++}
++
++static int
++lids_inode_setxattr(struct dentry *dentry, char *name, void *value,
++		    size_t size, int flags)
++{
++	if (!strcmp(name, XATTR_NAME_LIDS)) {
++		if (lids_load && lids_local_load) {
++			lids_security_alert(" setxattr denied for %s\n", name);
++			return -EPERM;
++		}
++	}
++	return 0;
++}
++
++static int
++lids_inode_getxattr(struct dentry *dentry, char *name)
++{
++	if (!strcmp(name, XATTR_NAME_LIDS)) {
++		if (lids_load && lids_local_load) {
++			lids_security_alert(" getxattr denied for %s\n", name);
++			return -EPERM;
++		}
++		/* recal the task */
++	}
++	return 0;
++}
++
++static int
++lids_inode_removexattr(struct dentry *dentry, char *name)
++{
++	if (!strcmp(name, XATTR_NAME_LIDS)) {
++		if (lids_load && lids_local_load) {
++			lids_security_alert(" removexattr denied for %s\n",
++					    name);
++			return -EPERM;
++		}
++	}
++	return 0;
++}
++
++static void
++lids_d_instantiate(struct dentry *dentry, struct inode *inode)
++{
++	return;
++}
++
++static int
++lids_file_permission(struct file *file, int mask)
++{
++	if (lids_load && lids_local_load) {
++		struct inode *inode = file->f_dentry->d_inode;
++
++		if (inode && S_ISBLK(inode->i_mode) &&
++		    lids_check_capable(current, CAP_SYS_RAWIO, 1)) {
++			if (mask & MAY_WRITE)
++				lids_security_alert("CAP_SYS_RAWIO violation: "
++						    "Attempt to write to raw device %d:%d",
++						    MAJOR(inode->i_sb->s_dev),
++						    MINOR(inode->i_sb->s_dev));
++			else
++				lids_security_alert("CAP_SYS_RAWIO violation: "
++						    "Attempt to read from raw device %d:%d",
++						    MAJOR(inode->i_sb->s_dev),
++						    MINOR(inode->i_sb->s_dev));
++			return LIDS_ERROR(-EPERM);
++		}
++	}
++	return 0;
++}
++
++static int
++lids_task_alloc_security(struct task_struct *p)
++{
++	if (lids_fork_task(p))
++		return -EPERM;
++	return 0;
++}
++
++static void
++lids_task_free_security(struct task_struct *p)
++{
++	struct lids_task_acl *task_acl;
++
++	task_acl = p->security;
++	task_lock(p);
++	p->security = NULL;
++	task_unlock(p);
++
++	lids_free_task_acl(task_acl);
++	return;
++}
++
++static int
++lids_task_kill(struct task_struct *p, struct siginfo *info, int sig)
++{
++	if (lids_load && lids_local_load && p->security) {
++		if (lids_check_task_kill(p, info, sig))
++			return -EPERM;
++	}
++	return 0;
++}
++
++static void
++lids_task_reparent_to_init(struct task_struct *p)
++{
++	p->euid = p->fsuid = 0;
++	return;
++}
++
++#ifdef CONFIG_SECURITY_NETWORK
++
++static int
++lids_socket_create(int family, int type, int protocol,int kern)
++{
++	if (kern)
++		return 0;
++	if (lids_load && lids_local_load && family == AF_INET) {
++		if (lids_ext_capable(current, LIDS_SOCKET_CREATE) < 0) {
++			lids_alert(LIDS_SOCKET, -1, LIDS_SOCKET_CREATE,
++				   "LIDS_SOCKET_CREATE", "create socket");
++			return LIDS_ERROR(-EPERM);
++		}
++		if (type == SOCK_DGRAM) {
++			if (lids_ext_capable(current, LIDS_SOCKET_CREATE_UDP) <
++			    0) {
++				lids_alert(LIDS_SOCKET, -1,
++					   LIDS_SOCKET_CREATE_UDP,
++					   "LIDS_SOCKET_CREATE_UDP",
++					   "create udp socket");
++				return LIDS_ERROR(-EPERM);
++			}
++		} else if (type == SOCK_STREAM) {
++			if (lids_ext_capable(current, LIDS_SOCKET_CREATE_TCP) <
++			    0) {
++				lids_alert(LIDS_SOCKET, -1,
++					   LIDS_SOCKET_CREATE_TCP,
++					   "LIDS_SOCKET_CREATE_TCP",
++					   "create tcp socket");
++				return LIDS_ERROR(-EPERM);
++			}
++		}
++	}
++	return 0;
++}
++
++static void
++lids_socket_post_create(struct socket *sock, int family, int type, int protocol, int kern)
++{
++#if 0
++	struct lids_task_acl *task_acl;
++	struct ipt_mark_target_info *markinfo;
++
++	if (lids_load && lids_local_load && family == AF_INET) {
++		if (lids_ext_capable(current, LIDS_SOCKET_NF_MARK) < 0) {
++			struct inode *inode = SOCK_INODE(sock);
++
++			if (inode) {
++				task_acl = current->security;
++				markinfo =
++				    kmalloc(sizeof
++					    (struct ipt_mark_target_info),
++					    GFP_KERNEL);
++				markinfo->mark = task_acl->mark;
++				/* FIXME, need lock?? */
++				inode->i_security = markinfo;
++				LIDS_DBG("DEV: [%d %d] Mark socket as %d \n",
++					 current->pid, current->parent->pid,
++					 markinfo->mark);
++			}
++		}
++	}
++#endif
++	return;
++}
++
++static int
++lids_socket_bind(struct socket *sock, struct sockaddr *address, int addrlen)
++{
++	struct sockaddr_in *addr = (struct sockaddr_in *) address;
++	char str[32];
++
++	if (lids_load && lids_local_load && address
++	    && address->sa_family == AF_INET) {
++
++		if (lids_ext_capable(current, LIDS_SOCKET_BIND) < 0 || 
++			lids_bind_checker(ntohs(addr->sin_port)) < 0 
++			) {
++			snprintf(str, 32, "bind %u.%u.%u.%u:%d",
++				 NIPQUAD(addr->sin_addr),
++				 ntohs(addr->sin_port));
++			lids_alert(LIDS_SOCKET, -1, LIDS_SOCKET_BIND,
++				   "LIDS_SOCKET_BIND", str);
++			return LIDS_ERROR(-EPERM);
++		}
++	}
++	return 0;
++}
++
++static int
++lids_socket_connect(struct socket *sock, struct sockaddr *address, int addrlen)
++{
++	struct sockaddr_in *addr = (struct sockaddr_in *) address;
++	char str[32];
++
++	if (lids_load && lids_local_load
++	    && address && address->sa_family == AF_INET) {
++		if (lids_ext_capable(current, LIDS_SOCKET_CONNECT) < 0) {
++			snprintf(str, 32, "connect %u.%u.%u.%u:%d",
++				 NIPQUAD(addr->sin_addr),
++				 ntohs(addr->sin_port));
++			lids_alert(LIDS_SOCKET, -1, LIDS_SOCKET_CONNECT,
++				   "LIDS_SOCKET_CONNECT", str);
++			return LIDS_ERROR(-EPERM);
++		}
++	}
++	return 0;
++}
++
++static int
++lids_socket_listen(struct socket *sock, int backlog)
++{
++	struct sock *sk = sock->sk;
++
++	if (lids_load && lids_local_load && sk->sk_family == PF_INET) {
++		if (lids_ext_capable(current, LIDS_SOCKET_LISTEN) < 0) {
++			lids_alert(LIDS_SOCKET, -1, LIDS_SOCKET_LISTEN,
++				   "LIDS_SOCKET_LISTEN", "listen");
++			return LIDS_ERROR(-EPERM);
++		}
++	}
++
++	return 0;
++}
++
++static int
++lids_socket_accept(struct socket *sock, struct socket *newsock)
++{
++	struct sock *sk = sock->sk;
++
++	if (lids_load && lids_local_load && sk->sk_family == PF_INET) {
++		if (lids_ext_capable(current, LIDS_SOCKET_ACCEPT) < 0) {
++			lids_alert(LIDS_SOCKET, -1, LIDS_SOCKET_ACCEPT,
++				   "LIDS_SOCKET_ACCEPT", "accept");
++			return LIDS_ERROR(-EPERM);
++		}
++	}
++	return 0;
++}
++
++static int
++lids_socket_sendmsg(struct socket *sock, struct msghdr *msg, int size)
++{
++	struct sock *sk = sock->sk;
++
++	if (lids_load && lids_local_load && sk->sk_family == PF_INET
++	    && sk->sk_type == SOCK_DGRAM) {
++		if (lids_ext_capable(current, LIDS_SOCKET_SENDMSG) < 0) {
++			lids_alert(LIDS_SOCKET, -1, LIDS_SOCKET_SENDMSG,
++				   "LIDS_SOCKET_SENDMSG", "sendmsg");
++			return LIDS_ERROR(-EPERM);
++		}
++	}
++
++	return 0;
++}
++
++static int
++lids_socket_recvmsg(struct socket *sock, struct msghdr *msg,
++		    int size, int flags)
++{
++	struct sock *sk = sock->sk;
++
++	if (lids_load && lids_local_load && sk->sk_family == PF_INET
++	    && sk->sk_type == SOCK_DGRAM) {
++		if (lids_ext_capable(current, LIDS_SOCKET_RECVMSG) < 0) {
++			lids_alert(LIDS_SOCKET, -1, LIDS_SOCKET_RECVMSG,
++				   "LIDS_SOCKET_RECVMSG", "recvmsg");
++			return LIDS_ERROR(-EPERM);
++		}
++	}
++	return 0;
++}
++
++static int
++lids_socket_getsockname(struct socket *sock)
++{
++	struct sock *sk = sock->sk;
++
++	if (lids_load && lids_local_load && sk->sk_family == PF_INET) {
++		if (lids_ext_capable(current, LIDS_SOCKET_GETSOCKNAME) < 0) {
++			lids_alert(LIDS_SOCKET, -1, LIDS_SOCKET_GETSOCKNAME,
++				   "LIDS_SOCKET_GETSOCKNAME", "getsockname");
++			return LIDS_ERROR(-EPERM);
++		}
++	}
++	return 0;
++}
++
++static int
++lids_socket_getpeername(struct socket *sock)
++{
++	struct sock *sk = sock->sk;
++
++	if (lids_load && lids_local_load && sk->sk_family == PF_INET) {
++		if (lids_ext_capable(current, LIDS_SOCKET_GETPEERNAME) < 0) {
++			lids_alert(LIDS_SOCKET, -1, LIDS_SOCKET_GETPEERNAME,
++				   "LIDS_SOCKET_GETPEERNAME", "getpeername");
++			return LIDS_ERROR(-EPERM);
++		}
++	}
++	return 0;
++}
++
++static int
++lids_socket_setsockopt(struct socket *sock, int level, int optname)
++{
++	struct sock *sk = sock->sk;
++
++	if (lids_load && lids_local_load && sk->sk_family == PF_INET) {
++		if (lids_ext_capable(current, LIDS_SOCKET_SETSOCKOPT) < 0) {
++			lids_alert(LIDS_SOCKET, -1, LIDS_SOCKET_SETSOCKOPT,
++				   "LIDS_SOCKET_SETSOCKOPT", "setsockopt");
++			return LIDS_ERROR(-EPERM);
++		}
++	}
++	return 0;
++}
++
++static int
++lids_socket_getsockopt(struct socket *sock, int level, int optname)
++{
++	struct sock *sk = sock->sk;
++
++	if (lids_load && lids_local_load && sk->sk_family == PF_INET) {
++		if (lids_ext_capable(current, LIDS_SOCKET_GETSOCKOPT) < 0) {
++			lids_alert(LIDS_SOCKET, -1, LIDS_SOCKET_GETSOCKOPT,
++				   "LIDS_SOCKET_GETSOCKOPT", "getsockopt");
++			return LIDS_ERROR(-EPERM);
++		}
++	}
++	return 0;
++}
++
++static int
++lids_socket_shutdown(struct socket *sock, int how)
++{
++	struct sock *sk = sock->sk;
++
++	if (lids_load && lids_local_load && sk->sk_family == PF_INET) {
++		if (lids_ext_capable(current, LIDS_SOCKET_SHUTDOWN) < 0) {
++			lids_alert(LIDS_SOCKET, -1, LIDS_SOCKET_SHUTDOWN,
++				   "LIDS_SOCKET_SHUTDOWN", "shutdown socket");
++			return LIDS_ERROR(-EPERM);
++		}
++	}
++	return 0;
++}
++#endif				/* CONFIG_SECURITY_NETWORK */
++
++static int
++lids_netlink_send(struct sock *sk,struct sk_buff *skb)
++{
++	if (capable(CAP_NET_ADMIN))
++		cap_raise (NETLINK_CB (skb).eff_cap, CAP_NET_ADMIN);
++	else
++		NETLINK_CB (skb).eff_cap = 0;
++	return 0;
++}
++
++static int
++lids_netlink_recv(struct sk_buff *skb)
++{
++	if (!cap_raised(NETLINK_CB(skb).eff_cap, CAP_NET_ADMIN))
++		return -EPERM;
++	return 0;
++}
++
++static int
++lids_register(const char *name, struct security_operations *ops)
++{
++	if (lids_secondary_ops != NULL) {
++		printk(KERN_INFO
++		       "LIDS: There is already a secondary security module registered\n");
++		return -EINVAL;
++	}
++	if (strcmp(name, "owlsm") == 0) {
++		lids_secondary_ops = ops;
++		printk(KERN_NOTICE "LIDS: Registering security module %s.\n",
++		       name);
++		return 0;
++	}
++	printk(KERN_NOTICE
++	       "LIDS: Only openwall modules may be registered with LIDS.\n");
++	return -EINVAL;
++}
++
++static int
++lids_unregister(const char *name, struct security_operations *ops)
++{
++	if (!lids_secondary_ops) {
++		printk(KERN_NOTICE "LIDS: no secondary module %s.\n", name);
++		return -EINVAL;
++	} else if (ops == lids_secondary_ops) {
++		printk(KERN_NOTICE "LIDS: unregistering module %s.\n", name);
++		return 0;
++	}
++	printk(KERN_INFO "LIDS: Attempt to unregister an unknown module %s.\n",
++	       name);
++	return -EINVAL;
++}
++
++struct security_operations lids_security_ops = {
++	.ptrace = lids_ptrace,
++	.capable = lids_capable,
++	.capget = lids_capget,
++	.capset_check = lids_capset_check,
++	.capset_set = lids_capset_set,
++
++	.bprm_alloc_security = lids_bprm_alloc_security,
++	.bprm_free_security = lids_bprm_free_security,
++	.bprm_apply_creds = lids_bprm_apply_creds,
++	.bprm_set_security = lids_bprm_set_security,
++	.bprm_check_security = lids_bprm_check_security,
++
++	.sb_post_mountroot = lids_sb_post_mountroot,
++	.sb_post_remount = lids_sb_post_remount,
++	.sb_kern_mount  = lids_sb_kern_mount,
++	.sb_mount	= lids_sb_mount,
++
++	.inode_free_security = lids_inode_free_security,
++	.inode_post_create = lids_inode_post_create,
++
++	.inode_link = lids_inode_link,
++	.inode_unlink = lids_inode_unlink,
++	.inode_symlink = lids_inode_symlink,
++	.inode_mkdir = lids_inode_mkdir,
++	.inode_post_mkdir = lids_inode_post_mkdir,
++	.inode_rmdir = lids_inode_rmdir,
++	.inode_mknod = lids_inode_mknod,
++	.inode_rename = lids_inode_rename,
++	.inode_readlink = lids_inode_readlink,
++	.inode_follow_link = lids_inode_follow_link,
++	.inode_permission = lids_inode_permission,
++	.inode_setattr = lids_inode_setattr,
++	.inode_setxattr = lids_inode_setxattr,
++	.inode_getxattr = lids_inode_getxattr,
++	.inode_removexattr = lids_inode_removexattr,
++
++	.d_instantiate = lids_d_instantiate,
++	.file_permission = lids_file_permission,
++
++	.netlink_send = lids_netlink_send,
++	.netlink_recv = lids_netlink_recv,
++
++	.task_alloc_security = lids_task_alloc_security,
++	.task_free_security = lids_task_free_security,
++	.task_kill = lids_task_kill,
++	.task_reparent_to_init = lids_task_reparent_to_init,
++
++/* use common cap */
++	.task_post_setuid =		lids_task_post_setuid,
++//	.task_reparent_to_init =	lids_task_reparent_to_init,
++#ifdef CONFIG_SECURITY_NETWORK
++	.socket_create = lids_socket_create,
++	.socket_post_create = lids_socket_post_create,
++	.socket_bind = lids_socket_bind,
++	.socket_connect = lids_socket_connect,
++	.socket_listen = lids_socket_listen,
++	.socket_accept = lids_socket_accept,
++	.socket_sendmsg = lids_socket_sendmsg,
++	.socket_recvmsg = lids_socket_recvmsg,
++	.socket_getsockname = lids_socket_getsockname,
++	.socket_getpeername = lids_socket_getpeername,
++	.socket_getsockopt = lids_socket_getsockopt,
++	.socket_setsockopt = lids_socket_setsockopt,
++	.socket_shutdown = lids_socket_shutdown,
++#endif
++
++	.register_security = lids_register,
++	.unregister_security = lids_unregister,
++};
++
++extern void setup_lids_module(void);
++
++static void __exit
++lids_lsm_exit(void)
++{
++	struct task_struct *p;
++
++	if (unregister_security(&lids_security_ops)) {
++		printk(KERN_INFO
++		       "LIDS: Failure unregistering LIDS with the kernel\n");
++		return;
++	}
++	lids_load = 0;
++
++	lids_sysctl_reset();
++	read_lock(&tasklist_lock);
++	for_each_process(p) {
++		lids_task_free_security(p);
++	}
++	read_unlock(&tasklist_lock);
++	printk(KERN_INFO "LIDS: Successful exit\n");
++}
++
++#ifdef MODULE
++static int __init 
++lids_modules_init(void)
++{
++	struct task_struct *p;
++
++	read_lock(&tasklist_lock);
++	for_each_process(p) {
++		p->security = NULL;
++	}
++	read_unlock(&tasklist_lock);
++	if (do_lids_setup()) {
++		printk(KERN_NOTICE "LIDS_ERR: failed\n");
++		lids_lsm_exit();
++		return -1;
++	}
++	printk(KERN_NOTICE "LIDS: Attaching LIDS ACL to Processes\n");
++
++	lids_setup_task_acl(LIDS_STATE_BOOT);
++
++	printk(KERN_NOTICE "LIDS: Finished setting up.\n");
++
++	return 0;
++}
++#endif
++
++static int __init
++lids_lsm_init(void)
++{
++
++	printk(KERN_NOTICE "LIDS: Initializing...\n");
++
++	lids_init_setup = 0;
++	/* register ourselves with the security framework */
++	if (register_security(&lids_security_ops)) {
++		printk(KERN_INFO "Failure registering LIDS with the kernel\n");
++		return -EINVAL;
++	}
++
++#ifdef MODULE
++	lids_modules_init();
++#endif
++	return 0;
++}
++
++/* for passing parameter */
++__setup("lids=", lids_load_setup);
++security_initcall(lids_lsm_init);
++module_exit(lids_lsm_exit);
++
++MODULE_AUTHOR("LIDS Team");
++MODULE_DESCRIPTION("LIDS Module");
++MODULE_LICENSE("GPL");
+diff -Nru linux-2.6.12/security/lids/lids_acl.c linux/security/lids/lids_acl.c
+--- linux-2.6.12/security/lids/lids_acl.c	1969-12-31 16:00:00.000000000 -0800
++++ linux/security/lids/lids_acl.c	2005-06-21 16:54:50.000000000 -0700
+@@ -0,0 +1,1252 @@
++/*
++ *  LIDS ACL functions 
++ *
++ *  Copyright (C) 2002,2004 Huagang Xie <xie@lids.org>
++ *  Copyright (C) 2002,2003 Philippe Biondi <biondi@cartel-securite.fr>
++ *
++ *	This program is free software; you can redistribute it and/or modify
++ *	it under the terms of the GNU General Public License as published by
++ *	the Free Software Foundation; either version 2 of the License, or
++ *	(at your option) any later version.
++ */
++/*
++ *  Changes:
++ *	
++ *	[Oct 14 1999, Xie Huagang] initial creation 
++ * 	[Sep 26 2000, Xie Huagang] Port to linux 2.4.0-test8
++ * 	[Feb 23 2003, Xie Huagang] LSM support for 2.5.x
++ */
++
++#include <linux/mm.h>
++#include <linux/proc_fs.h>
++#include <linux/smp_lock.h>
++#include <linux/quotaops.h>
++#include <asm/uaccess.h>
++#include <asm/unaligned.h>
++#include <asm/semaphore.h>
++#include <asm/page.h>
++#include <asm/pgtable.h>
++#include <asm/namei.h>
++#include <linux/time.h>
++#include <linux/fs.h>
++#include <linux/kernel.h>
++#include <linux/highmem.h>
++#include <linux/slab.h>
++#include <linux/file.h>
++#include <linux/config.h>
++#include <linux/tty.h>
++#include <linux/sysctl.h>
++
++#include <linux/version.h>
++#include <linux/lids.h>
++#include <linux/lidsext.h>
++#include <linux/lidsif.h>
++
++ /***********************************************************************
++ * General variables
++ ***********************************************************************/
++int lids_load = 1;
++int lids_local_on = 1;
++int lids_acl_discovery = 0;	/* */
++lids_flags_t lids_flags = 0;
++int lids_local_pid = 0;
++u32 lids_current = 0;
++int lids_first_time = 1;
++
++int lids_state = LIDS_STATE_BOOT;	/* initial state is boot */
++
++void *b11;
++static int lids_get_inode_security(struct dentry *o_dentry,
++                                   struct inode *inode);
++
++/*
++ *	Free routine 
++ *
++ */
++static void
++lids_free_object_acl(struct lids_object_acl *o_acl)
++{
++	struct lids_object_acl *p;
++
++	if (!o_acl)
++		return;
++
++	while (o_acl) {
++		p = o_acl->next;
++		kfree(o_acl);
++		o_acl = p;
++	}
++}
++
++void
++lids_free_subject_acl(struct lids_subject_acl *s_acl)
++{
++	struct lids_object_acl *o_acl;
++
++	if (!s_acl)
++		return;
++
++	o_acl = s_acl->o_acl;
++	lids_free_object_acl(o_acl);
++	kfree(s_acl);
++}
++
++void
++lids_free_inode_acl(struct lids_inode_acl *i_acl)
++{
++	if (!i_acl)
++		return;
++	if (i_acl->magic != LIDS_MAGIC)
++		return;
++
++	lids_free_subject_acl(i_acl->s_acl);
++	kfree(i_acl);
++}
++
++/*
++ *	free the lids acl structure here
++ */
++void
++lids_free_task_acl(struct lids_task_acl *task_acl)
++{
++	struct lids_subject_acl *s_acl;
++
++	if (!task_acl)
++		return;
++
++	s_acl = task_acl->s_acl;
++	lids_free_subject_acl(s_acl);
++	kfree(task_acl);
++	return;
++}
++
++/* 
++ *	lids allocation routine
++ */
++static struct lids_task_acl *
++lids_alloc_task_acl(struct task_struct *task)
++{
++	struct lids_task_acl *task_acl;
++
++	task_acl = kmalloc(sizeof (struct lids_task_acl), GFP_ATOMIC);
++	if (!task_acl) {
++		printk(KERN_INFO "LIDS: kmalloc error for task_acl\n");
++		return NULL;
++	}
++	task_acl->magic = LIDS_MAGIC;
++	task_acl->task = task;
++	task_acl->s_acl = NULL;
++	INIT_LIST_HEAD(&task_acl->list);
++	spin_lock_init(&task_acl->t_lock);
++
++	task_lock(task);
++	task->security = task_acl;
++	task_unlock(task);
++
++	return task_acl;
++}
++
++/***********************************************************************
++ ***********************************************************************
++ *
++ * LIDS protection management
++ *
++ ***********************************************************************
++ ***********************************************************************/
++
++int
++lids_local_off(void)
++{
++	struct task_struct *t;
++
++	read_lock(&tasklist_lock);
++	t = current;
++	while (t && (t->pid > 1)) {
++		if (t->pid == lids_local_pid) {
++			read_unlock(&tasklist_lock);
++			return 1;
++		}
++		t = t->parent;
++	}
++	read_unlock(&tasklist_lock);
++	return 0;
++}
++
++/*
++ *
++ *	LIDS ACL Function 
++ *
++ */
++static int
++lids_check_acl_inode(struct inode *inode, int type)
++{
++
++	struct lids_task_acl *task_acl = current->security;
++	struct lids_object_acl *o_acl; 
++	struct lids_inode_acl *i_acl= inode->i_security;
++	//time_t currenttime;
++	int	i=0;
++
++
++	if (!(task_acl && task_acl->s_acl))
++		return -EPERM;
++	
++	while (i_acl->perm[i].sid != 0 && i< 64) {
++
++		o_acl = task_acl->s_acl->o_acl;
++		while(o_acl) {
++			if ( i_acl->perm[i].sid == o_acl->sid &&
++				i_acl->perm[i].oid == o_acl->oid ) {
++
++			return type & i_acl->perm[i].type ? 0 : -EPERM;
++			}
++			o_acl = o_acl->next;
++		}
++		i++;
++	}
++	return -EPERM;
++}
++#if 0
++void show_lids_sec(struct lids_inode_acl *i_acl)
++{
++	struct lids_subject_acl *s_acl;
++	struct lids_object_acl *o_acl;
++	
++	if(!i_acl) return;
++	printk("\tshow: inode: %s, %d\n",i_acl->name, i_acl->type);
++	s_acl = i_acl->s_acl;
++	if(!s_acl) return;
++	printk("\t -- cap %x \n",s_acl->sys_cap);
++	o_acl = s_acl->o_acl;
++	if(!o_acl) return;
++	while(o_acl) {
++	printk("\t -- obj [%s] type %d inherit %d\n",o_acl->name,o_acl->type,o_acl->inherit);
++	o_acl = o_acl->next;
++	}
++}
++#endif
++/*
++*    ACLS computed routine.
++*/
++static int
++lids_compute_inherit_acl(struct lids_subject_acl *current_s_acl,
++			 struct lids_subject_acl *computed_s_acl)
++{
++	struct lids_object_acl *src_acl, *dst_acl;
++
++	computed_s_acl->o_acl = NULL;
++	src_acl = current_s_acl->o_acl;
++	
++	while (src_acl) {
++		if (src_acl->inherit != 0) {
++			dst_acl =
++			    kmalloc(sizeof (struct lids_object_acl),
++				    GFP_KERNEL);
++			if (!dst_acl) {
++				LIDS_DBG("kmalloc failed\n");
++				lids_free_subject_acl(computed_s_acl);
++				return -ENOMEM;
++			}
++			memcpy(dst_acl, src_acl,
++			       sizeof (struct lids_object_acl));
++			if (dst_acl->inherit > 0)
++				dst_acl->inherit--;
++
++			LIDS_DBG	
++			    ("     +++ pid %i: 1 ACL inherited. remaining TTL : %i\n",
++			     current->pid, dst_acl->inherit);
++
++			dst_acl->next = computed_s_acl->o_acl;
++			computed_s_acl->o_acl = dst_acl;
++
++		} else {
++			LIDS_DBG	
++			    ("     + pid %i: 1 ACL not inherited: TTL elapsed.\n",
++			     current->pid);
++		}
++		src_acl = src_acl->next;
++	}
++	LIDS_DBG("%s:     = pid %i: %s inherit acls\n", __FUNCTION__, current->pid,
++		 computed_s_acl->o_acl ? "does" : "does not");
++	return 0;
++}
++
++static void
++lids_compute_inherit_cap(struct lids_subject_acl *current_s_acl,
++			 struct lids_subject_acl *computed_s_acl)
++{
++	int i;
++
++	computed_s_acl->ext_cap = current_s_acl->ext_cap;
++
++	if (!current_s_acl->sys_cap)
++		return;
++	computed_s_acl->sys_cap = 0;
++	/* reset the cap_inherit */
++	for (i = 0; i < 32; i++) {
++		if (test_bit(i, (void *)&current_s_acl->sys_cap) &&
++		    (current_s_acl->cap_inherit[i].inherit != 0)) {
++			set_bit(i, (void *)&computed_s_acl->sys_cap);
++			memcpy(&computed_s_acl->cap_inherit[i],
++			       &current_s_acl->cap_inherit[i],
++			       sizeof (struct lids_cap));
++			if (current_s_acl->cap_inherit[i].inherit > 0)
++				computed_s_acl->cap_inherit[i].inherit--;
++		}
++	}
++	LIDS_DBG("%s: %d current %x computed %x\n",__FUNCTION__, current->pid, current_s_acl->sys_cap, computed_s_acl->sys_cap);
++
++}
++
++static int
++lids_compute_new_acl(struct lids_subject_acl *new_s_acl,
++		     struct lids_subject_acl *computed_s_acl)
++{
++	struct lids_object_acl *src_acl, *dst_acl;
++
++	src_acl = new_s_acl->o_acl;
++	computed_s_acl->o_acl = NULL;
++	while (src_acl) {
++		LIDS_DBG("     + pid %i: getting a new fs ACL, %s type %d inherit %d\n", current->pid,src_acl->name, src_acl->type, src_acl->inherit);
++		dst_acl = kmalloc(sizeof (struct lids_object_acl), GFP_KERNEL);
++		if (!dst_acl) {
++			LIDS_DBG("kmalloc failed\n");
++			return -3;
++		}
++		memcpy(dst_acl, src_acl, sizeof (struct lids_object_acl));
++		dst_acl->next = computed_s_acl->o_acl;
++		computed_s_acl->o_acl = dst_acl;
++		src_acl = src_acl->next;
++	}
++	return 0;
++}
++
++static void
++lids_compute_new_cap(struct lids_subject_acl *new_s_acl,
++		     struct lids_subject_acl *computed_s_acl)
++{
++	int i;
++
++	computed_s_acl->sys_cap |= new_s_acl->sys_cap;
++
++	/* 0. SOCKET inherit FIXME later */
++	computed_s_acl->ext_cap |= new_s_acl->ext_cap;
++	/* if its parent do not has mark, use its own */
++	memcpy(computed_s_acl->port, new_s_acl->port, sizeof(computed_s_acl->port));
++
++	for (i = 0; i < 32; i++) {
++		/* Here we do an unsigned comparison for -1 to be the biggest number */
++		if (test_bit(i, (void *)&new_s_acl->sys_cap) &&
++		    ((u32) computed_s_acl->cap_inherit[i].inherit <
++		     (u32) new_s_acl->cap_inherit[i].inherit)) {
++
++			computed_s_acl->cap_inherit[i].inherit =
++			    new_s_acl->cap_inherit[i].inherit;
++		}
++	}
++}
++
++/*
++ *	lids_set_acls, this_sys_acl must be NOT NULL.
++ *	protected if the flag for current process, if it is under protected, protected = 1, otherwise = 0
++ */
++int
++lids_compute_acls(struct lids_subject_acl *current_s_acl,
++		  struct lids_subject_acl *new_s_acl,
++		  struct lids_subject_acl *computed_s_acl, int protect)
++{
++
++	memset(computed_s_acl, 0, sizeof (struct lids_subject_acl));
++
++	if (current_s_acl) {
++
++		LIDS_DBG("%s: + pid %i: inherit ACLs: %lx ext %lx port %d oacl %p\n",__FUNCTION__,
++			 current->pid, current_s_acl->sys_cap,
++			 current_s_acl->ext_cap,current_s_acl->port[0][0],
++			current_s_acl->o_acl);
++
++		lids_compute_inherit_cap(current_s_acl, computed_s_acl);
++
++		if (protect) {
++			if (lids_compute_inherit_acl
++			    (current_s_acl, computed_s_acl) < 0)
++				return -ENOMEM;
++		}
++	}
++
++	if (new_s_acl && protect) {
++
++		LIDS_DBG	
++		    ("%s: + pid %i: getting new ACLs: cap %lx, ext_cap %lx computed %lx, ext %lx port %d oacl %p\n",__FUNCTION__,
++		     current->pid, new_s_acl->sys_cap, new_s_acl->ext_cap,
++		     new_s_acl->ext_cap, computed_s_acl->ext_cap,
++		     new_s_acl->port[0][0],
++		     new_s_acl->o_acl);
++
++		lids_compute_new_cap(new_s_acl, computed_s_acl);
++
++		if (lids_compute_new_acl(new_s_acl, computed_s_acl) < 0) {
++			return -ENOMEM;
++		}
++
++	}
++
++	LIDS_DBG("%s: = pid %i: final caps : %#lx ext_cap = %lx port %d o_acl = %p\n",
++		 __FUNCTION__, current->pid, computed_s_acl->sys_cap,
++		 computed_s_acl->ext_cap, computed_s_acl->port[0][0], computed_s_acl->o_acl);
++
++
++	return 0;
++}
++
++/*
++ * apply the acl to task->security
++ */
++void
++lids_set_task_acl(struct lids_subject_acl *s_acl, struct task_struct *task)
++{
++	struct lids_task_acl *acl = task->security;
++
++	if (!task || !s_acl) {
++		printk(KERN_INFO "LIDS: %s:yee..bug!\n", __FUNCTION__);
++		return;
++	}
++	if (s_acl) {
++		/* check this acl, to see if it really contain an ACL */
++		if (s_acl->sys_cap == 0 && s_acl->o_acl == NULL &&
++		    s_acl->ext_cap == 0) {
++			lids_free_subject_acl(s_acl);
++			/* lock ?? */
++			spin_lock(&acl->t_lock);
++			acl->s_acl = NULL;
++			spin_unlock(&acl->t_lock);
++		} else {
++			/* lock ?? */
++			spin_lock(&acl->t_lock);
++			acl->s_acl = s_acl;
++			spin_unlock(&acl->t_lock);
++			LIDS_DBG(" pid %i: set caps : %#lx\n", task->pid,
++				 s_acl->sys_cap);
++		}
++	}
++	return;
++}
++
++static struct lids_subject_acl *
++lids_copy_subject_acl(struct lids_subject_acl *src)
++{
++
++	struct lids_object_acl *s, *d;
++	struct lids_subject_acl *dst;
++
++	dst = (struct lids_subject_acl *)
++	    kmalloc(sizeof (struct lids_subject_acl), GFP_KERNEL);
++	if (!dst) {
++		LIDS_DBG("kmalloc error\n");
++		return NULL;
++	}
++	memcpy(dst, src, sizeof (struct lids_subject_acl));
++
++	/* 1 . copy lids_acl */
++	dst->o_acl = NULL;
++	s = src->o_acl;
++	while (s) {
++		d = kmalloc(sizeof (struct lids_object_acl), GFP_KERNEL);
++		if (!d) {
++			LIDS_DBG("kmalloc error\n");
++			lids_free_subject_acl(dst);
++			return NULL;
++		}
++		memcpy(d, s, sizeof (struct lids_object_acl));
++		d->next = dst->o_acl;
++		dst->o_acl = d;
++		s = s->next;
++	}
++
++	return dst;
++}
++
++/***********************************************************************
++ *
++ *	lids_check_base();
++ *	
++ *	check if the base have been protected by the IDS system.
++ *	use the base->d_parent 
++ *	check if the requried access can be permitted
++ */
++
++int
++lids_check_base(struct dentry *dentry, int flag)
++{
++	struct inode *inode = dentry->d_inode;
++	struct lids_inode_acl *i_acl;
++	int error;
++
++	if (inode == NULL)
++		return 0;
++
++	error = lids_get_inode_security(dentry, inode);
++	if (error) {
++		printk("%s: yeee. [%s] error ??\n",__FUNCTION__, dentry->d_iname);
++		return -EPERM;
++	}
++
++	i_acl = (struct lids_inode_acl *) inode->i_security;
++
++	LIDS_DBG("%s: LIDS ACL: i_acl= %p, name=[%s], inode = %d\n",
++		 __FUNCTION__, i_acl, dentry->d_iname, inode->i_ino);
++	/* if it is a socket or link .. */
++	if (i_acl == NULL) {
++		return 0;
++	}
++	/* do not have any acl */
++	if(i_acl->type == 0xffffffff) {
++		return 0;
++	}
++
++	if (((i_acl->type) & flag) > 0)
++		return 0;
++
++	return lids_check_acl_inode(inode, flag);
++}
++
++static int
++lids_get_task_acl(struct task_struct *task, struct lids_task_acl *task_acl,
++		  struct lids_inode_acl *i_acl)
++{
++	struct lids_subject_acl *task_s_acl = NULL;
++	struct lids_subject_acl *current_s_acl = NULL;
++	struct lids_subject_acl *new_s_acl = NULL;
++	struct lids_subject_acl *computed_s_acl = NULL;
++	struct lids_task_acl *current_task_acl = task->security;
++	int retval = 0;
++
++	LIDS_DBG("%s:##### pid %i ppid %d\n", __FUNCTION__, task->pid,
++		 task->parent->pid);
++
++	/* if no acl for itself and its parent has not acl */
++	if (i_acl)
++		new_s_acl = i_acl->s_acl;
++	if (task_acl)
++		task_s_acl = task_acl->s_acl;
++	/* if no acl with this inode and not for its parent */
++	if (!new_s_acl && !task_s_acl) {
++		return 0;
++	}
++
++	if (current_task_acl == NULL) {
++		current_task_acl = lids_alloc_task_acl(task);
++		if (current_task_acl == NULL) {
++			printk(KERN_INFO
++			       "LIDS: kmalloc memeory for task acl\n");
++			return -ENOMEM;
++		}
++	} else {
++		if (current_task_acl->magic != LIDS_MAGIC) {
++			printk
++			    (KERN_INFO
++			     "LIDS: Bug!! task security magic mismatch!\n");
++			/* return 0? */
++			return 0;
++		}
++	}
++	current_s_acl = current_task_acl->s_acl;
++
++	/* check if this program is protected or not */
++	if (i_acl && (i_acl->type & LIDS_APPEND) == 0) {
++		/* task and its parent do not have acl */
++		computed_s_acl =
++		    kmalloc(sizeof (struct lids_subject_acl), GFP_KERNEL);
++		if (computed_s_acl == NULL) {
++			printk(KERN_INFO
++			       "LIDS: kmalloc error for computed acl\n");
++			retval = -ENOMEM;
++			goto out;
++		}
++
++		if (lids_compute_acls(task_s_acl, new_s_acl, computed_s_acl, 1)
++		    < 0) {
++			lids_free_subject_acl(computed_s_acl);
++			retval = -EPERM;
++			goto out;
++		}
++
++		LIDS_DBG("%s: LIDS: protected pid %d %d  get acl\n",
++			 __FUNCTION__, task->pid, task->parent->pid);
++
++		spin_lock(&current_task_acl->t_lock);
++		current_task_acl->s_acl = computed_s_acl;
++		spin_unlock(&current_task_acl->t_lock);
++	} else {
++
++		/* reset all the privileges  */
++		/* maybe we need some locks here */
++		if (task_s_acl) {
++
++			computed_s_acl =
++			    kmalloc(sizeof (struct lids_subject_acl),
++				    GFP_KERNEL);
++			if (computed_s_acl == NULL) {
++				printk
++				    (KERN_INFO
++				     "LIDS: kmalloc error for computed acl\n");
++				retval = -ENOMEM;
++				goto out;
++			}
++			retval =
++			    lids_compute_acls(task_s_acl, NULL, computed_s_acl,
++					      0);
++			if (retval < 0) {
++				lids_free_subject_acl(computed_s_acl);
++				retval = -EPERM;
++				goto out;
++			}
++			/* restrict socket access found */
++			/* remove the capability but leave socket */
++			if (computed_s_acl->ext_cap != 0) {
++				LIDS_DBG
++				    ("LIDS: unprotected pid %d %d get socket inheritance\n",
++				     task->pid, task->parent->pid);
++				lids_free_object_acl(computed_s_acl->o_acl);
++				computed_s_acl->o_acl = NULL;
++				computed_s_acl->sys_cap = 0;
++				memset(computed_s_acl->cap_inherit, 0,
++				       32 * sizeof (struct lids_cap));
++				spin_lock(&current_task_acl->t_lock);
++				current_task_acl->s_acl = computed_s_acl;
++				spin_unlock(&current_task_acl->t_lock);
++			} else {
++				/* clean the task */
++				task_lock(task);
++				task->security = NULL;
++				task_unlock(task);
++				lids_free_subject_acl(computed_s_acl);
++				spin_lock(&current_task_acl->t_lock);
++				current_task_acl->s_acl = NULL;
++				spin_unlock(&current_task_acl->t_lock);
++			}
++		}
++	}
++      out:
++	lids_free_subject_acl(current_s_acl);
++
++	current_s_acl = current_task_acl->s_acl;
++	if (!current_s_acl) {
++		task_lock(task);
++		task->security = NULL;
++		task_unlock(task);
++		lids_free_task_acl(current_task_acl);
++	}
++	return retval;
++}
++
++/* lids task acl */
++static LIST_HEAD(lids_init_head);
++static spinlock_t lids_init_lock = SPIN_LOCK_UNLOCKED;
++
++static int
++lids_push_task_acl(struct task_struct *task)
++{
++	struct lids_task_acl *task_acl;
++
++	/* init, ignore it */
++	if (task->parent->pid == 0)
++		return 0;
++
++	LIDS_DBG("%s: pushing %d %d\n", __FUNCTION__, task->pid,
++		 task->parent->pid);
++	task_acl = task->security;
++	/* it maybe have acl when switch within states */
++	if (!task_acl) {
++		/* can not sleep */
++		task_acl = lids_alloc_task_acl(task);
++		if (!task_acl) {
++			return -ENOMEM;
++		}
++	}
++	/* can I hold a lock */
++	spin_lock(&lids_init_lock);
++	if (list_empty(&task_acl->list))
++		list_add(&task_acl->list, &lids_init_head);
++	spin_unlock(&lids_init_lock);
++	return 0;
++}
++
++/*
++ *
++ */
++struct dentry *
++lids_get_task_dentry(struct task_struct *task)
++{
++	struct dentry *dentry = NULL;
++	struct vm_area_struct *vma;
++
++	if (task->mm) {
++		vma = task->mm->mmap;
++		while (vma) {
++			if ((vma->vm_flags & VM_EXECUTABLE) && vma->vm_file) {
++				dentry = vma->vm_file->f_dentry;
++				break;
++			}
++			vma = vma->vm_next;
++		}
++	}
++	return dentry;
++}
++
++static int
++lids_attach_task_acl(struct task_struct *task)
++{
++	struct lids_task_acl *task_acl;
++	struct dentry *dentry = NULL;
++	int retval;
++
++	/* Get dentry of current process, if any */
++
++	dentry = lids_get_task_dentry(task);
++	if (!dentry)
++		return 0;
++
++	LIDS_DBG("attaching pid %d ppid %d %s\n", task->pid, task->parent->pid,
++		 dentry->d_iname);
++
++	retval = lids_get_inode_security(dentry, dentry->d_inode);
++	if (retval < 0)
++		return retval;
++
++	task_acl = task->security;
++	if (task_acl && task_acl->s_acl) {
++		lids_free_subject_acl(task_acl->s_acl);
++		/* FIXME lock ?? */
++		task_acl->s_acl = NULL;
++	}
++	task_acl = task->parent->security;
++	retval = lids_get_task_acl(task, task_acl, dentry->d_inode->i_security);
++
++	return retval;
++}
++
++int
++lids_setup_task_acl(int state)
++{
++	struct task_struct *p;
++
++	read_lock(&tasklist_lock);
++	for_each_process(p) {
++		if (lids_push_task_acl(p) < 0)
++			return -1;
++	}
++	read_unlock(&tasklist_lock);
++	/* attach now */
++	spin_lock(&lids_init_lock);
++      next_task:
++	if (!list_empty(&lids_init_head)) {
++		struct lids_task_acl *task_acl;
++		task_acl = list_entry(lids_init_head.next,
++				      struct lids_task_acl, list);
++		//struct inode *inode = isec->inode;
++		spin_unlock(&lids_init_lock);
++
++		lids_attach_task_acl(task_acl->task);
++
++		spin_lock(&lids_init_lock);
++		list_del_init(&task_acl->list);
++		goto next_task;
++	}
++	spin_unlock(&lids_init_lock);
++
++	return 0;
++}
++
++/* inode acl */
++
++
++/* 
++	inherit the acl from its parent/dir
++*/
++
++void
++lids_do_inode_post_create(struct inode *dir_inode, struct dentry *dentry)
++{
++#if 0
++	struct inode *inode = dentry->d_inode;
++	struct lids_inode_acl *dir_i_acl = dir_inode->i_security;
++	struct lids_inode_acl *i_acl;
++	struct dentry *i_dentry = NULL;
++	struct dentry *dir_dentry = NULL;
++	int len, retval;
++
++	if (!inode || !dir_i_acl)
++		return;
++	if (inode->i_op->getxattr == NULL || dir_i_acl->magic != LIDS_MAGIC)
++		return;
++
++	LIDS_DBG("%s: inode %ld\n", __FUNCTION__, inode->i_ino);
++
++	i_dentry = dget(dentry);
++	if (!i_dentry)
++		return;
++	dir_dentry = d_find_alias(dir_inode);
++	if (!dir_dentry)
++		return;
++
++	i_acl = kmalloc(sizeof (struct lids_inode_acl), GFP_KERNEL);
++	if (!i_acl) {
++		printk(KERN_INFO "LIDS: kmalloc for lids_inode_acl failed\n");
++		dput(i_dentry);
++		return;
++	}
++
++	len = inode->i_op->getxattr(dir_dentry, lids_xattr_name[lids_state],
++				    NULL, 0);
++	if (len > 0) {
++		if (len !=
++		    (sizeof (struct lids_inode_acl) - sizeof (spinlock_t))) {
++			printk
++			    (KERN_INFO
++			     "LIDS: dir getxattr return len(%d) mismatch\n",
++			     len);
++			return;
++		}
++		if (len > LIDS_MAX_XATTR_LEN) {
++			printk(KERN_INFO
++			       "LIDS: xattr len %d larger than defined max len %d\n",
++			       len, LIDS_MAX_XATTR_LEN);
++			return;
++		}
++		retval =
++		    inode->i_op->getxattr(dir_dentry,
++					  lids_xattr_name[lids_state], i_acl,
++					  len);
++		/* we got it, so current acl is not the defualt one. */
++		if (retval >= 0) {
++			len =
++			    inode->i_op->setxattr(i_dentry,
++						  lids_xattr_name[lids_state],
++						  i_acl, len, 0);
++		}
++		/* get the defualt acl */
++	}
++	retval = inode->i_op->getxattr(dir_dentry, XATTR_NAME_LIDS, i_acl,
++				       sizeof (struct lids_inode_acl) -
++				       sizeof (spinlock_t));
++
++	dput(dir_dentry);
++
++	if (retval >= 0) {
++		len = inode->i_op->setxattr(i_dentry, XATTR_NAME_LIDS, i_acl,
++					    sizeof (struct lids_inode_acl) -
++					    sizeof (spinlock_t), 0);
++	}
++	/* set the xattr now */
++	if (len < 0) {
++		printk(KERN_INFO "LIDS: setxattr failed for %s\n",
++		       i_dentry->d_iname);
++	}
++	dput(i_dentry);
++	kfree(i_acl);
++#endif
++	return;
++}
++static int 
++lids_copy_inode_acl(struct lids_inode_acl *d_i_acl, struct lids_inode_acl *s_i_acl)
++{
++	struct lids_subject_acl *d_s_acl;
++	struct lids_object_acl *d_o_acl,*s_o_acl;
++
++	memcpy(d_i_acl, s_i_acl, sizeof(struct lids_inode_acl));
++
++	LIDS_DBG("%s: inode name = %s, perm sid %d oid %d\n",__FUNCTION__,s_i_acl->name,s_i_acl->perm[0].sid, s_i_acl->perm[0].oid);
++
++	if(s_i_acl->s_acl) {
++		d_s_acl = kmalloc(sizeof(struct lids_subject_acl),GFP_KERNEL);
++		if(!d_s_acl) {
++			printk("%s: LIDS: kmalloc subject acl error\n",__FUNCTION__);
++			return -ENOMEM;
++		}	
++		memcpy(d_s_acl, s_i_acl->s_acl,sizeof(struct lids_subject_acl));
++
++		d_i_acl->s_acl = d_s_acl;	
++		d_s_acl->o_acl = NULL;
++
++		s_o_acl = s_i_acl->s_acl->o_acl; 
++
++		while(s_o_acl) {
++			d_o_acl = kmalloc(sizeof(struct lids_object_acl),GFP_KERNEL);
++			if(!d_o_acl) {
++				printk("%s: LIDS: kmalloc object acl error\n",__FUNCTION__);
++				return -ENOMEM;
++			}	
++			memcpy(d_o_acl, s_o_acl,sizeof(struct lids_object_acl));
++			d_o_acl->next = d_s_acl->o_acl;
++			d_s_acl->o_acl = d_o_acl;
++
++			s_o_acl = s_o_acl->next;
++
++		}
++	}
++	return 0;
++}
++
++static struct lids_inode_acl *
++lids_set_inode_acl(struct inode *inode, struct lids_inode_acl *c_i_acl)
++{
++	struct lids_inode_acl *i_acl;
++
++	i_acl = kmalloc(sizeof (struct lids_inode_acl), GFP_KERNEL);
++	if (!i_acl) {
++		printk(KERN_INFO "LIDS: kmalloc failed for inode_acl\n");
++		return NULL;
++	}
++	if(!c_i_acl) {
++		c_i_acl = kmalloc(sizeof(struct lids_inode_acl),GFP_KERNEL);	
++		if(!c_i_acl) {
++			printk("LIDS: fatal error c_i_acl kmalloc failed\n");
++			return NULL;
++		}
++		memset(c_i_acl, 0, sizeof(struct lids_inode_acl));
++		c_i_acl->version = lids_update_version; 
++		c_i_acl->type = 0xffffffff;
++		c_i_acl->magic = LIDS_MAGIC;
++	}
++	lids_copy_inode_acl(i_acl, c_i_acl);
++	/* FIXME, if inode has security */
++	
++	spin_lock(&inode->i_lock);
++	lids_free_inode_acl(inode->i_security);
++	inode->i_security = i_acl;
++	spin_unlock(&inode->i_lock);
++
++	return c_i_acl;
++}
++
++static int
++lids_get_inode_security(struct dentry *dentry, struct inode *inode)
++{
++	struct lids_inode_acl *i_acl, *c_i_acl;
++	struct dentry *i_dentry = NULL;
++
++	if (inode == NULL)
++		return 0;
++
++	if (!(S_ISREG(inode->i_mode) || S_ISDIR(inode->i_mode)
++	      || S_ISLNK(inode->i_mode))) {
++		return 0;
++	}
++
++	LIDS_DBG("%s: ##### inode: mode %d [%d:%d %ld]\n", __FUNCTION__,
++		 inode->i_mode,
++		 MAJOR(inode->i_sb->s_dev),
++		 MINOR(inode->i_sb->s_dev), inode->i_ino);
++
++	i_acl = inode->i_security;
++	if(i_acl && i_acl->version == lids_update_version) { 
++		return 0;
++	}
++
++	if (!dentry) {
++		printk("%s: dentry is NULL, Bug?\n",__FUNCTION__);
++		return 0;
++	}
++	i_dentry = dentry;
++	while(1) {
++		c_i_acl = lids_do_get_acl(i_dentry->d_inode);
++		if(c_i_acl != NULL || i_dentry == i_dentry->d_parent ) {
++			c_i_acl = lids_set_inode_acl(i_dentry->d_inode, c_i_acl);
++			break;
++		}
++		i_dentry = i_dentry->d_parent;
++
++		i_acl = i_dentry->d_inode->i_security;
++		if(i_acl && i_acl->version == lids_update_version) {
++			c_i_acl = i_acl;
++			break;
++		}
++	}
++	if(!c_i_acl) {
++		return -ENOMEM;
++	}
++	while(dentry != i_dentry) {
++		c_i_acl = lids_set_inode_acl(dentry->d_inode, c_i_acl);
++		if(!c_i_acl) 
++			return -ENOMEM;
++		dentry = dentry->d_parent;
++		/* it is root now */	
++	}
++	return 0;	
++}
++
++#if 0
++static int
++lids_check_shellcode(struct linux_binprm *bprm)
++{
++	struct page *page;
++	int i, offset, err = 0;
++	char *kaddr, *paddr, *p;
++	struct dentry *dentry;
++/*
++ *	copy the userspace charctor into a buffer to hold all the 
++ * 	envp here.. and check it.
++ */
++	offset = (bprm->p) % PAGE_SIZE;
++	i = (bprm->p) / PAGE_SIZE;
++	kaddr = p = kmalloc(MAX_ARG_PAGES * PAGE_SIZE - bprm->p, GFP_KERNEL);
++	if (!p)
++		return -ENOMEM;
++
++	while (i < MAX_ARG_PAGES) {
++		page = bprm->page[i];
++		paddr = kmap(page);
++
++		memcpy(kaddr, paddr + offset, PAGE_SIZE - offset);
++		kaddr += PAGE_SIZE - offset;
++		kunmap(page);
++		offset = 0;
++		i++;
++	}
++	kaddr = p;
++	i = 0;
++	while (i < bprm->envc + bprm->argc) {
++		if (strlen(kaddr) > LIDS_SHELLCODE_LENGTH) {
++			lids_security_alert
++			    ("Found overlong %s when exec %s: length = %d",
++			     i < bprm->argc ? "parameters" : "env",
++			     bprm->filename, strlen(kaddr));
++#ifdef LIDS_SHELLCODE_STRING
++			if (strstr(kaddr, LIDS_SHELLCODE_STRING)) {
++				err = -1;
++				dentry = bprm->file->f_dentry;
++				lids_security_alert
++				    ("Shellcode detected when exec %s, program terminated!",
++				     bprm->filename);
++				break;
++			}
++#endif
++		}
++		kaddr = strchr(kaddr, '\0');
++		kaddr = kaddr + 1;
++		i++;
++	}
++	kfree(p);
++	return err;
++}
++#endif
++
++static int
++lids_check_envp(struct linux_binprm *bprm)
++{
++	struct page *page;
++	int err = 0;
++	char *kaddr, *paddr, *p, *end_p;
++	struct dentry *dentry;
++	unsigned long offset;
++	unsigned long i;
++/*
++ *	copy the userspace charctor into a buffer to hold all the 
++ * 	envp here.. and check it.
++ */
++	LIDS_DBG("%s: enter file %s\n",__FUNCTION__, bprm->filename);
++	offset = (bprm->p) % PAGE_SIZE;
++	i = (bprm->p) / PAGE_SIZE;
++	kaddr = p = kmalloc(MAX_ARG_PAGES * PAGE_SIZE - bprm->p, GFP_KERNEL);
++
++	if (!p)
++		return -1;
++
++	end_p = p + MAX_ARG_PAGES * PAGE_SIZE - bprm->p; 
++	while (i < MAX_ARG_PAGES) {
++		page = bprm->page[i];
++		paddr = kmap(page);
++		/* make sure each time, the kaddr is not out of bound */
++		if( kaddr + PAGE_SIZE - offset > end_p ) {
++			kfree(p);
++			return -1;
++		} 
++		memcpy(kaddr, paddr + offset, PAGE_SIZE - offset);
++		kaddr += PAGE_SIZE - offset;
++		kunmap(page);
++		offset = 0;
++		i++;
++	}
++	kaddr = p;
++	i = 0;
++	while (i < bprm->envc + bprm->argc) {
++		if (i >= bprm->argc) {
++			LIDS_DBG("%s:str[%d] = [%s]\n", __FUNCTION__, i, kaddr);
++			if ((kaddr[0] == 'L' || kaddr[0] == 'l') &&
++			    (kaddr[1] == 'D' || kaddr[1] == 'd') &&
++			    (kaddr[2] == '_')) {
++				err = -1;
++				break;
++			}
++		}
++		kaddr = strchr(kaddr, '\0');
++		kaddr = kaddr + 1;
++		/* overflow checking */
++		if(kaddr > end_p) {
++			kfree(p);
++			return -1;
++		} 
++		i++;
++	}
++
++	if (err) {
++		dentry = bprm->file->f_dentry;
++		lids_security_alert
++		    ("Attempt to give [%.128s] to privilegied program %.128s (dev %d:%d inode %ld)",
++		     kaddr, bprm->filename, MAJOR(dentry->d_inode->i_sb->s_dev),
++		     MINOR(dentry->d_inode->i_sb->s_dev),
++		     dentry->d_inode->i_ino);
++	}
++	kfree(p);
++	return err;
++}
++/*
++ *	checking the envp 
++ */
++int
++lids_execve_check_envp(struct linux_binprm *bprm)
++{
++	struct lids_task_acl *current_task_acl = current->security;
++	struct lids_subject_acl *current_s_acl=NULL;
++
++	LIDS_DBG("%s: enter file %s\n",__FUNCTION__, bprm->filename);
++	if (current_task_acl && current_task_acl->s_acl) {
++		current_s_acl = current_task_acl->s_acl;
++
++		if ((current_s_acl->o_acl || current_s_acl->sys_cap)
++		    && (lids_load && lids_local_load)) {
++			if (lids_check_capable(current, CAP_SYS_PTRACE, 0)) {
++				if (lids_check_envp(bprm) < 0) {
++					task_lock(current);
++					current->security = NULL;
++					task_unlock(current);
++					lids_free_task_acl(current_task_acl);
++				}
++			}
++		}
++	}
++	return 0;
++}
++
++/*
++ *	the current->security  struct lids_sys_acl
++ */
++int
++lids_execve(struct linux_binprm *bprm)
++{
++	struct lids_task_acl *current_task_acl = current->security;
++	struct dentry *dentry,*t_dentry;
++	struct lids_inode_acl *i_acl = NULL;
++	int error;
++
++	if (current->parent->pid == 0)
++		return 0;
++
++	if (!bprm || !bprm->file) {
++		printk("LIDS: %s:BUG!\n", __FUNCTION__);
++		return 0;
++	}
++
++	LIDS_DBG("@@@@@@ %s:##### pid %i ppid %i exec [%s]\n", __FUNCTION__,
++		 current->pid, current->parent->pid, bprm->filename);
++	dentry = bprm->file->f_dentry;
++	/* check if this dentry is the same as this pid or not */
++	/* LIDS_EXEC checking here */
++
++	t_dentry = lids_get_task_dentry(current);
++
++	if (t_dentry && lids_load && lids_local_load 
++			&& lids_ext_capable(current, 15) < 0) {
++		if (dentry->d_inode->i_ino != t_dentry->d_inode->i_ino ||
++		    dentry->d_inode->i_sb->s_dev !=
++		    t_dentry->d_inode->i_sb->s_dev 
++		    ) {
++			lids_security_alert
++			    ("pid %i ppid %i, exec [%s] denied\n",
++			     current->pid, current->parent->pid,
++			     bprm->filename);
++			return -EPERM;
++		}
++	}
++
++	if (dentry && dentry->d_inode) {
++		error = lids_get_inode_security(dentry, dentry->d_inode);
++		if (error < 0)
++			return error;
++		i_acl = dentry->d_inode->i_security;
++	}
++
++	error = lids_get_task_acl(current, current_task_acl, i_acl);
++	if (error)
++		return error;
++
++	return 0;
++}
++
++/* copy the fork 
++ */
++
++int
++lids_fork_task(struct task_struct *tsk)
++{
++	struct lids_subject_acl *src = NULL;
++	struct lids_subject_acl *dst = NULL;
++	struct lids_task_acl *task_acl, *current_task_acl;
++
++	if (!tsk) {
++		printk(KERN_INFO "LIDS: %s: BUG\n", __FUNCTION__);
++		return 0;
++	}
++
++	if (!tsk->parent->pid)
++		return 0;
++
++	current_task_acl = current->security;
++
++	if (!current_task_acl) {
++		LIDS_DBG(KERN_WARNING "%s: current task is NULL\n",
++			 __FUNCTION__);
++		return 0;
++	}
++
++	src = current_task_acl->s_acl;
++
++	if (!src) {
++		return 0;
++	}
++
++	if ((dst = lids_copy_subject_acl(src)) == NULL) {
++		LIDS_DBG("lids_copy_subject_acl error\n");
++		return -1;
++	}
++
++	task_acl = lids_alloc_task_acl(tsk);
++	if (!task_acl) {
++		LIDS_DBG(KERN_WARNING "LIDS: kmalloc failed for task_acl\n");
++		return -ENOMEM;
++	}
++	task_acl->s_acl = dst;
++	return 0;
++}
++
++int
++lids_check_task_kill(struct task_struct *p, struct siginfo *info, int sig)
++{
++	struct lids_task_acl *task_acl = p->security;
++	struct lids_subject_acl *s_acl = task_acl->s_acl;
++
++	if (s_acl && cap_raised(s_acl->sys_cap, CAP_PROTECTED)) {
++		if (current->pid && (current->pid != p->pid)
++		    && ((sig != SIGCHLD) || (current->parent->pid != p->pid))) {
++			if (!capable(CAP_KILL_PROTECTED)) {
++				lids_security_alert
++				    ("Attempt to kill pid=%d with sig=%d",
++				     p->pid, sig);
++				lids_cap_log(CAP_PROTECTED);
++				return LIDS_ERROR(-EPERM);
++			}
++		}
++	}
++	return 0;
++}
+diff -Nru linux-2.6.12/security/lids/lids_cap.c linux/security/lids/lids_cap.c
+--- linux-2.6.12/security/lids/lids_cap.c	1969-12-31 16:00:00.000000000 -0800
++++ linux/security/lids/lids_cap.c	2004-12-31 20:55:47.000000000 -0800
+@@ -0,0 +1,145 @@
++/*
++ *  LIDS Capability functions 
++ *
++ *  Copyright (C) 2002 Huagang Xie <xie@lids.org>
++ *  Copyright (C) 2002 Philippe Biondi <biondi@cartel-securite.fr>
++ *
++ *	This program is free software; you can redistribute it and/or modify
++ *	it under the terms of the GNU General Public License as published by
++ *	the Free Software Foundation; either version 2 of the License, or
++ *	(at your option) any later version.
++ */
++#include <linux/config.h>
++#include <linux/module.h>
++#include <linux/init.h>
++#include <linux/kernel.h>
++#include <linux/errno.h>
++#include <linux/sched.h>
++#include <linux/security.h>
++#include <linux/capability.h>
++#include <linux/mm.h>
++#include <linux/mman.h>
++#include <linux/slab.h>
++#include <linux/smp_lock.h>
++#include <linux/spinlock.h>
++#include <linux/file.h>
++#include <linux/ext2_fs.h>
++#include <net/ip.h>		/* for sysctl_local_port_range[] */
++#include <asm/uaccess.h>
++#include <asm/semaphore.h>
++#include <asm/ioctls.h>
++#include <linux/lids.h>
++#include <linux/lidsext.h>
++#include <linux/lidsif.h>
++/*
++ *	lids capability violate logging
++ */
++
++kernel_cap_t lids_cap_val = 0;
++
++static char *lids_caps_desc[] = {
++	"CAP_CHOWN",
++	"CAP_DAC_OVERRIDE",
++	"CAP_DAC_READ_SEARCH",
++	"CAP_FOWNER",
++	"CAP_FSETID",
++	"CAP_KILL",
++	"CAP_SETGID",
++	"CAP_SETUID",
++	"CAP_SETPCAP",
++	"CAP_LINUX_IMMUTABLE",
++	"CAP_NET_BIND_SERVICE",
++	"CAP_NET_BROADCAST",
++	"CAP_NET_ADMIN",
++	"CAP_NET_RAW",
++	"CAP_IPC_LOCK",
++	"CAP_IPC_OWNER",
++	"CAP_SYS_MODULE",
++	"CAP_SYS_RAWIO",
++	"CAP_SYS_CHROOT",
++	"CAP_SYS_PTRACE",
++	"CAP_SYS_PACCT",
++	"CAP_SYS_ADMIN",
++	"CAP_SYS_BOOT",
++	"CAP_SYS_NICE",
++	"CAP_SYS_RESOURCE",
++	"CAP_SYS_TIME",
++	"CAP_SYS_TTY_CONFIG",
++	"CAP_MKNOD",
++	"CAP_LEASE",
++	"CAP_HIDDEN",
++	"CAP_KILL_PROTECTED",
++	"CAP_PROTECTED",
++	NULL
++};
++
++/*
++ *	check the CAP_NET_BIND_SERVICE to bind to specify port
++ */
++int lids_bind_checker(const int port)
++{
++	int i = 0;
++	struct lids_task_acl *task_acl = current->security;
++	struct lids_subject_acl *s_acl;
++
++	/* if CAP_NET_BIND_SERVICE is enable global, return success */
++//	if (capable(CAP_NET_BIND_SERVICE))
++	if (cap_raised(cap_bset, CAP_NET_BIND_SERVICE)) 
++		return 1;
++	/* if the LIDS is disable , return success */
++	/* check only port < 1024) */
++	if (!(lids_load && lids_local_load) || port > 1023 )
++		return 1;
++	if (!( task_acl && task_acl->s_acl))
++		return 1;
++	s_acl = task_acl->s_acl;
++
++	for (i = 0; i < LIDS_PORT_ITEM && s_acl->port[i][0] != -1; i++) {
++		if (port <= s_acl->port[i][1]
++		    && port >= s_acl->port[i][0])
++			return 1;
++	}
++	return -1;
++}
++
++
++int
++lids_check_capable(struct task_struct *tsk, int cap, int log)
++{
++	struct lids_task_acl *tsk_acl = tsk->security;
++
++	if (cap_raised(cap_bset, cap)) {
++		return 0;
++	} else if (tsk_acl && tsk_acl->s_acl) {
++		if ((cap_raised(tsk_acl->s_acl->sys_cap, cap)))
++			return 0;
++	}
++	if (log)
++		lids_cap_log(cap);
++	return LIDS_ERROR(-EPERM);
++}
++
++void
++lids_cap_log(int cap)
++{
++	if (!cap_raised(lids_cap_val, cap)) {
++		lids_alert(LIDS_CAP, -1, cap, lids_caps_desc[cap],
++			   lids_caps_desc[cap]);
++	}
++}
++
++int
++lids_ext_capable(struct task_struct *tsk, int type)
++{
++	struct lids_task_acl *task_acl = tsk->security;
++	struct lids_subject_acl *s_acl;
++
++	if (!task_acl) {
++		return 0;
++	}
++	s_acl = task_acl->s_acl;
++	if (s_acl && test_bit(type, (void *)&(s_acl->ext_cap))) {
++		return -EPERM;
++	}
++	return 0;
++}
+diff -Nru linux-2.6.12/security/lids/lids_init.c linux/security/lids/lids_init.c
+--- linux-2.6.12/security/lids/lids_init.c	1969-12-31 16:00:00.000000000 -0800
++++ linux/security/lids/lids_init.c	2005-03-14 11:42:35.000000000 -0800
+@@ -0,0 +1,501 @@
++/*
++ *  LIDS INIT functions 
++ *
++ *  Copyright (C) 2002-2003 Huagang Xie <xie@lids.org>
++ *  Copyright (C) 2002 Philippe Biondi <biondi@cartel-securite.fr>
++ *
++ *	This program is free software; you can redistribute it and/or modify
++ *	it under the terms of the GNU General Public License as published by
++ *	the Free Software Foundation; either version 2 of the License, or
++ *	(at your option) any later version.
++ */
++#include <linux/config.h>
++#include <linux/module.h>
++#include <linux/init.h>
++#include <linux/kernel.h>
++#include <linux/errno.h>
++#include <linux/sched.h>
++#include <linux/security.h>
++#include <linux/capability.h>
++#include <linux/mm.h>
++#include <linux/mman.h>
++#include <linux/slab.h>
++#include <linux/smp_lock.h>
++#include <linux/spinlock.h>
++#include <linux/file.h>
++#include <linux/namei.h>
++#include <linux/ext2_fs.h>
++#include <asm/uaccess.h>
++#include <asm/semaphore.h>
++#include <asm/ioctls.h>
++#include <linux/lids.h>
++#include <linux/lidsext.h>
++#include <linux/lidsif.h>
++
++static int lids_lock_init = 0;
++static spinlock_t lids_lock;
++int	lids_init_setup;
++static int lids_u_size = 0;
++
++static char lids_binary_acl_file[3][PATH_MAX] =
++    { LIDS_BOOT_ACL_FILE, LIDS_POSTBOOT_ACL_FILE, LIDS_SHUTDOWN_ACL_FILE };
++
++char lids_state_name[3][9] = { "BOOT\0", "POSTBOOT\0", "SHUTDOWN\0" };
++
++#define LIDS_MAX_ACL_NUM 1024
++static struct lids_inode_acl lids_acl[2][LIDS_MAX_ACL_NUM];
++static int lids_last_acl[2];
++static int lids_eft_set; 
++int lids_update_version;
++
++/* fast guessing table*/
++static unsigned long lids_bittab[32] = {
++	0x00000001, 0x00000002, 0x00000004, 0x00000008,
++	0x00000010, 0x00000020, 0x00000040, 0x00000080,
++	0x00000100, 0x00000200, 0x00000400, 0x00000800,
++	0x00001000, 0x00002000, 0x00004000, 0x00008000,
++	0x00010000, 0x00020000, 0x00040000, 0x00080000,
++	0x00100000, 0x00200000, 0x00400000, 0x00800000,
++	0x01000000, 0x02000000, 0x04000000, 0x08000000,
++	0x10000000, 0x20000000, 0x40000000, 0x80000000
++};
++static int fastguess[2][2048];
++static unsigned long lids_search_value[2];
++
++#if 0
++/*
++ *	input 	: inode
++ *	output	: the acl found in the lids_user
++ */
++static int lids_search_inode(unsigned long ino, int major, int minor)
++{
++	dev_t  s_dev;
++	dev_t dev = MKDEV(major,minor); 
++	long j;
++	long i = (ino ^ dev) & 0xffff;
++
++	/* when the 'hash' bit is not set we for sure don't have
++	   a matching entry, so just signal 'nothing found' */
++
++	if (!(fastguess[lids_eft_set][i >> 5] & lids_bittab[i & 31]))
++		return -1;
++	/* ok, in case of e.g. 256 entries we would require 256 comparisons
++	   for a linear search with no match, the following reduces this
++	   to 8 comparisons (table is sorted!) */
++
++	for (j = i = lids_search_value[lids_eft_set];; j >>= 1) {
++		s_dev = MKDEV(lids_acl[lids_eft_set][i].inode.dev.major, 
++				lids_acl[lids_eft_set][i].inode.dev.minor);
++
++		if (i >= lids_last_acl[lids_eft_set])
++			i -= j;
++		else if (s_dev < dev)
++			i += j;
++		else if (s_dev > dev)
++			i -= j;
++		else if (lids_acl[lids_eft_set][i].inode.ino < ino)
++			i += j;
++		else if (lids_acl[lids_eft_set][i].inode.ino > ino)
++			i -= j;
++		else {
++			return i; // return type??
++		}
++		if (!j || i < 0)
++			return -1;
++	}
++}
++#endif 
++
++struct lids_inode_acl *
++lids_do_get_acl(struct inode *inode)
++{
++#if 0
++	int retval;
++
++	retval = lids_search_inode(inode->i_ino, MAJOR(inode->i_sb->s_dev),  MINOR(inode->i_sb->s_dev));
++	if(retval >=0  ) 
++		return &lids_acl[lids_eft_set][retval];
++	return NULL;
++#else
++	int i;
++
++	for(i=0;i<lids_last_acl[lids_eft_set];i++) {
++		if(inode->i_ino == lids_acl[lids_eft_set][i].inode.ino &&
++			MAJOR(inode->i_sb->s_dev) == lids_acl[lids_eft_set][i].inode.dev.major && 
++			MINOR(inode->i_sb->s_dev) == lids_acl[lids_eft_set][i].inode.dev.minor ) { 
++			return &lids_acl[lids_eft_set][i];
++		}
++	}	
++	return NULL;
++#endif
++	
++}
++
++static int
++lids_buffer_to_inode_acl(char *buffer, int len, struct lids_inode_acl *i_acl)
++{
++	int num;
++	char *p = buffer;
++	struct lids_subject_acl *s_acl;
++	struct lids_object_acl *o_acl, *pre_acl;
++	u32 eft_set = (lids_eft_set & 1) ^ 1;
++	int i;
++
++
++	if (len < sizeof (struct lids_inode_acl) - sizeof(char*) + lids_u_size ) {
++		printk(KERN_INFO "LIDS: Inode ACL incorrect, len = %d\n", len);
++		return -1;
++	}
++	/* we do not have the psinLock_t in the xattr */
++	memcpy(i_acl, p, sizeof (struct lids_inode_acl) - sizeof(char *) -64 );
++	memcpy(i_acl->name, p+sizeof (struct lids_inode_acl)-sizeof(char*)+lids_u_size-64, 64);
++
++	i_acl->version = lids_update_version;	/* current version */
++	i_acl->s_acl = NULL;
++
++
++	if (i_acl->magic != LIDS_MAGIC) {	/* LIDS magic */
++		printk(KERN_INFO "LIDS: magic code mismatch %x\n",
++		       i_acl->magic);
++		return -1;
++	}
++	/* fastguesing */
++	i = ((MKDEV(i_acl->inode.dev.major,i_acl->inode.dev.minor)) ^ (i_acl->inode.ino)) & 0xffff;
++	fastguess[eft_set][i >> 5] |= lids_bittab[i & 31];
++
++	if (len == (sizeof (struct lids_inode_acl) ) - sizeof(char *)+lids_u_size ) {
++		return 0;
++	}
++	len -= (sizeof (struct lids_inode_acl)  - sizeof(char *)+lids_u_size );
++
++	s_acl = kmalloc(sizeof (struct lids_subject_acl), GFP_KERNEL);
++	if (!s_acl) {
++		return -ENOMEM;
++	}
++
++	p += (sizeof (struct lids_inode_acl) -sizeof(char *) + lids_u_size  );
++	memcpy(s_acl, p, sizeof (struct lids_subject_acl) - sizeof(char *) + lids_u_size);
++
++	/* set it */
++	i_acl->s_acl = s_acl;
++	s_acl->o_acl = NULL;
++
++	if (len == sizeof (struct lids_subject_acl) - sizeof(char *) + lids_u_size) {
++		return 0;
++	}
++	len -= sizeof (struct lids_subject_acl) - sizeof(char *) + lids_u_size;
++
++	if (len < 0) {
++		printk(KERN_INFO "LIDS: Subject ACL incorrect, len = %d\n",
++		       len);
++		return -1;
++	}
++	num = (unsigned int) (len % ( sizeof (struct lids_object_acl) - sizeof(char*) + lids_u_size));
++	if (num > 0) {
++		printk(KERN_INFO "LIDS: Object ACLs incorrect, len = %d\n",
++		       len);
++		return -1;
++	}
++	num = (unsigned int) (len / (sizeof (struct lids_object_acl) - sizeof(char*) + lids_u_size ));
++
++	p += sizeof (struct lids_subject_acl) - sizeof(char *) + lids_u_size;;
++	o_acl = pre_acl = NULL;
++	for (i = 0; i < num; i++) {
++		o_acl = kmalloc(sizeof (struct lids_object_acl), GFP_KERNEL);
++		if (!o_acl) {
++			return -ENOMEM;
++		}
++		memcpy(o_acl, p, sizeof (struct lids_object_acl) - sizeof(char*) + lids_u_size -64 );
++		o_acl->next = pre_acl;
++		memcpy(o_acl->name, p+sizeof (struct lids_object_acl) - sizeof(char*) + lids_u_size-64, 64);
++
++		p += sizeof (struct lids_object_acl) - sizeof(char*) + lids_u_size;
++		pre_acl = o_acl;
++	}
++	/* the last one */
++	s_acl->o_acl = o_acl;
++	return 0;
++
++}
++/* 
++ * 	translate buffer into acl 
++ */
++static int
++lids_buffer_to_acl(char *buffer, int len)
++{
++	int err=0;
++	char *p , *q;
++	u32 num;
++	u32 plen=0;
++	u32 hlen;
++	u32 eft_set = (lids_eft_set & 1) ^ 1;
++	
++	hlen = sizeof (struct lids_inode_acl) - sizeof(char*) + lids_u_size; 
++	p = q = buffer;
++
++	while(len >= hlen ) {
++		hlen = sizeof (struct lids_inode_acl) - sizeof(char*) - 64; 
++		num = *(u32 *)(p+12);
++
++		plen =  sizeof (struct lids_inode_acl) - sizeof(char*) + lids_u_size; 
++
++		if(num != 0) {
++			hlen = plen + sizeof (struct lids_subject_acl) - sizeof(char*) + lids_u_size;
++			if(hlen > len) {
++				return len;
++			}
++			num = *(u32 *)(p+plen+12); 
++			plen = hlen;
++
++			if(num != 0) {
++				plen+=num*( sizeof (struct lids_object_acl) - sizeof(char *) + lids_u_size);
++				if(plen > len) {
++					return len;
++				}
++			}
++		}
++		err = lids_buffer_to_inode_acl(p, plen, &lids_acl[eft_set][lids_last_acl[eft_set]]);
++
++		if(err) return err;
++		lids_last_acl[eft_set]++;
++
++		len -= plen;
++		hlen = sizeof (struct lids_inode_acl) - sizeof(char*) + lids_u_size; 
++		p += plen;
++	}
++
++	return len;
++}
++void
++lids_free_lids_set(int eft_set)
++{
++	int i;
++
++	for(i=0;i<lids_last_acl[eft_set];i++) {
++		lids_free_subject_acl((lids_acl[eft_set][i].s_acl));
++	}
++	memset(lids_acl[eft_set],0,sizeof(lids_acl[eft_set]));
++}
++/*
++ * lids read capability from /etc/lids/lids.cap 
++ */
++
++static int
++lids_read_acl(int state)
++{
++	struct file *filp = NULL;
++	char *buffer;
++	mm_segment_t oldfs;
++	int bytes,rlen = 1024;
++	int error = 0;
++	u32 start = 0, finished = 0;
++	struct lids_acl_header hdr;
++	u32  eft_set = (lids_eft_set & 1) ^ 1;
++
++	lids_update_version++;
++	lids_last_acl[eft_set] = 0;
++	
++	/* using MUTEX to protect lids_acl[] */		
++	/* FIXME, need to free the subject+acl if any*/
++
++	lids_free_lids_set(eft_set);
++	
++	filp = filp_open(lids_binary_acl_file[state-1], O_RDONLY, 0);
++
++	if (IS_ERR(filp) || (filp == NULL)) {
++		error = -1;
++		printk
++		    ("LIDS: Error opening ACLs file %s in state %d,  Does it exist?\n",
++		     lids_binary_acl_file[state-1], state);
++		/* FIXME: if (lids_load) goto err_panic;  */
++		return error;
++	}
++
++	if (filp->f_op->read == NULL) {
++		fput(filp);
++		error = -3;
++		printk("LIDS: The capability file can not be read [state %d]\n",
++		       state);
++		/*
++		   if (lids_load) goto err_panic ; 
++		 */
++		return error;
++	}
++	/* read the LIDS cap and version */
++	filp->f_pos = 0;
++	oldfs = get_fs();
++	set_fs(KERNEL_DS);
++	bytes = filp->f_op->read(filp, (char *)&hdr, sizeof(hdr), &filp->f_pos);
++	set_fs(oldfs);
++	
++	if (bytes != sizeof(hdr)) {
++		printk("LIDS: %s format error\n", lids_binary_acl_file[state]);
++		fput(filp);
++		return -4;
++	}
++	lids_cap_val = hdr.sys_cap;
++	lids_search_value[eft_set] = hdr.search;
++	lids_u_size = hdr.u_size;
++	printk("LIDS: user space is %d bit\n",lids_u_size*8);
++
++	if (lids_state == LIDS_STATE_BOOT) {
++		lids_acl_discovery = hdr.discovery;
++		memcpy(&lidsadm, &(hdr.lidsadm), sizeof(struct lids_s_inode));
++		printk("LIDS: lidsadm inode 0x%x dev 0x%x:%x\n", lidsadm.ino, lidsadm.dev.major, lidsadm.dev.minor);
++	}
++
++	start = sizeof(hdr) ; 
++
++	while (!finished) {
++
++		buffer = kmalloc(rlen,GFP_KERNEL); 
++		memset(buffer,0,rlen);
++
++		filp->f_pos = start;
++		oldfs = get_fs();
++		set_fs(KERNEL_DS);
++		bytes = filp->f_op->read(filp, buffer, rlen, &filp->f_pos);
++		set_fs(oldfs);
++
++		if (bytes < rlen) {
++			finished = 1;
++		}
++		error = lids_buffer_to_acl(buffer,bytes);
++
++		kfree(buffer);
++
++		if (error<0)
++			break;
++		/* we do not have enough room for the whole buffer */
++		if(bytes == error) {
++			if(!bytes && finished && start == sizeof(hdr))
++				break;
++			if(finished) {
++				printk("LIDS: Format error\n");
++				error = -10;	
++				break;
++			}else {
++				rlen +=rlen; /* enlarge the buffer*/
++			}
++		}else{
++			rlen = 1024;
++		}
++
++		start += bytes-error;
++	}
++	/* Close the file */
++	fput(filp);
++
++	/* switch it */
++	lids_eft_set = eft_set;
++	//printk("LIDS: Using eft_set %d , ",lids_eft_set);
++	printk("LIDS: ACL Discovery: %s, ",lids_acl_discovery?"ON":"OFF");
++	printk("Effective Capability: %x, ",lids_cap_val);
++	printk("Total ACLs Count: %d\n",lids_last_acl[eft_set]);
++
++	return error;
++}
++
++/***********************************************************************
++ *
++ *	lids_init
++ *
++ *	initialize the vfs security system. read the config file .
++ *	add the inode to the files.
++ *
++ */
++
++int
++lids_init(void)
++{
++	int error = 0;
++	/* Get lidsadm dev/inode */
++
++	LIDS_DBG("into lids_init_..\n");
++
++	lids_local_on = 0;
++	lids_local_pid = current->pid;
++
++	if (!lids_lock_init) {
++		spin_lock_init(&lids_lock);
++		lids_lock_init = 1;
++	}
++
++	/* read global acl */
++	/* Read the password now */
++	if (lids_read_pw()) {
++		printk("LIDS: Read password file error\n");
++		error = -8;
++		goto lids_panic;
++	}
++	/* read capability first based on state */
++	printk(KERN_INFO "LIDS: Initializing LIDS ACLs\n");
++
++	if (lids_read_acl(lids_state)) {
++		printk("LIDS: Read ACL file error, state %d\n",
++		       lids_state);
++		error = -9;
++		goto lids_panic;
++	}
++
++	if (lids_state == LIDS_STATE_BOOT) {
++		cap_bset = lids_cap_val;
++		printk(KERN_INFO
++		       "LIDS: GLOBAL and %s state configuration files loaded\n",
++		       lids_state_name[lids_state - 1]);
++		printk(KERN_INFO "LIDS: Entering %s state\n",
++		       lids_state_name[lids_state - 1]);
++	}
++	lids_local_on = 1;
++	if (!error) return 0;
++lids_panic:
++	printk
++		("LIDS_ERR: Cannot initialize the lids system, return code %d\n",
++		     error);
++	return error;
++}
++
++/*
++	do_lids_setup 
++ */
++int
++do_lids_setup(void)
++{
++	int err = 0;
++
++	/* init the ids file system */
++	struct file *filp;
++
++	filp = filp_open(LIDS_PW_FILE, O_RDONLY, 0);
++
++	if (IS_ERR(filp) || (filp == NULL)) {
++		return -1;
++	}
++	
++	lids_init_setup = 1;
++	lids_local_on = 1;
++	lids_flags = 0;
++	lids_state = LIDS_STATE_BOOT;
++	lids_flag_raise(lids_flags, LIDS_FLAGS_LIDS_LOCAL_ON);
++	lids_flag_raise(lids_flags, LIDS_FLAGS_INIT);
++
++	if (lids_load)
++		lids_flag_raise(lids_flags, LIDS_FLAGS_LIDS_ON);
++
++	lids_update_version = (int)get_seconds();
++	lids_eft_set = 0;
++	memset(lids_last_acl,0,sizeof(lids_last_acl));
++	memset(lids_acl,0,sizeof(lids_acl));
++
++
++	lids_sysctl_init();
++	/* load BOOT acl */
++	/* make it read the configure file easier. */
++	err = lids_init();
++
++	printk(KERN_NOTICE "LIDS: Linux Intrusion Detection System %s %s\n", LIDS_VERSION,
++	       lids_load == 1 ? "started" : "not started");
++
++
++	return err;
++}
+diff -Nru linux-2.6.12/security/lids/lids_logs.c linux/security/lids/lids_logs.c
+--- linux-2.6.12/security/lids/lids_logs.c	1969-12-31 16:00:00.000000000 -0800
++++ linux/security/lids/lids_logs.c	2005-03-14 11:42:35.000000000 -0800
+@@ -0,0 +1,169 @@
++/*
++ *  LIDS LOG functions 
++ *
++ *  Copyright (C) 2002-2003 Huagang Xie <xie@lids.org>
++ *  Copyright (C) 2002 Philippe Biondi <biondi@cartel-securite.fr>
++ *
++ *	This program is free software; you can redistribute it and/or modify
++ *	it under the terms of the GNU General Public License as published by
++ *	the Free Software Foundation; either version 2 of the License, or
++ *	(at your option) any later version.
++ */
++
++#include <linux/sched.h>
++#include <linux/mm.h>
++#include <linux/version.h>
++#include <linux/slab.h>
++#include <linux/lids.h>
++
++#ifdef STR
++#undef STR
++#endif
++#define STR2(x) #x
++#define STR(x) STR2(x)
++
++#define lids_print(message, args...) printk(KERN_ALERT message , ## args)
++
++/*
++ * copy from driver/tty/tty_io.c  
++ *
++ * This routine returns the name of tty.
++ */
++static char *
++_lids_tty_make_name(struct tty_struct *tty, const char *name, char *buf)
++{
++
++	if (!tty)		/* Hmm.  NULL pointer.  That's fun. */
++		strncpy(buf, "NULL tty",64);
++	else
++		snprintf(buf, 64, name, tty->name);
++
++	return buf;
++}
++
++char *
++lids_tty_name(struct tty_struct *tty, char *buf)
++{
++	return _lids_tty_make_name(tty, (tty) ? tty->name : NULL, buf);
++}
++
++/* return current dentry */
++static struct dentry *
++lids_current_dentry(void)
++{
++	struct dentry *f_dentry = NULL;
++	struct vm_area_struct *vma;
++
++	if (current->mm) {
++		vma = current->mm->mmap;
++		while (vma) {
++			if ((vma->vm_flags & VM_EXECUTABLE) && vma->vm_file) {
++				f_dentry = vma->vm_file->f_dentry;
++				break;
++			}
++			vma = vma->vm_next;
++		}
++	}
++	return f_dentry;
++}
++
++void
++lids_log(int flood, const char *message, ...)
++{
++	va_list args;
++	char ttyname[64];
++	char progname[64];
++	char proginfo[64 + 10 + 10 + 20 + 24];	/* %s+%d+%d+%ld+le texte avec un peu de marge = 128 */
++	char msgstr[256];
++	u32 parent_pid;
++
++	struct dentry *f_dentry;
++
++	/* Get args on the stack */
++	va_start(args, message);
++
++	/* Get dentry of current process, if any */
++	f_dentry = lids_current_dentry();
++	/* Get the tty name, if any */
++	memset(ttyname, '\0', 64);
++/* modules do not support the ttyname right now */
++	lids_tty_name(current->signal->tty, ttyname);
++
++	/* Make the proginfo string */
++	if (f_dentry && f_dentry->d_inode) {
++		strncpy(progname, f_dentry->d_iname, 63);
++		snprintf(proginfo, 127, "%s (dev %d:%d inode %ld)",
++			 progname,
++			 MAJOR(f_dentry->d_inode->i_sb->s_dev),
++			 MINOR(f_dentry->d_inode->i_sb->s_dev),
++			 f_dentry->d_inode->i_ino);
++	} else {
++		strncpy(proginfo, "(undetermined program)", 63);
++	}
++
++	/* Make the message string */
++	vsnprintf(msgstr, 255, message, args);
++
++	parent_pid = current->parent->pid;
++
++	/* Make the log string */
++
++	lids_print("LIDS: %s pid %d ppid %d uid/gid (%d/%d) on (%s) : %s %s\n",
++		   proginfo,
++		   current->pid,
++		   parent_pid,
++		   current->uid,
++		   current->gid,
++		   ttyname,
++		   msgstr,
++		   flood ? " - logging disabled for "
++		   STR(LIDS_TIMEOUT_AFTER_FLOOD) "s" : "");
++
++	/* deal with args on the stack */
++	va_end(args);
++
++}
++
++/* sent out message */
++void
++lids_alert(int type, long dst, long dst2, char *name, char *action)
++{
++	struct dentry *f_dentry;
++
++	switch (type) {
++	case LIDS_CAP:
++		lids_security_alert("violated %s", action);
++		break;
++	case LIDS_SOCKET:
++		lids_security_alert("attempt to %s", action);
++		break;
++	case LIDS_READONLY:
++		/* compatible to the acl */
++		type = 1;
++		lids_security_alert("attempt to %s %s for reading", action,
++				    name);
++		break;
++	case LIDS_APPEND:
++		type = 3;
++		lids_security_alert("attempt to %s %s for appending", action,
++				    name);
++		break;
++	case LIDS_WRITE:
++		type = 7;
++		lids_security_alert("attempt to %s %s for writing", action,
++				    name);
++		break;
++	default:
++		lids_security_alert("yeee, alert type mismatch");
++		break;
++	}
++	/* if in acl_discovery mode, print out the acl_discovery mode string */
++	if (lids_acl_discovery) {
++		f_dentry = lids_current_dentry();
++		printk(KERN_INFO
++		       "LIDS_ACL_DISCOVERY:[state %d]%ld:%d:%s:%d:0:%ld:%ld:%s:0-0\n",
++		       lids_state, f_dentry->d_inode->i_ino,
++		       f_dentry->d_inode->i_sb->s_dev, f_dentry->d_iname, type,
++		       dst, dst2, name);
++	}
++}
+diff -Nru linux-2.6.12/security/lids/lids_sysctl.c linux/security/lids/lids_sysctl.c
+--- linux-2.6.12/security/lids/lids_sysctl.c	1969-12-31 16:00:00.000000000 -0800
++++ linux/security/lids/lids_sysctl.c	2004-12-31 20:55:47.000000000 -0800
+@@ -0,0 +1,332 @@
++/*
++ *  LIDS sysctl functions 
++ *
++ *  Copyright (C) 2002 Huagang Xie <xie@lids.org>
++ *  Copyright (C) 2002 Philippe Biondi <biondi@cartel-securite.fr>
++ *
++ *	This program is free software; you can redistribute it and/or modify
++ *	it under the terms of the GNU General Public License as published by
++ *	the Free Software Foundation; either version 2 of the License, or
++ *	(at your option) any later version.
++ */
++
++#include <linux/config.h>
++#include <linux/module.h>
++#include <linux/init.h>
++#include <linux/kernel.h>
++#include <linux/errno.h>
++#include <linux/sched.h>
++#include <linux/security.h>
++#include <linux/capability.h>
++#include <linux/mm.h>
++#include <linux/mman.h>
++#include <linux/slab.h>
++#include <linux/smp_lock.h>
++#include <linux/spinlock.h>
++#include <linux/file.h>
++#include <linux/sysctl.h>
++#include <asm/uaccess.h>
++#include <asm/semaphore.h>
++#include <asm/ioctls.h>
++#include <asm/scatterlist.h>
++#include <linux/string.h>
++#include <linux/crypto.h>
++#include <linux/highmem.h>
++
++#include <linux/lids.h>
++#include <linux/lidsext.h>
++#include <linux/lidsif.h>
++#include <linux/lids_sysctl.h>
++
++enum {
++	LIDS_LOCKS = 1,
++};
++enum {
++	CTL_LIDS = 11,
++};
++
++extern int lids_init(void);
++static int lids_proc_locks_sysctl(ctl_table * table, int write,
++				  struct file *filp, void __user *buffer,
++				  size_t * lenp, loff_t *ppos);
++
++
++static ctl_table lids_table[] = {
++	{
++		.ctl_name	= LIDS_LOCKS,
++		.procname	= "locks",
++		.maxlen		= sizeof (int),
++		.mode		= 0600,
++		.proc_handler	= &lids_proc_locks_sysctl,
++	},
++	{ .ctl_name = 0 }
++};
++
++static ctl_table lids_root_table[] = {
++	{
++		.ctl_name	= CTL_LIDS,
++		.procname	= "lids",
++		.mode		= 0500,
++		.child 		= lids_table,
++	},
++	{ .ctl_name = 0 }
++};
++
++struct lids_s_inode lidsadm;
++static struct timer_list fail_timer;
++
++/***********************************************************************
++ ***********************************************************************
++ *
++ * Now, the sysctl procedures
++ *
++ ***********************************************************************
++ ***********************************************************************/
++
++/***********************************************************************
++ *
++ * What is needed to lock init children
++ *
++ */
++
++int lids_last_pid = 0;
++static struct ctl_table_header *lids_root_table_header;
++
++int
++lids_sysctl_init(void)
++{
++	printk(KERN_NOTICE "LIDS: Initializing sysctl\n");
++
++	lids_root_table_header = register_sysctl_table(lids_root_table, 0);
++
++	if (lids_root_table_header)
++		return 0;
++	return -1;
++}
++
++void
++lids_sysctl_reset(void)
++{
++	unregister_sysctl_table(lids_root_table_header);
++	return;
++}
++
++static int
++lids_load_conf(void)
++{
++	int old_lids_local_on;
++	int old_lids_local_pid;
++	int error;
++
++	old_lids_local_on = lids_local_on;
++	old_lids_local_pid = lids_local_pid;
++	if (lids_load && lids_local_load) {
++		LIDS_DBG
++		    ("Let's give lidsadm (pid %i) the right to read the conf\n",
++		     current->pid);
++		lids_local_pid = current->pid;
++		lids_local_on = 0;
++	}
++
++	error = lids_init();
++	if (error) {
++		return -1;
++	}
++	/* cap_bset=locks.cap_bset; */
++	cap_bset = lids_cap_val;
++
++	printk(KERN_INFO "LIDS: Attaching ACLs to Processes\n");
++
++	lids_setup_task_acl(lids_state);
++
++	printk(KERN_INFO "LIDS: GLOBAL and %s state Config. files loaded\n",
++	       lids_state_name[lids_state - 1]);
++
++	if (lids_state <= LIDS_STATE_SHUTDOWN) {
++		printk(KERN_INFO "LIDS: Switching to %s state\n",
++		       lids_state_name[lids_state - 1]);
++	} else {
++		printk(KERN_INFO "LIDS: Invalid State %d\n", lids_state);
++	}
++
++	lids_local_pid = old_lids_local_pid;
++	lids_local_on = old_lids_local_on;
++
++	return 0;
++}
++
++/***********************************************************************
++ *
++ * The one which process flags changes
++ *
++ * return value:
++ * 	
++ * 	0	successful
++ * 	-1	failed
++ *
++ */
++
++static int
++lids_process_flags(lids_flags_t flags)
++{
++	int error = 0;
++
++	lids_process_switch();
++
++	/* if the kernel is sealed, enter "POSTBOOT" */
++	if (lids_first_time) {
++		lids_state = LIDS_STATE_POSTBOOT;
++		error = lids_load_conf();
++		if (!error) {
++			lids_flag_raise(lids_flags, LIDS_FLAGS_POSTBOOT);
++			lids_flag_lower(lids_flags, LIDS_FLAGS_INIT);
++		}
++		return error;
++	}
++
++	if (lids_acl_discovery !=
++	    (lids_flag_raised(flags, LIDS_FLAGS_ACL_DISCOVERY_ON) != 0)) {
++		/* if ACL_DISCOVERY mode change request */
++		lids_acl_discovery =
++		    (lids_flag_raised(flags, LIDS_FLAGS_ACL_DISCOVERY_ON) != 0);
++		lids_security_alert("LIDS acl discovery mode %s",
++				    lids_acl_discovery ? "on" : "off");
++		if (lids_acl_discovery)
++			lids_flag_raise(lids_flags,
++					LIDS_FLAGS_ACL_DISCOVERY_ON);
++		else
++			lids_flag_lower(lids_flags,
++					LIDS_FLAGS_ACL_DISCOVERY_ON);
++	}
++
++	/* if the flags raised as shutdown, change the state */
++	if (lids_flag_raised(flags, LIDS_FLAGS_SHUTDOWN)
++	    && (lids_state != LIDS_STATE_SHUTDOWN)) {
++		lids_state = LIDS_STATE_SHUTDOWN;
++		error = lids_load_conf();
++		if (!error)
++			lids_flag_raise(lids_flags, LIDS_FLAGS_SHUTDOWN);
++	} else if (lids_flag_raised(flags, LIDS_FLAGS_RELOAD_CONF)) {
++		/* Config file reload */
++		if (lids_load && !lids_local_on && lids_local_load) {
++			printk(KERN_WARNING
++			       "Can't reload config files if an LFS is opened and we are not in\n");
++		} else {
++			error = lids_load_conf();
++		}
++	}
++
++	return error;
++}
++
++/* sha 256 routine */
++
++static int
++lids_sha256(char *passwd, int len, char *result)
++{
++	struct scatterlist sg[8];
++	struct crypto_tfm *tfm;
++
++	tfm = crypto_alloc_tfm("sha256", 0);
++	if (tfm == NULL) {
++		printk("failed to load transform for sha256");
++		return -1;
++	}
++	memset(result, 0, LIDS_PW_LEN * 2);
++
++	sg[0].page = virt_to_page(passwd);
++	sg[0].offset = offset_in_page(passwd);
++	sg[0].length = len;
++
++	crypto_digest_init(tfm);
++	crypto_digest_update(tfm, sg, 1);
++	crypto_digest_final(tfm, result);
++
++	crypto_free_tfm(tfm);
++	return 0;
++}
++
++/***********************************************************************
++ *
++ * The one which set/get security features
++ *
++ */
++
++static int number_failed = 0;
++static int wait_after_fail = 0;
++
++/* called by timer */
++static void
++reenable_sysctl(unsigned long user_data)
++{
++	number_failed = 0;
++	wait_after_fail = 0;
++}
++
++static int
++lids_proc_locks_sysctl(ctl_table * table, int write, struct file *filp,
++		       void __user *buffer, size_t * lenp, loff_t *ppos)
++{
++	lids_locks_t locks;
++	struct dentry *dentry;
++	struct tty_struct *tty = current->signal->tty;
++
++	/* first: check the terminal and the program which access the sysctl */
++	if (lids_check_tty(tty)) {
++		lids_security_alert
++		    ("Attempt to %s locks sysctl (unauthorized terminal)",
++		     write ? "write" : "read");
++		return -EPERM;
++	}
++
++	dentry = lids_get_task_dentry(current);
++	if (dentry == NULL || (dentry->d_inode->i_ino != lidsadm.ino) ||
++	    MAJOR(dentry->d_inode->i_sb->s_dev) != lidsadm.dev.major ||
++	    MINOR(dentry->d_inode->i_sb->s_dev) != lidsadm.dev.minor) {
++		lids_security_alert
++		    ("Attempt to %s locks sysctl (unauthorised program)",
++		     write ? "write" : "read");
++		return -EPERM;
++	}
++	/* second: check wether it is not a timeout period after two many failed attempts */
++
++	if (wait_after_fail) {
++		lids_security_alert("Attempt to %s locks sysctl during timeout",
++				    write ? "write" : "read");
++		return -EPERM;
++	}
++
++	if (write) {
++		/* Third : check what is submitted (size, magics, passwd) */
++		if (*lenp != sizeof (lids_locks_t)) {
++			lids_security_alert
++			    ("Attempt to feed locks sysctl with garbage");
++			return -EINVAL;
++		}
++		if (copy_from_user(&locks, buffer, sizeof (lids_locks_t)))
++			return -EFAULT;
++		if ((locks.magic1 != LIDS_MAGIC_1)
++		    || (locks.magic2 != LIDS_MAGIC_2)
++		    || (locks.magic3 != LIDS_MAGIC_3)
++		    || (locks.magic4 != LIDS_MAGIC_4)) {
++			memset((char *) locks.passwd, '\0', sizeof (passwd_t));
++			lids_security_alert
++			    ("Attempt to feed locks sysctl bad magic numbers");
++			return -EINVAL;
++		}
++		lids_process_password();
++	} else {
++		if (copy_from_user(&locks, buffer, sizeof (lids_locks_t)))
++			return -EFAULT;
++		locks.cap_bset = cap_bset;
++		locks.flags = lids_flags;
++
++		LIDS_DBG("Sending caps=%#0x flags=%#0x\n", locks.cap_bset,
++			 locks.flags);
++		if (*lenp < sizeof (lids_locks_t))
++			return -EINVAL;
++		if (copy_to_user(buffer, &locks, sizeof (lids_locks_t)))
++			return -EFAULT;
++	}
++	return 0;
++}
+diff -Nru linux-2.6.12/security/lids/Kconfig linux/security/lids/Kconfig
+--- linux-2.6.12/security/lids/Kconfig	1969-12-31 16:00:00.000000000 -0800
++++ linux/security/lids/Kconfig	2005-06-20 21:48:51.000000000 -0700
+@@ -0,0 +1,98 @@
++# 
++#	Kconfig for LIDS
++#
++
++menu "LIDS support"
++	depends on EXPERIMENTAL && SYSCTL && SECURITY && SECURITY_SECLVL!=y && SECURITY_ROOTPLUG!=y && SECURITY_SELINUX!=y &&  SECURITY_CAPABILITIES!=y
++
++config LIDS
++	tristate "Linux Intrusion Detection System support (EXPERIMENTAL)"
++	help
++	  LIDS - Linux Intrusion Detection System can let you protect
++	  your linux kernel.
++
++	  In order to use LIDS, you need to download the lidstools first
++	  from http://www.lids.org/
++
++	  Please read help provided with each option carefully. At the end
++	  of each option we indicate what answer will increase security.
++	  Be aware that security always has side effects, and some
++	  programs could break.
++
++	  If you have any questions about LIDS, mail to the authors :
++	                   Huagang Xie ( xie@www.lids.org)
++	                   Philippe.biondi (philippe.biondi@webmotion.net)
++
++	  or visit lids home ,
++	                http://www.lids.org/
++	  
++	  And you can get help from the LIDS Mailing list at
++		http://www.lids.org/maillist.html
++
++	  If your want to make LIDS as module, say "M" here , or if you
++	  want to build it into the kernel, say "Y" here. otherwise,
++	  say "N".
++
++comment "LIDS Options"
++	depends on LIDS
++
++config LIDS_NO_FLOOD_LOG
++	bool "Attempt not to flood logs"
++	depends on LIDS
++	default y
++	help
++	  If you say Yes here, LIDS will try not to flood logs with the
++	  same message repeated a lot of times.
++
++	  Saying yes will increase security.
++
++config  LIDS_ALLOW_SWITCH
++	bool "Allow switching the LFS and States"
++	depends on LIDS && PROC_FS && CRYPTO_SHA256
++	default y
++	help
++	  If you say Yes here, you will enable the switch the LIDS between states
++	  Note: You must set a password with 'lidsadm -P'
++
++config LIDS_ALLOW_LFS
++	bool "Allow switch the Linux Free Session"
++	depends on LIDS_ALLOW_SWITCH
++	default y
++	help
++	 If you say Yes here, you will enable the possibility to switch LIDS on and off.  
++
++	 You can turn LIDS off only on current console by 
++		lidsadm -S -- -LIDS 
++	 or globally off by 
++		lidsadm -S -- -LIDS_GLOBAL 
++	 by enable this option.  
++	 
++   	 Saying no increases security.
++
++config LIDS_RESTRICT_MODE_SWITCH
++	bool "Restrict mode switching to specified terminals"
++	depends on LIDS && LIDS_ALLOW_SWITCH
++	default n
++	help
++	  If you enable this option, mode switching will be only allowed
++	  from specified terminal types.
++
++config LIDS_MODE_SWITCH_CONSOLE
++	bool "Allow mode switching from a Linux Console"
++	depends on LIDS && LIDS_RESTRICT_MODE_SWITCH
++	default y
++	help
++	  Allow mode switching from a Linux Console.
++
++config LIDS_MODE_SWITCH_SERIAL
++	bool "Allow mode switching from a serial Console"
++	depends on LIDS && LIDS_RESTRICT_MODE_SWITCH
++	help
++	  Allow mode switching from a serial Console.
++
++config LIDS_MODE_SWITCH_PTY
++	bool "Allow mode switching from a PTY"
++	depends on LIDS && LIDS_RESTRICT_MODE_SWITCH
++	help
++	  Allow mode switching from a PTY. 
++endmenu
+diff -Nru linux-2.6.12/security/lids/Makefile linux/security/lids/Makefile
+--- linux-2.6.12/security/lids/Makefile	1969-12-31 16:00:00.000000000 -0800
++++ linux/security/lids/Makefile	2005-03-17 21:20:44.000000000 -0800
+@@ -0,0 +1,11 @@
++#
++# Makefile for the LIDS code
++#
++
++EXTRA_CFLAGS += -Isecurity/lids/include
++
++obj-$(CONFIG_LIDS)	:= lids.o
++
++lids-objs			:= lids_lsm.o lids_acl.o lids_cap.o\
++					lids_sysctl.o lids_init.o \
++					lids_logs.o 
+diff -Nru linux-2.6.12/security/lids/Makefile.in linux/security/lids/Makefile.in
+--- linux-2.6.12/security/lids/Makefile.in	1969-12-31 16:00:00.000000000 -0800
++++ linux/security/lids/Makefile.in	2004-03-10 01:36:51.000000000 -0800
+@@ -0,0 +1,6 @@
++# for LIDS project
++KBUILD_INCLUDE_PATHS=security/lids/include
++
++objlink(CONFIG_LIDS lids_lsm.o lids_acl.o lids_init.o lids_cap.o lids_sysctl.o lids_logs.o lids_lsm.o )
++
++select(CONFIG_LIDS lids.o)
+diff -Nru linux-2.6.12/security/Makefile linux/security/Makefile
+--- linux-2.6.12/security/Makefile	2005-06-17 12:48:29.000000000 -0700
++++ linux/security/Makefile	2005-06-19 20:13:58.000000000 -0700
+@@ -4,6 +4,7 @@
+ 
+ obj-$(CONFIG_KEYS)			+= keys/
+ subdir-$(CONFIG_SECURITY_SELINUX)	+= selinux
++subdir-$(CONFIG_LIDS)			+= lids
+ 
+ # if we don't select a security model, use the default capabilities
+ ifneq ($(CONFIG_SECURITY),y)
+@@ -17,3 +18,8 @@
+ obj-$(CONFIG_SECURITY_CAPABILITIES)	+= commoncap.o capability.o
+ obj-$(CONFIG_SECURITY_ROOTPLUG)		+= commoncap.o root_plug.o
+ obj-$(CONFIG_SECURITY_SECLVL)		+= seclvl.o
++
++
++ifeq ($(CONFIG_LIDS),y)
++ 	obj-$(CONFIG_LIDS)		+= lids/built-in.o
++endif
+diff -Nru linux-2.6.12/security/Kconfig linux/security/Kconfig
+--- linux-2.6.12/security/Kconfig	2005-06-17 12:48:29.000000000 -0700
++++ linux/security/Kconfig	2005-06-19 20:13:58.000000000 -0700
+@@ -55,14 +55,16 @@
+ 
+ config SECURITY_CAPABILITIES
+ 	tristate "Default Linux Capabilities"
+-	depends on SECURITY
++	depends on SECURITY!=n
+ 	help
+ 	  This enables the "default" Linux capabilities functionality.
+ 	  If you are unsure how to answer this question, answer Y.
+ 
++source security/lids/Kconfig
++
+ config SECURITY_ROOTPLUG
+ 	tristate "Root Plug Support"
+-	depends on USB && SECURITY
++	depends on USB && SECURITY!=n
+ 	help
+ 	  This is a sample LSM module that should only be used as such.
+ 	  It prevents any programs running with egid == 0 if a specific
+diff -Nru linux-2.6.12/Makefile linux/Makefile

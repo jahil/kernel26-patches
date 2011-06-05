@@ -1,0 +1,1057 @@
+diff -Naur -X /home/iptgraph/dontdiff 2.6.12.default/include/linux/netfilter_ipv4/ip_tables_graph.h 2.6.12/include/linux/netfilter_ipv4/ip_tables_graph.h
+--- 2.6.12.default/include/linux/netfilter_ipv4/ip_tables_graph.h	1970-01-01 07:30:00.000000000 +0730
++++ 2.6.12/include/linux/netfilter_ipv4/ip_tables_graph.h	2005-08-11 16:04:18.000000000 +0800
+@@ -0,0 +1,112 @@
++#ifndef _IPTABLES_GRAPH_H
++#define _IPTABLES_GRAPH_H
++
++#define MAXNLGROUPS		1
++#define MAX_PAYLOAD		4096
++#define MAX_TIMER		1
++#define MAX_RSTATS		64
++#define RULE_LEN		80
++
++#define OPT_WRITE_INTERVAL	0x01
++#define OPT_READ_INTERVAL	0x02
++#define OPT_READ_STATS		0x03
++#define OPT_READ_RULE		0x04
++#define OPT_PROTO_STATS	0x05
++#define OPT_RULE_STATS		0x06
++#define OPT_READ_ALL_RULES	0x07
++#define OPT_STANDARD		0x10
++#define OPT_FLUSHTBL		0x11
++#define OPT_LAST_IDX		0x20
++#define NORMAL			0
++#define EVERYTHING		1
++
++#define IPHDRLEN(x)	(x->iph.ihl * 4)
++#define TYPE(x)	*((char *)NLMSG_DATA(x))
++#define SIZE(x) 	*((int *)(NLMSG_DATA(x) + 1))
++#define DATA(x)	NLMSG_DATA(x) + sizeof(int) + 1
++
++#define DROP_COUNT(x)		pstats.x.drop.count	
++#define DROP_BYTE(x)		pstats.x.drop.byte
++#define ACCEPT_COUNT(x)	pstats.x.accept.count	
++#define ACCEPT_BYTE(x)		pstats.x.accept.byte
++#define STOLEN_COUNT(x)	pstats.x.stolen.count	
++#define STOLEN_BYTE(x)		pstats.x.stolen.byte
++#define QUEUE_COUNT(x)		pstats.x.queue.count	
++#define QUEUE_BYTE(x)		pstats.x.queue.byte
++#define REPEAT_COUNT(x)	pstats.x.repeat.count	
++#define REPEAT_BYTE(x)		pstats.x.repeat.byte
++
++#define inc_counters(len, verdict, x)		\
++{						\
++	if (verdict == NF_DROP) {		\
++		DROP_COUNT(x)++;		\
++		DROP_BYTE(x) += len;		\
++	} else if (verdict == NF_ACCEPT) {	\
++		ACCEPT_COUNT(x)++;		\
++		ACCEPT_BYTE(x) += len;		\
++	} else if (verdict == NF_STOLEN) {	\
++		STOLEN_COUNT(x)++;		\
++		STOLEN_BYTE(x) += len;		\
++	} else if (verdict == NF_QUEUE) {	\
++		QUEUE_COUNT(x)++;		\
++		QUEUE_BYTE(x) += len;		\
++	} else if (verdict == NF_REPEAT) {	\
++		REPEAT_COUNT(x)++;		\
++		REPEAT_BYTE(x) += len;		\
++	}					\
++}
++
++struct prot_stat {
++	unsigned long count;
++	unsigned long byte;
++};
++
++struct rule_stats {
++	struct ipt_entry *e;
++	struct prot_stat old_value;
++	struct prot_stat curr_value;
++	char rule_desc[RULE_LEN];
++};
++
++struct proto_stat {
++	struct prot_stat drop;
++	struct prot_stat accept;
++	struct prot_stat stolen;
++	struct prot_stat queue;
++	struct prot_stat repeat;
++};
++
++struct total_stats {
++	struct proto_stat ip;
++	struct proto_stat icmp;
++	struct proto_stat igmp;
++	struct proto_stat ipip;
++	struct proto_stat tcp;
++	struct proto_stat udp;
++	struct proto_stat ipv6;
++	struct proto_stat raw;
++};
++
++typedef struct itg_packet_msg {
++	struct total_stats ts;
++} itg_packet_msg_t;
++
++struct itg_info {
++	unsigned int nl_group;
++	size_t qthreshold;
++};
++
++struct itg_buff_t {
++	unsigned int qlen;
++	struct nlmsghdr *lastnlh;
++	struct sk_buff *skb;
++	struct timer_list timer;
++} itg_buff_t;
++
++struct ipt_stats
++{
++	u_int8_t protocol;
++	void (*add)(unsigned long, unsigned int);
++};
++
++#endif
+diff -Naur -X /home/iptgraph/dontdiff 2.6.12.default/include/linux/netfilter_ipv4/ip_tables.h 2.6.12/include/linux/netfilter_ipv4/ip_tables.h
+--- 2.6.12.default/include/linux/netfilter_ipv4/ip_tables.h	2005-08-11 16:02:55.000000000 +0800
++++ 2.6.12/include/linux/netfilter_ipv4/ip_tables.h	2005-08-11 16:04:18.000000000 +0800
+@@ -453,6 +453,24 @@
+ 	struct module *me;
+ };
+ 
++/* The table itself */
++struct ipt_table_info
++{
++	/* Size per table */
++	unsigned int size;
++	/* Number of entries: FIXME. --RR */
++	unsigned int number;
++	/* Initial number of entries. Needed for module usage count */
++	unsigned int initial_entries;
++
++	/* Entry points and underflows */
++	unsigned int hook_entry[NF_IP_NUMHOOKS];
++	unsigned int underflow[NF_IP_NUMHOOKS];
++
++	/* ipt_entry tables: one per CPU */
++	char entries[0] ____cacheline_aligned;
++};
++
+ /* net/sched/ipt.c: Gimme access to your targets!  Gets target->me. */
+ extern struct ipt_target *ipt_find_target(const char *name, u8 revision);
+ 
+diff -Naur -X /home/iptgraph/dontdiff 2.6.12.default/include/linux/netlink.h 2.6.12/include/linux/netlink.h
+--- 2.6.12.default/include/linux/netlink.h	2005-08-11 16:02:55.000000000 +0800
++++ 2.6.12/include/linux/netlink.h	2005-08-11 16:04:18.000000000 +0800
+@@ -19,6 +19,7 @@
+ #define NETLINK_DNRTMSG		14	/* DECnet routing messages */
+ #define NETLINK_KOBJECT_UEVENT	15	/* Kernel messages to userspace */
+ #define NETLINK_TAPBASE		16	/* 16 to 31 are ethertap */
++#define NETLINK_GRAPH		17
+ 
+ #define MAX_LINKS 32		
+ 
+diff -Naur -X /home/iptgraph/dontdiff 2.6.12.default/net/ipv4/netfilter/ip_tables.c 2.6.12/net/ipv4/netfilter/ip_tables.c
+--- 2.6.12.default/net/ipv4/netfilter/ip_tables.c	2005-08-11 16:02:55.000000000 +0800
++++ 2.6.12/net/ipv4/netfilter/ip_tables.c	2005-08-11 16:04:18.000000000 +0800
+@@ -29,11 +29,14 @@
+ #include <linux/err.h>
+ 
+ #include <linux/netfilter_ipv4/ip_tables.h>
++#include <linux/netfilter_ipv4/ip_tables_graph.h>
+ 
+ MODULE_LICENSE("GPL");
+ MODULE_AUTHOR("Netfilter Core Team <coreteam@netfilter.org>");
+ MODULE_DESCRIPTION("IPv4 packet filter");
+ 
++#include "ip_tables_graph.c"
++
+ /*#define DEBUG_IP_FIREWALL*/
+ /*#define DEBUG_ALLOW_ALL*/ /* Useful for remote debugging */
+ /*#define DEBUG_IP_FIREWALL_USER*/
+@@ -90,24 +93,6 @@
+ 
+    Hence the start of any table is given by get_table() below.  */
+ 
+-/* The table itself */
+-struct ipt_table_info
+-{
+-	/* Size per table */
+-	unsigned int size;
+-	/* Number of entries: FIXME. --RR */
+-	unsigned int number;
+-	/* Initial number of entries. Needed for module usage count */
+-	unsigned int initial_entries;
+-
+-	/* Entry points and underflows */
+-	unsigned int hook_entry[NF_IP_NUMHOOKS];
+-	unsigned int underflow[NF_IP_NUMHOOKS];
+-
+-	/* ipt_entry tables: one per CPU */
+-	char entries[0] ____cacheline_aligned;
+-};
+-
+ static LIST_HEAD(ipt_target);
+ static LIST_HEAD(ipt_match);
+ static LIST_HEAD(ipt_tables);
+@@ -311,6 +296,7 @@
+ 	back = get_entry(table_base, table->private->underflow[hook]);
+ 
+ 	do {
++
+ 		IP_NF_ASSERT(e);
+ 		IP_NF_ASSERT(back);
+ 		(*pskb)->nfcache |= e->nfcache;
+@@ -325,12 +311,14 @@
+ 			ADD_COUNTER(e->counters, ntohs(ip->tot_len), 1);
+ 
+ 			t = ipt_get_target(e);
++			add_counters_to_rules(e, table->private);
+ 			IP_NF_ASSERT(t->u.kernel.target);
+ 			/* Standard target? */
+ 			if (!t->u.kernel.target->target) {
+ 				int v;
+ 
+ 				v = ((struct ipt_standard_target *)t)->verdict;
++ 				add_counters_to_packets(*pskb, e, v);
+ 				if (v < 0) {
+ 					/* Pop from stack? */
+ 					if (v != IPT_RETURN) {
+@@ -366,6 +354,7 @@
+ 								     hook,
+ 								     t->data,
+ 								     userdata);
++				add_counters_to_packets(*pskb, e, verdict);
+ 
+ #ifdef CONFIG_NETFILTER_DEBUG
+ 				if (((struct ipt_entry *)table_base)->comefrom
+@@ -968,8 +957,11 @@
+ 	oldinfo = table->private;
+ 	table->private = newinfo;
+ 	newinfo->initial_entries = oldinfo->initial_entries;
++
+ 	write_unlock_bh(&table->lock);
+ 
++	replace_counters (table->private); /*XXX*/
++
+ 	return oldinfo;
+ }
+ 
+@@ -1933,8 +1925,10 @@
+ 		proc->owner = THIS_MODULE;
+ 	}
+ 	}
++	init_iptables_graph_proc();
+ #endif
+ 
++	init_iptables_graph ();
+ 	printk("ip_tables: (C) 2000-2002 Netfilter core team\n");
+ 	return 0;
+ }
+@@ -1948,7 +1942,9 @@
+ 	for (i = 0; ipt_proc_entry[i].name; i++)
+ 		proc_net_remove(ipt_proc_entry[i].name);
+ 	}
++	remove_iptables_graph_proc ();
+ #endif
++	cleanup_iptables_graph ();
+ }
+ 
+ EXPORT_SYMBOL(ipt_register_table);
+diff -Naur -X /home/iptgraph/dontdiff 2.6.12.default/net/ipv4/netfilter/ip_tables_graph.c 2.6.12/net/ipv4/netfilter/ip_tables_graph.c
+--- 2.6.12.default/net/ipv4/netfilter/ip_tables_graph.c	1970-01-01 07:30:00.000000000 +0730
++++ 2.6.12/net/ipv4/netfilter/ip_tables_graph.c	2005-08-11 16:04:18.000000000 +0800
+@@ -0,0 +1,780 @@
++#include <linux/skbuff.h>
++#include <linux/ip.h>
++#include <linux/tcp.h>
++#include <linux/udp.h>
++#include <linux/icmp.h>
++#include <linux/proc_fs.h>
++#include <linux/netlink.h>
++#include <linux/netdevice.h>
++#include <linux/spinlock.h>
++#include <linux/timer.h>
++#include <linux/socket.h>
++#include <linux/sysctl.h>
++#include <linux/netfilter.h>
++#include <linux/netfilter_ipv4/ip_tables.h>
++#include <linux/netfilter_ipv4/ip_tables_graph.h>
++#include <linux/netfilter_ipv4/lockhelp.h>
++#include <net/sock.h>
++#include <asm/uaccess.h>
++
++static DECLARE_MUTEX(di_sem);
++static DECLARE_RWLOCK(di_lock);
++static DECLARE_RWLOCK(nl_lock);
++static DECLARE_RWLOCK(rstats_lock);
++
++static int itg_prot = -1;
++static int itg_flushtimeout = 60;
++static int l = 1;
++static unsigned int last_rstats_idx = 0;
++static struct total_stats pstats;
++static struct rule_stats rstats[MAX_RSTATS];
++static struct rule_stats rstats_tmp[MAX_RSTATS];
++static struct itg_buff_t itg_buffers[MAXNLGROUPS];
++static struct sock *nl_sk;
++static struct timer_list flushtbl_timer;
++static int send_all = 0;
++
++void inc_ip(unsigned long len, unsigned int verdict)
++{
++	inc_counters(len, verdict, ip);
++}
++
++void inc_icmp(unsigned long len, unsigned int verdict)
++{
++	inc_counters(len, verdict, icmp);
++}
++
++void inc_igmp(unsigned long len, unsigned int verdict)
++{
++	inc_counters(len, verdict, igmp);
++}
++
++void inc_ipip(unsigned long len, unsigned int verdict)
++{
++	inc_counters(len, verdict, ipip);
++}
++
++void inc_tcp(unsigned long len, unsigned int verdict)
++{
++	inc_counters(len, verdict, tcp);
++}
++
++void inc_udp(unsigned long len, unsigned int verdict)
++{
++	inc_counters(len, verdict, udp);
++}
++
++void inc_ipv6(unsigned long len, unsigned int verdict)
++{
++	inc_counters(len, verdict, ipv6);
++}
++
++void inc_raw(unsigned long len, unsigned int verdict)
++{
++	inc_counters(len, verdict, raw);
++}
++
++struct ipt_stats ips[] = {
++	{ IPPROTO_IP, inc_ip },
++	{ IPPROTO_ICMP, inc_icmp },
++	{ IPPROTO_IGMP, inc_igmp },
++	{ IPPROTO_IPIP, inc_ipip },
++	{ IPPROTO_TCP, inc_tcp },
++	{ IPPROTO_UDP, inc_udp },
++	{ IPPROTO_IPV6, inc_ipv6 },
++	{ IPPROTO_RAW, inc_raw }
++};
++
++int prot(int x)
++{
++	switch(x) {
++		case IPPROTO_IP:
++			return 1;
++		case IPPROTO_ICMP:
++			return 2;
++		case IPPROTO_IGMP:
++			return 3;
++		case IPPROTO_IPIP:
++			return 4;
++		case IPPROTO_TCP:
++			return 5;
++		case IPPROTO_UDP:
++			return 6;
++		case IPPROTO_IPV6:
++			return 7;
++		case IPPROTO_RAW:
++			return 8;
++		default:
++			break;
++	}
++	/* assign any other protocols under raw */
++	return 8;		
++}
++
++void init_stats(void)
++{
++	memset(&pstats, 0, sizeof(pstats));
++	memset(rstats, 0, sizeof(struct rule_stats) * MAX_RSTATS);
++}
++
++void reinit_stats(void)
++{
++	int i = 0;
++	
++	memset(&pstats, 0, sizeof(pstats));
++	for(i=0; i<MAX_RSTATS; i++) {
++		rstats[i].curr_value.count = 0;
++		rstats[i].curr_value.byte = 0;
++	}
++}
++
++char *mask_to_dotted(const struct in_addr *mask)
++{
++	int i;
++	static char buf[20];
++	u_int32_t maskaddr, bits;
++
++	memset(buf, 0, 20);
++	maskaddr = ntohl(mask->s_addr);
++
++	if(maskaddr == 0xFFFFFFFFL)
++		return "";
++
++	i = 32;
++	bits = 0xFFFFFFFEL;
++	while(--i >= 0 && maskaddr != bits)
++		bits <<= 1;
++	if(i >= 0)
++		sprintf(buf, "%d", i);
++
++	return buf;
++}
++
++char *print_ports(const char *name, u_int16_t min, u_int16_t max)
++{
++	static char buf[20];
++
++	memset(buf, 0, 20);
++
++	if(min != 0 || max != 0xFFFF)
++		if(min == max)
++			sprintf(buf, "%s:%d ", name, min);
++		else
++			sprintf(buf, "%s %d:%d ", name, min, max);
++	
++	return buf;
++}
++
++char *print_verdict(int pos)
++{	
++	static char buf[20];
++	memset(buf, 0, 20);
++
++	switch(pos) {
++		case -NF_ACCEPT-1:
++			sprintf(buf, "ACCEPT");
++			break;
++		case -NF_DROP-1:
++			sprintf(buf, "DROP");
++			break;
++		case -NF_QUEUE-1:
++			sprintf(buf, "QUEUE");
++			break;
++		case IPT_RETURN:
++			sprintf(buf, "RETURN");
++			break;
++		default:
++			sprintf(buf, "UNKNOWN");
++			break;
++	}
++
++	return buf;
++}
++
++void print_pkts_bytes(struct seq_file *s, struct ipt_entry *e)
++{
++	int i;
++	
++	for(i = 0; i < last_rstats_idx; ++i)
++		if(rstats_tmp[i].e == e) {
++			seq_printf(s, " %4ld %4ld ",
++				rstats_tmp[i].curr_value.count,
++				rstats_tmp[i].curr_value.byte);
++			break;
++		}
++}
++
++char *print_ipt_entry(struct ipt_entry *e)
++{
++	struct ipt_entry_match *match;
++	struct ipt_entry_target *target;
++	struct ipt_tcp *tcpinfo;
++	static char buf[80];
++	unsigned int i;
++	int len;
++	int j=0;
++
++	if(!e->ip.proto)
++		return "unknown";
++
++	memset(buf, 0, 80);
++	target = ipt_get_target(e);
++
++	switch(e->ip.proto) {
++		case IPPROTO_TCP:
++			sprintf(buf, "%s tcp ", print_verdict(*(int *)target->data));
++			break;
++		case IPPROTO_UDP:
++			sprintf(buf, "%s udp ", print_verdict(*(int *)target->data));
++			break;
++		case IPPROTO_ICMP:
++			sprintf(buf, "%s icmp ", print_verdict(*(int *)target->data));
++			break;
++	}
++	len = strlen(buf);
++	sprintf(buf+len, "src %u.%u.%u.%u/%s dst %u.%u.%u.%u/%s ",
++		   NIPQUAD(e->ip.src), mask_to_dotted(&e->ip.smsk),
++		   NIPQUAD(e->ip.dst), mask_to_dotted(&e->ip.dmsk));
++
++	for(i = sizeof(struct ipt_entry); i<e->target_offset; i+= match->u.match_size) {
++		len = strlen(buf);
++		match = (void *)(e) + i;
++		tcpinfo = (struct ipt_tcp *) match->data;
++		sprintf(buf+len, "%s ", print_ports("spt", tcpinfo->spts[0], tcpinfo->spts[1]));
++		sprintf(buf+len, "%s ", print_ports("dpt", tcpinfo->dpts[0], tcpinfo->dpts[1]));
++		j++;
++	}
++
++	return buf;
++}
++
++void inc_rules(struct ipt_entry *ipt_ent)
++{
++	int i;
++
++	for(i=0; i<last_rstats_idx+1; i++)
++		if(rstats[i].e == ipt_ent) {
++			rstats[i].curr_value.count +=
++					ipt_ent->counters.pcnt - rstats[i].old_value.count;
++			rstats[i].curr_value.byte +=
++					ipt_ent->counters.bcnt - rstats[i].old_value.byte;
++			rstats[i].old_value.count = ipt_ent->counters.pcnt;
++			rstats[i].old_value.byte = ipt_ent->counters.bcnt;
++			break;
++		} else if(rstats[i].e == NULL && last_rstats_idx < MAX_RSTATS) {
++			char *rule = print_ipt_entry(ipt_ent);
++			rstats[i].e = ipt_ent;
++			rstats[i].old_value.count = ipt_ent->counters.pcnt;
++			rstats[i].old_value.byte = ipt_ent->counters.bcnt;
++			rstats[i].curr_value.count = ipt_ent->counters.pcnt;
++			rstats[i].curr_value.byte = ipt_ent->counters.bcnt;
++			sprintf(rstats[i].rule_desc, "%s", rule);
++			last_rstats_idx++;
++			break;
++		}
++}
++
++static inline int create_rstats(struct ipt_entry *e, unsigned int *index)
++{
++	char *rule = print_ipt_entry(e);
++	
++	rstats[*index].e = e;
++	rstats[*index].curr_value.count = 0;
++	rstats[*index].curr_value.byte = 0;
++	rstats[*index].old_value.count = 0;
++	rstats[*index].old_value.byte = 0;
++	sprintf(rstats[*index].rule_desc, "%s", rule);
++
++	(*index)++;
++
++	return 0;
++}
++
++void add_counters_to_rules(struct ipt_entry *ipt_ent, struct ipt_table_info *t)
++{
++	write_lock(&rstats_lock);
++	inc_rules(ipt_ent);
++	write_unlock(&rstats_lock);
++}
++
++void add_counters_to_packets(struct sk_buff *skb, struct ipt_entry *ipt_ent, unsigned int verdict)
++{
++	struct iphdr _iph, *ih;
++
++	if(skb == NULL)
++		return;
++
++	if(verdict != IPT_RETURN)
++		verdict = (unsigned)(-verdict) - 1;
++
++	ih = skb_header_pointer(skb, 0, sizeof(_iph), &_iph);
++
++	if(ih != NULL) {
++		write_lock(&rstats_lock);
++ 		int itg_prot = prot(ih->protocol)-l;
++		ips[itg_prot].add(ih->tot_len, verdict);
++		write_unlock(&rstats_lock);
++	}
++}
++
++void nl_send_flushtimeout(struct sk_buff *skb)
++{
++	struct nlmsghdr *nlh;
++	char *s = NULL;
++	pid_t pid = 0;
++	int grp = 1;
++	int len = 0;
++
++	if(nl_sk == NULL)
++		return;
++
++	nlh = (struct nlmsghdr *) skb->data;
++	pid = nlh->nlmsg_pid;
++	len = 1+sizeof(int)+sizeof(int);
++	s = NLMSG_DATA(nlh);
++	memcpy(s+5, &itg_flushtimeout, sizeof(int));
++	NETLINK_CB(skb).groups = 0;
++	NETLINK_CB(skb).pid = 0;
++	NETLINK_CB(skb).dst_pid = pid;
++	NETLINK_CB(skb).dst_groups = grp;
++	skb->len = sizeof(struct nlmsghdr) + len;
++	skb->tail = skb->data + skb->len;
++	skb->truesize = skb->len;
++	netlink_unicast(nl_sk, skb, pid, MSG_DONTWAIT);
++}
++
++void nl_send_rule(struct sk_buff *skb, void *addr)
++{
++	struct nlmsghdr *nlh;
++	char *s = NULL;
++	pid_t pid = 0;
++	int len = 0;
++	int i;
++	int size;
++	char *rule = NULL;
++
++	if(nl_sk == NULL)
++		return;
++
++	for(i = 0; i<last_rstats_idx; i++)
++		if(!memcmp(&rstats[i].e, addr, 4)) {
++			rule = print_ipt_entry(rstats[i].e);
++			break;
++		}
++
++	if(rule == NULL)
++		rule = "unknown";
++
++	nlh = (struct nlmsghdr *) skb->data;
++	pid = nlh->nlmsg_pid;
++	size = strlen(rule);
++	len = 1+sizeof(int)+size;	
++	s = NLMSG_DATA(nlh);
++	memcpy(s+1, &size, sizeof(int));
++	memcpy(s+5, rule, size);
++	NETLINK_CB(skb).groups = 0;
++	NETLINK_CB(skb).pid = 0;
++	NETLINK_CB(skb).dst_pid = pid;
++	NETLINK_CB(skb).dst_groups = 0;
++	skb->len = sizeof(struct nlmsghdr) + len;
++	skb->tail = skb->data + skb->len;
++	skb->truesize = skb->len;
++
++	netlink_unicast(nl_sk, skb, pid, MSG_DONTWAIT);
++}
++
++static void nl_send_flushtbl(unsigned long data)
++{
++	struct nlmsghdr *nlh;
++	char *s = NULL;
++	pid_t pid = 0;
++	int grp = 1;
++	struct sk_buff *skb = NULL;
++	char type = OPT_FLUSHTBL;
++
++	if(nl_sk == NULL)
++		return;
++
++	skb = alloc_skb(NLMSG_SPACE(MAX_PAYLOAD), GFP_KERNEL);
++	if(skb) {
++		nlh = (struct nlmsghdr *) skb->data;
++		nlh->nlmsg_len = NLMSG_SPACE(MAX_PAYLOAD);
++		nlh->nlmsg_pid = 0;
++		nlh->nlmsg_flags = 0;
++		nlh->nlmsg_type = NLMSG_DONE;
++		s = NLMSG_DATA(nlh);
++		memcpy(s, &type, 1);
++
++		NETLINK_CB(skb).groups = grp;
++		NETLINK_CB(skb).pid = 0;
++		NETLINK_CB(skb).dst_pid = pid;
++		NETLINK_CB(skb).dst_groups = grp;
++		skb->len = sizeof(struct nlmsghdr) + 1;
++		skb->tail = skb->data + skb->len;
++		skb->truesize = skb->len;
++	}
++
++	if(nl_sk && skb)
++		netlink_broadcast(nl_sk, skb, pid, grp, GFP_KERNEL);
++}
++
++void nl_send_proto_stats(void)
++{
++	struct sk_buff *skb = NULL;
++	struct nlmsghdr *nlh;
++	char *s = NULL;
++	pid_t pid = 0;
++	int grp = 1;
++	int len = 0;
++	int total_len = 0;
++	char type = OPT_PROTO_STATS;
++
++	if(nl_sk == NULL)
++		return;
++
++	skb = alloc_skb(NLMSG_SPACE(MAX_PAYLOAD), GFP_KERNEL);
++	if(skb) {
++		nlh = (struct nlmsghdr *) skb->data;
++		nlh->nlmsg_len = NLMSG_SPACE(MAX_PAYLOAD);
++		nlh->nlmsg_pid = 0;
++		nlh->nlmsg_flags = 0;
++		nlh->nlmsg_type = NLMSG_DONE;
++		total_len = sizeof(struct total_stats);
++		s = NLMSG_DATA(nlh);
++		memcpy(s, &type, 1);
++		memcpy(s+1, &total_len, sizeof(int));
++		memcpy(s+5, &pstats, sizeof(struct total_stats));
++
++		len = 1+4+sizeof(struct total_stats);
++		
++		NETLINK_CB(skb).groups = grp;
++		NETLINK_CB(skb).pid = 0;
++		NETLINK_CB(skb).dst_pid = pid;
++		NETLINK_CB(skb).dst_groups = grp;
++		skb->len = sizeof(struct nlmsghdr) + len;
++		skb->tail = skb->data + skb->len;
++		skb->truesize = skb->len;
++	}
++
++	if(nl_sk && skb)
++		netlink_broadcast(nl_sk, skb, pid, grp, GFP_KERNEL);
++}
++
++void nl_send_rule_stats(int option)
++{
++	struct sk_buff *skb = NULL;
++	struct nlmsghdr *nlh;
++	char *s = NULL;
++	pid_t pid = 0;
++	int grp = 1;
++	int i = 0;
++	int len = 0;
++	int total_len = 0;
++	char type = OPT_RULE_STATS;
++
++	if(nl_sk == NULL)
++		return;
++
++	for(i=0; i<last_rstats_idx; i++) {
++		if (option == NORMAL)
++			if(!rstats[i].curr_value.count && !rstats[i].curr_value.byte)
++				continue;
++		if(!strncmp(rstats[i].rule_desc, "unknown", 7))
++			continue;
++
++		len = 0;
++
++		skb = alloc_skb(NLMSG_SPACE(MAX_PAYLOAD), GFP_KERNEL);
++		if(skb) {
++			nlh = (struct nlmsghdr *) skb->data;
++			nlh->nlmsg_len = NLMSG_SPACE(MAX_PAYLOAD);
++			nlh->nlmsg_pid = 0;
++			nlh->nlmsg_flags = 0;
++			nlh->nlmsg_type = NLMSG_DONE;
++			total_len = sizeof(struct prot_stat)+4;
++			s = NLMSG_DATA(nlh);
++			memcpy(s, &type, 1);
++			memcpy(s+1, &total_len, sizeof(int));
++			len = 1+4;
++			memcpy(s+len, &rstats[i].e, 4);
++			len += 4;
++			memcpy(s+len, &rstats[i].curr_value, sizeof(struct prot_stat));
++
++			len += sizeof(struct prot_stat);
++		
++			NETLINK_CB(skb).groups = grp;
++			NETLINK_CB(skb).pid = 0;
++			NETLINK_CB(skb).dst_pid = pid;
++			NETLINK_CB(skb).dst_groups = grp;
++			skb->len = sizeof(struct nlmsghdr) + len;
++			skb->tail = skb->data + skb->len;
++			skb->truesize = skb->len;
++
++			if(nl_sk && skb)
++				netlink_broadcast(nl_sk, skb, pid, grp, GFP_KERNEL);
++		}
++	}
++}
++
++void nl_send_last_idx(void)
++{
++	struct sk_buff *skb = NULL;
++	struct nlmsghdr *nlh;
++	char *s = NULL;
++	pid_t pid = 0;
++	int grp = 1;
++	char type = OPT_LAST_IDX;
++
++	if(nl_sk == NULL)
++		return;
++
++	skb = alloc_skb(NLMSG_SPACE(MAX_PAYLOAD), GFP_KERNEL);
++	if(skb) {
++		nlh = (struct nlmsghdr *) skb->data;
++		nlh->nlmsg_len = NLMSG_SPACE(MAX_PAYLOAD);
++		nlh->nlmsg_pid = 0;
++		nlh->nlmsg_flags = 0;
++		nlh->nlmsg_type = NLMSG_DONE;
++		s = NLMSG_DATA(nlh);
++		memcpy(s, &type, 1);
++
++		NETLINK_CB(skb).groups = grp;
++		NETLINK_CB(skb).pid = 0;
++		NETLINK_CB(skb).dst_pid = pid;
++		NETLINK_CB(skb).dst_groups = grp;
++		skb->len = sizeof(struct nlmsghdr) + 1;
++		skb->tail = skb->data + skb->len;
++		skb->truesize = skb->len;
++	}
++
++	if(nl_sk && skb)
++		netlink_broadcast(nl_sk, skb, pid, grp, GFP_KERNEL);
++}
++
++void nl_process(void)
++{
++	nl_send_proto_stats();
++	if (send_all) {
++		nl_send_rule_stats(EVERYTHING);
++		write_lock_bh(&di_lock);
++		send_all = 0;
++		write_unlock_bh(&di_lock);
++	} else
++		nl_send_rule_stats(NORMAL);
++	nl_send_last_idx();
++	reinit_stats();
++}
++
++void nl_data_input(struct sock *sk, int len)
++{
++	struct sk_buff *skb = NULL;
++	struct nlmsghdr *nlh = NULL;
++	void *addr = NULL;
++
++	if(sk == NULL)
++		return;
++
++	if(down_trylock(&di_sem))
++		return;
++
++	if(atomic_read(&sk->sk_rmem_alloc) > sk->sk_rcvbuf)
++		atomic_sub(atomic_read(&sk->sk_rmem_alloc), &sk->sk_rmem_alloc);
++
++	while((skb = skb_dequeue(&sk->sk_receive_queue)) != NULL) {
++		nlh = (struct nlmsghdr *) skb->data;
++
++		switch(TYPE(nlh)) {
++			case OPT_WRITE_INTERVAL:
++					write_lock_bh(&di_lock);
++					memcpy(&itg_flushtimeout, DATA(nlh), SIZE(nlh));
++					write_unlock_bh(&di_lock);
++					break;
++
++			case OPT_READ_INTERVAL:
++					write_lock_bh(&di_lock);
++					nl_send_flushtimeout(skb);
++					write_unlock_bh(&di_lock);
++					break;
++
++			case OPT_READ_RULE:
++					write_lock_bh(&di_lock);
++					addr = DATA(nlh);
++					nl_send_rule(skb, addr);
++					write_unlock_bh(&di_lock);
++					break;
++
++			case OPT_READ_ALL_RULES:
++					write_lock_bh(&di_lock);
++					send_all = 1;
++					write_unlock_bh(&di_lock);
++					break;
++		}
++	}
++	up(&di_sem);
++}
++
++void replace_counters(struct ipt_table_info *t)
++{
++	int count = 0;
++
++	memset(&rstats, 0, sizeof(struct rule_stats) * MAX_RSTATS);
++	IPT_ENTRY_ITERATE(t->entries, t->size, create_rstats, &count);			
++	last_rstats_idx = count;
++
++	if(timer_pending(&flushtbl_timer))
++		del_timer(&flushtbl_timer);
++
++	flushtbl_timer.expires = jiffies + 1 * HZ;
++	flushtbl_timer.data = last_rstats_idx;
++	add_timer(&flushtbl_timer);
++}
++
++static void nl_timer(unsigned long data)
++{
++	write_lock_bh(&nl_lock);
++	nl_process();
++	itg_buffers[data].timer.expires = jiffies + itg_flushtimeout * HZ;
++	add_timer(&itg_buffers[data].timer);
++	write_unlock_bh(&nl_lock);
++}
++
++int init_iptables_graph(void)
++{
++	int i;
++
++	init_stats();
++
++	nl_sk = netlink_kernel_create(NETLINK_GRAPH, nl_data_input);
++	if(!nl_sk)
++		return -ENOMEM;
++	nl_sk->sk_rcvbuf = MAX_PAYLOAD;
++
++	for(i=0; i<MAXNLGROUPS; i++) {
++		init_timer(&itg_buffers[i].timer);
++		itg_buffers[i].timer.function = nl_timer;
++		itg_buffers[i].timer.data = i;
++		itg_buffers[i].timer.expires = jiffies + itg_flushtimeout * HZ;
++		add_timer(&itg_buffers[i].timer);
++	}
++
++	init_timer(&flushtbl_timer);
++	flushtbl_timer.function = nl_send_flushtbl;
++	flushtbl_timer.data = 0;
++
++	itg_prot = 0;
++	send_all = 0;
++
++	return 0;
++}
++
++int cleanup_iptables_graph(void)
++{
++	int i;
++
++	for(i=0; i<MAXNLGROUPS; i++) {
++		struct itg_buff_t *ib = &itg_buffers[i];
++
++		if(timer_pending(&ib->timer))
++			del_timer(&ib->timer);
++
++		if(ib->skb) {
++			kfree_skb(ib->skb);
++			ib->skb = NULL;
++		}
++	}
++
++	if(timer_pending(&flushtbl_timer))
++		del_timer(&flushtbl_timer);
++
++	if(nl_sk)
++		sock_release(nl_sk->sk_socket);
++
++	return 0;
++}
++
++#ifdef CONFIG_PROC_FS
++
++static int proc_seq_show(struct seq_file *s, void *v)
++{
++	int ret = 0;
++	int i;
++
++	seq_printf(s, "iptables_graph_proc\n");
++	seq_printf(s, "ip:   drop: %ld(%ld) accept: %ld(%ld) stolen: %ld(%ld) queue: %ld(%ld) repeat: %ld(%ld)\n",
++		DROP_COUNT(ip), DROP_BYTE(ip),
++		ACCEPT_COUNT(ip), ACCEPT_BYTE(ip),
++		STOLEN_COUNT(ip), STOLEN_BYTE(ip),
++		QUEUE_COUNT(ip), QUEUE_BYTE(ip),
++		REPEAT_COUNT(ip), REPEAT_BYTE(ip));
++
++	seq_printf(s, "icmp: drop: %ld(%ld) accept: %ld(%ld) stolen: %ld(%ld) queue: %ld(%ld) repeat: %ld(%ld)\n",
++		DROP_COUNT(icmp), DROP_BYTE(icmp),
++		ACCEPT_COUNT(icmp), ACCEPT_BYTE(icmp),
++		STOLEN_COUNT(icmp), STOLEN_BYTE(icmp),
++		QUEUE_COUNT(icmp), QUEUE_BYTE(icmp),
++		REPEAT_COUNT(icmp), REPEAT_BYTE(icmp));
++
++	seq_printf(s, "tcp:  drop: %ld(%ld) accept: %ld(%ld) stolen: %ld(%ld) queue: %ld(%ld) repeat: %ld(%ld)\n",
++		DROP_COUNT(tcp), DROP_BYTE(tcp),
++		ACCEPT_COUNT(tcp), ACCEPT_BYTE(tcp),
++		STOLEN_COUNT(tcp), STOLEN_BYTE(tcp),
++		QUEUE_COUNT(tcp), QUEUE_BYTE(tcp),
++		REPEAT_COUNT(tcp), REPEAT_BYTE(tcp));
++
++	seq_printf(s, "udp:  drop: %ld(%ld) accept: %ld(%ld) stolen: %ld(%ld) queue: %ld(%ld) repeat: %ld(%ld)\n",
++		DROP_COUNT(udp), DROP_BYTE(udp),
++		ACCEPT_COUNT(udp), ACCEPT_COUNT(udp),
++		STOLEN_COUNT(udp), STOLEN_BYTE(udp),
++		QUEUE_COUNT(udp), QUEUE_BYTE(udp),
++		REPEAT_COUNT(udp), REPEAT_BYTE(udp));
++
++	for(i=0; i<last_rstats_idx; i++) {
++		if(!strncmp(rstats[i].rule_desc, "unknown", 7))
++			continue;
++
++		seq_printf(s, "[%d] %-50s pkts: %ld bytes: %ld\n",
++						i, rstats[i].rule_desc,
++						rstats[i].curr_value.count,
++						rstats[i].curr_value.byte);
++	}
++
++	return ret;
++}
++	
++static int proc_seq_open(struct inode *inode, struct file *file)
++{
++	return single_open(file, &proc_seq_show, NULL);
++}
++
++static struct file_operations proc_seq_fops = {
++	.owner   = THIS_MODULE,
++	.open    = proc_seq_open,
++	.read    = seq_read,
++	.llseek  = seq_lseek,
++	.release = seq_release
++};
++
++static int init_iptables_graph_proc(void)
++{
++	int ret = 0;
++
++	if(!proc_net_fops_create("ipt_graph", S_IRUGO, &proc_seq_fops))
++		goto out_proc;
++
++out:
++	return ret;
++
++out_proc:
++	proc_net_remove("ipt_graph");
++
++	ret = -ENOMEM;
++	goto out;
++
++}
++
++static void remove_iptables_graph_proc(void)
++{
++	proc_net_remove("ipt_graph");
++}
++
++#endif
+diff -Naur -X /home/iptgraph/dontdiff 2.6.12.default/net/ipv4/netfilter/Makefile 2.6.12/net/ipv4/netfilter/Makefile
+--- 2.6.12.default/net/ipv4/netfilter/Makefile	2005-08-11 16:02:55.000000000 +0800
++++ 2.6.12/net/ipv4/netfilter/Makefile	2005-08-11 16:04:18.000000000 +0800
+@@ -26,6 +26,7 @@
+ 
+ # generic IP tables 
+ obj-$(CONFIG_IP_NF_IPTABLES) += ip_tables.o
++obj-$(CONFIG_IP_NF_IPTABLES) += ip_tables_graph.o
+ 
+ # the three instances of ip_tables
+ obj-$(CONFIG_IP_NF_FILTER) += iptable_filter.o
