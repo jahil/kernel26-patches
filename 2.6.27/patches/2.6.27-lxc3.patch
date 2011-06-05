@@ -1,0 +1,6919 @@
+Index: 2.6.27-lxc/arch/alpha/include/asm/thread_info.h
+===================================================================
+--- 2.6.27-lxc.orig/arch/alpha/include/asm/thread_info.h	2008-10-23 11:24:03.000000000 +0200
++++ 2.6.27-lxc/arch/alpha/include/asm/thread_info.h	2008-10-23 11:24:06.000000000 +0200
+@@ -74,12 +74,14 @@ register struct thread_info *__current_t
+ #define TIF_UAC_SIGBUS		7
+ #define TIF_MEMDIE		8
+ #define TIF_RESTORE_SIGMASK	9	/* restore signal mask in do_signal */
++#define TIF_FREEZE		19	/* is freezing for suspend */
+ 
+ #define _TIF_SYSCALL_TRACE	(1<<TIF_SYSCALL_TRACE)
+ #define _TIF_SIGPENDING		(1<<TIF_SIGPENDING)
+ #define _TIF_NEED_RESCHED	(1<<TIF_NEED_RESCHED)
+ #define _TIF_POLLING_NRFLAG	(1<<TIF_POLLING_NRFLAG)
+ #define _TIF_RESTORE_SIGMASK	(1<<TIF_RESTORE_SIGMASK)
++#define _TIF_FREEZE		(1<<TIF_FREEZE)
+ 
+ /* Work to do on interrupt/exception return.  */
+ #define _TIF_WORK_MASK		(_TIF_SIGPENDING | _TIF_NEED_RESCHED)
+Index: 2.6.27-lxc/arch/avr32/include/asm/thread_info.h
+===================================================================
+--- 2.6.27-lxc.orig/arch/avr32/include/asm/thread_info.h	2008-10-23 11:24:03.000000000 +0200
++++ 2.6.27-lxc/arch/avr32/include/asm/thread_info.h	2008-10-23 11:24:06.000000000 +0200
+@@ -96,6 +96,7 @@ static inline struct thread_info *curren
+ #define _TIF_MEMDIE		(1 << TIF_MEMDIE)
+ #define _TIF_RESTORE_SIGMASK	(1 << TIF_RESTORE_SIGMASK)
+ #define _TIF_CPU_GOING_TO_SLEEP (1 << TIF_CPU_GOING_TO_SLEEP)
++#define _TIF_FREEZE		(1<<TIF_FREEZE)
+ 
+ /* Note: The masks below must never span more than 16 bits! */
+ 
+Index: 2.6.27-lxc/arch/h8300/include/asm/thread_info.h
+===================================================================
+--- 2.6.27-lxc.orig/arch/h8300/include/asm/thread_info.h	2008-10-23 11:24:03.000000000 +0200
++++ 2.6.27-lxc/arch/h8300/include/asm/thread_info.h	2008-10-23 11:24:06.000000000 +0200
+@@ -89,6 +89,7 @@ static inline struct thread_info *curren
+ 					   TIF_NEED_RESCHED */
+ #define TIF_MEMDIE		4
+ #define TIF_RESTORE_SIGMASK	5	/* restore signal mask in do_signal() */
++#define TIF_FREEZE		19	/* is freezing for suspend */
+ 
+ /* as above, but as bit values */
+ #define _TIF_SYSCALL_TRACE	(1<<TIF_SYSCALL_TRACE)
+@@ -96,6 +97,7 @@ static inline struct thread_info *curren
+ #define _TIF_NEED_RESCHED	(1<<TIF_NEED_RESCHED)
+ #define _TIF_POLLING_NRFLAG	(1<<TIF_POLLING_NRFLAG)
+ #define _TIF_RESTORE_SIGMASK	(1<<TIF_RESTORE_SIGMASK)
++#define _TIF_FREEZE		(1<<TIF_FREEZE)
+ 
+ #define _TIF_WORK_MASK		0x0000FFFE	/* work to do on interrupt/exception return */
+ 
+Index: 2.6.27-lxc/arch/m68knommu/include/asm/thread_info.h
+===================================================================
+--- 2.6.27-lxc.orig/arch/m68knommu/include/asm/thread_info.h	2008-10-23 11:24:03.000000000 +0200
++++ 2.6.27-lxc/arch/m68knommu/include/asm/thread_info.h	2008-10-23 11:24:06.000000000 +0200
+@@ -84,12 +84,14 @@ static inline struct thread_info *curren
+ #define TIF_POLLING_NRFLAG	3	/* true if poll_idle() is polling
+ 					   TIF_NEED_RESCHED */
+ #define TIF_MEMDIE		4
++#define TIF_FREEZE		19	/* is freezing for suspend */
+ 
+ /* as above, but as bit values */
+ #define _TIF_SYSCALL_TRACE	(1<<TIF_SYSCALL_TRACE)
+ #define _TIF_SIGPENDING		(1<<TIF_SIGPENDING)
+ #define _TIF_NEED_RESCHED	(1<<TIF_NEED_RESCHED)
+ #define _TIF_POLLING_NRFLAG	(1<<TIF_POLLING_NRFLAG)
++#define _TIF_FREEZE		(1<<TIF_FREEZE)
+ 
+ #define _TIF_WORK_MASK		0x0000FFFE	/* work to do on interrupt/exception return */
+ 
+Index: 2.6.27-lxc/arch/sparc/include/asm/thread_info_32.h
+===================================================================
+--- 2.6.27-lxc.orig/arch/sparc/include/asm/thread_info_32.h	2008-10-23 11:24:03.000000000 +0200
++++ 2.6.27-lxc/arch/sparc/include/asm/thread_info_32.h	2008-10-23 11:24:06.000000000 +0200
+@@ -139,6 +139,7 @@ BTFIXUPDEF_CALL(void, free_thread_info, 
+ #define TIF_POLLING_NRFLAG	9	/* true if poll_idle() is polling
+ 					 * TIF_NEED_RESCHED */
+ #define TIF_MEMDIE		10
++#define TIF_FREEZE		19	/* is freezing for suspend */
+ 
+ /* as above, but as bit values */
+ #define _TIF_SYSCALL_TRACE	(1<<TIF_SYSCALL_TRACE)
+@@ -152,6 +153,7 @@ BTFIXUPDEF_CALL(void, free_thread_info, 
+ #define _TIF_DO_NOTIFY_RESUME_MASK	(_TIF_NOTIFY_RESUME | \
+ 					 _TIF_SIGPENDING | \
+ 					 _TIF_RESTORE_SIGMASK)
++#define TIF_FREEZE		(1<<TIF_FREEZE)
+ 
+ #endif /* __KERNEL__ */
+ 
+Index: 2.6.27-lxc/arch/sparc/include/asm/thread_info_64.h
+===================================================================
+--- 2.6.27-lxc.orig/arch/sparc/include/asm/thread_info_64.h	2008-10-23 11:24:03.000000000 +0200
++++ 2.6.27-lxc/arch/sparc/include/asm/thread_info_64.h	2008-10-23 11:24:06.000000000 +0200
+@@ -237,6 +237,7 @@ register struct thread_info *current_thr
+ #define TIF_ABI_PENDING		12
+ #define TIF_MEMDIE		13
+ #define TIF_POLLING_NRFLAG	14
++#define TIF_FREEZE		19	/* is freezing for suspend */
+ 
+ #define _TIF_SYSCALL_TRACE	(1<<TIF_SYSCALL_TRACE)
+ #define _TIF_NOTIFY_RESUME	(1<<TIF_NOTIFY_RESUME)
+@@ -249,6 +250,7 @@ register struct thread_info *current_thr
+ #define _TIF_SYSCALL_AUDIT	(1<<TIF_SYSCALL_AUDIT)
+ #define _TIF_ABI_PENDING	(1<<TIF_ABI_PENDING)
+ #define _TIF_POLLING_NRFLAG	(1<<TIF_POLLING_NRFLAG)
++#define _TIF_FREEZE		(1<<TIF_FREEZE)
+ 
+ #define _TIF_USER_WORK_MASK	((0xff << TI_FLAG_WSAVED_SHIFT) | \
+ 				 _TIF_DO_NOTIFY_RESUME_MASK | \
+Index: 2.6.27-lxc/include/asm-cris/thread_info.h
+===================================================================
+--- 2.6.27-lxc.orig/include/asm-cris/thread_info.h	2008-10-23 11:24:03.000000000 +0200
++++ 2.6.27-lxc/include/asm-cris/thread_info.h	2008-10-23 11:24:06.000000000 +0200
+@@ -88,6 +88,7 @@ struct thread_info {
+ #define TIF_RESTORE_SIGMASK	9	/* restore signal mask in do_signal() */
+ #define TIF_POLLING_NRFLAG	16	/* true if poll_idle() is polling TIF_NEED_RESCHED */
+ #define TIF_MEMDIE		17
++#define TIF_FREEZE		19	/* is freezing for suspend */
+ 
+ #define _TIF_SYSCALL_TRACE	(1<<TIF_SYSCALL_TRACE)
+ #define _TIF_NOTIFY_RESUME	(1<<TIF_NOTIFY_RESUME)
+@@ -95,6 +96,7 @@ struct thread_info {
+ #define _TIF_NEED_RESCHED	(1<<TIF_NEED_RESCHED)
+ #define _TIF_RESTORE_SIGMASK	(1<<TIF_RESTORE_SIGMASK)
+ #define _TIF_POLLING_NRFLAG	(1<<TIF_POLLING_NRFLAG)
++#define _TIF_FREEZE		(1<<TIF_FREEZE)
+ 
+ #define _TIF_WORK_MASK		0x0000FFFE	/* work to do on interrupt/exception return */
+ #define _TIF_ALLWORK_MASK	0x0000FFFF	/* work to do on any return to u-space */
+Index: 2.6.27-lxc/include/asm-m68k/thread_info.h
+===================================================================
+--- 2.6.27-lxc.orig/include/asm-m68k/thread_info.h	2008-10-23 11:24:03.000000000 +0200
++++ 2.6.27-lxc/include/asm-m68k/thread_info.h	2008-10-23 11:24:06.000000000 +0200
+@@ -52,5 +52,6 @@ struct thread_info {
+ #define TIF_DELAYED_TRACE	14	/* single step a syscall */
+ #define TIF_SYSCALL_TRACE	15	/* syscall trace active */
+ #define TIF_MEMDIE		16
++#define TIF_FREEZE		19	/* thread is freezing for suspend */
+ 
+ #endif	/* _ASM_M68K_THREAD_INFO_H */
+Index: 2.6.27-lxc/include/asm-parisc/thread_info.h
+===================================================================
+--- 2.6.27-lxc.orig/include/asm-parisc/thread_info.h	2008-10-23 11:24:03.000000000 +0200
++++ 2.6.27-lxc/include/asm-parisc/thread_info.h	2008-10-23 11:24:06.000000000 +0200
+@@ -58,6 +58,7 @@ struct thread_info {
+ #define TIF_32BIT               4       /* 32 bit binary */
+ #define TIF_MEMDIE		5
+ #define TIF_RESTORE_SIGMASK	6	/* restore saved signal mask */
++#define TIF_FREEZE		19	/* is freezing for suspend */
+ 
+ #define _TIF_SYSCALL_TRACE	(1 << TIF_SYSCALL_TRACE)
+ #define _TIF_SIGPENDING		(1 << TIF_SIGPENDING)
+@@ -65,6 +66,7 @@ struct thread_info {
+ #define _TIF_POLLING_NRFLAG	(1 << TIF_POLLING_NRFLAG)
+ #define _TIF_32BIT		(1 << TIF_32BIT)
+ #define _TIF_RESTORE_SIGMASK	(1 << TIF_RESTORE_SIGMASK)
++#define _TIF_FREEZE		(1 << TIF_FREEZE)
+ 
+ #define _TIF_USER_WORK_MASK     (_TIF_SIGPENDING | \
+                                  _TIF_NEED_RESCHED | _TIF_RESTORE_SIGMASK)
+Index: 2.6.27-lxc/include/asm-um/thread_info.h
+===================================================================
+--- 2.6.27-lxc.orig/include/asm-um/thread_info.h	2008-10-23 11:24:03.000000000 +0200
++++ 2.6.27-lxc/include/asm-um/thread_info.h	2008-10-23 11:24:06.000000000 +0200
+@@ -69,6 +69,7 @@ static inline struct thread_info *curren
+ #define TIF_MEMDIE	 	5
+ #define TIF_SYSCALL_AUDIT	6
+ #define TIF_RESTORE_SIGMASK	7
++#define TIF_FREEZE		19	/* is freezing for suspend */
+ 
+ #define _TIF_SYSCALL_TRACE	(1 << TIF_SYSCALL_TRACE)
+ #define _TIF_SIGPENDING		(1 << TIF_SIGPENDING)
+@@ -77,5 +78,6 @@ static inline struct thread_info *curren
+ #define _TIF_MEMDIE		(1 << TIF_MEMDIE)
+ #define _TIF_SYSCALL_AUDIT	(1 << TIF_SYSCALL_AUDIT)
+ #define _TIF_RESTORE_SIGMASK	(1 << TIF_RESTORE_SIGMASK)
++#define _TIF_FREEZE		(1 << TIF_FREEZE)
+ 
+ #endif
+Index: 2.6.27-lxc/include/asm-xtensa/thread_info.h
+===================================================================
+--- 2.6.27-lxc.orig/include/asm-xtensa/thread_info.h	2008-10-23 11:24:03.000000000 +0200
++++ 2.6.27-lxc/include/asm-xtensa/thread_info.h	2008-10-23 11:24:06.000000000 +0200
+@@ -134,6 +134,7 @@ static inline struct thread_info *curren
+ #define TIF_MEMDIE		5
+ #define TIF_RESTORE_SIGMASK	6	/* restore signal mask in do_signal() */
+ #define TIF_POLLING_NRFLAG	16	/* true if poll_idle() is polling TIF_NEED_RESCHED */
++#define TIF_FREEZE		19	/* is freezing for suspend */
+ 
+ #define _TIF_SYSCALL_TRACE	(1<<TIF_SYSCALL_TRACE)
+ #define _TIF_SIGPENDING		(1<<TIF_SIGPENDING)
+@@ -142,6 +143,7 @@ static inline struct thread_info *curren
+ #define _TIF_IRET		(1<<TIF_IRET)
+ #define _TIF_POLLING_NRFLAG	(1<<TIF_POLLING_NRFLAG)
+ #define _TIF_RESTORE_SIGMASK	(1<<TIF_RESTORE_SIGMASK)
++#define _TIF_FREEZE		(1<<TIF_FREEZE)
+ 
+ #define _TIF_WORK_MASK		0x0000FFFE	/* work to do on interrupt/exception return */
+ #define _TIF_ALLWORK_MASK	0x0000FFFF	/* work to do on any return to u-space */
+Index: 2.6.27-lxc/include/linux/freezer.h
+===================================================================
+--- 2.6.27-lxc.orig/include/linux/freezer.h	2008-10-23 11:24:03.000000000 +0200
++++ 2.6.27-lxc/include/linux/freezer.h	2008-10-23 11:24:06.000000000 +0200
+@@ -6,7 +6,6 @@
+ #include <linux/sched.h>
+ #include <linux/wait.h>
+ 
+-#ifdef CONFIG_PM_SLEEP
+ /*
+  * Check if a process has been frozen
+  */
+@@ -39,32 +38,43 @@ static inline void clear_freeze_flag(str
+ 	clear_tsk_thread_flag(p, TIF_FREEZE);
+ }
+ 
++static inline bool should_send_signal(struct task_struct *p)
++{
++	return !(p->flags & PF_FREEZER_NOSIG);
++}
++
+ /*
+  * Wake up a frozen process
+  *
+- * task_lock() is taken to prevent the race with refrigerator() which may
++ * task_lock() is needed to prevent the race with refrigerator() which may
+  * occur if the freezing of tasks fails.  Namely, without the lock, if the
+  * freezing of tasks failed, thaw_tasks() might have run before a task in
+  * refrigerator() could call frozen_process(), in which case the task would be
+  * frozen and no one would thaw it.
+  */
+-static inline int thaw_process(struct task_struct *p)
++static inline int __thaw_process(struct task_struct *p)
+ {
+-	task_lock(p);
+ 	if (frozen(p)) {
+ 		p->flags &= ~PF_FROZEN;
++		return 1;
++	}
++	clear_freeze_flag(p);
++	return 0;
++}
++
++static inline int thaw_process(struct task_struct *p)
++{
++	task_lock(p);
++	if (__thaw_process(p) == 1) {
+ 		task_unlock(p);
+ 		wake_up_process(p);
+ 		return 1;
+ 	}
+-	clear_freeze_flag(p);
+ 	task_unlock(p);
+ 	return 0;
+ }
+ 
+ extern void refrigerator(void);
+-extern int freeze_processes(void);
+-extern void thaw_processes(void);
+ 
+ static inline int try_to_freeze(void)
+ {
+@@ -75,6 +85,14 @@ static inline int try_to_freeze(void)
+ 		return 0;
+ }
+ 
++extern bool freeze_task(struct task_struct *p, bool sig_only);
++extern void cancel_freezing(struct task_struct *p);
++
++#ifdef CONFIG_PM_SLEEP
++
++extern int freeze_processes(void);
++extern void thaw_processes(void);
++
+ /*
+  * The PF_FREEZER_SKIP flag should be set by a vfork parent right before it
+  * calls wait_for_completion(&vfork) and reset right after it returns from this
+@@ -167,18 +185,10 @@ static inline void set_freezable_with_si
+ 	__retval;							\
+ })
+ #else /* !CONFIG_PM_SLEEP */
+-static inline int frozen(struct task_struct *p) { return 0; }
+-static inline int freezing(struct task_struct *p) { return 0; }
+-static inline void set_freeze_flag(struct task_struct *p) {}
+-static inline void clear_freeze_flag(struct task_struct *p) {}
+-static inline int thaw_process(struct task_struct *p) { return 1; }
+ 
+-static inline void refrigerator(void) {}
+ static inline int freeze_processes(void) { BUG(); return 0; }
+ static inline void thaw_processes(void) {}
+ 
+-static inline int try_to_freeze(void) { return 0; }
+-
+ static inline void freezer_do_not_count(void) {}
+ static inline void freezer_count(void) {}
+ static inline int freezer_should_skip(struct task_struct *p) { return 0; }
+Index: 2.6.27-lxc/kernel/Makefile
+===================================================================
+--- 2.6.27-lxc.orig/kernel/Makefile	2008-10-23 11:24:03.000000000 +0200
++++ 2.6.27-lxc/kernel/Makefile	2008-10-23 11:24:06.000000000 +0200
+@@ -5,7 +5,7 @@
+ obj-y     = sched.o fork.o exec_domain.o panic.o printk.o \
+ 	    cpu.o exit.o itimer.o time.o softirq.o resource.o \
+ 	    sysctl.o capability.o ptrace.o timer.o user.o \
+-	    signal.o sys.o kmod.o workqueue.o pid.o \
++	    signal.o sys.o kmod.o workqueue.o pid.o freezer.o \
+ 	    rcupdate.o extable.o params.o posix-timers.o \
+ 	    kthread.o wait.o kfifo.o sys_ni.o posix-cpu-timers.o mutex.o \
+ 	    hrtimer.o rwsem.o nsproxy.o srcu.o semaphore.o \
+@@ -55,6 +55,7 @@ obj-$(CONFIG_BACKTRACE_SELF_TEST) += bac
+ obj-$(CONFIG_COMPAT) += compat.o
+ obj-$(CONFIG_CGROUPS) += cgroup.o
+ obj-$(CONFIG_CGROUP_DEBUG) += cgroup_debug.o
++obj-$(CONFIG_CGROUP_FREEZER) += cgroup_freezer.o
+ obj-$(CONFIG_CPUSETS) += cpuset.o
+ obj-$(CONFIG_CGROUP_NS) += ns_cgroup.o
+ obj-$(CONFIG_UTS_NS) += utsname.o
+Index: 2.6.27-lxc/kernel/freezer.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ 2.6.27-lxc/kernel/freezer.c	2008-10-23 11:24:06.000000000 +0200
+@@ -0,0 +1,122 @@
++/*
++ * kernel/freezer.c - Function to freeze a process
++ *
++ * Originally from kernel/power/process.c
++ */
++
++#include <linux/interrupt.h>
++#include <linux/suspend.h>
++#include <linux/module.h>
++#include <linux/syscalls.h>
++#include <linux/freezer.h>
++
++/*
++ * freezing is complete, mark current process as frozen
++ */
++static inline void frozen_process(void)
++{
++	if (!unlikely(current->flags & PF_NOFREEZE)) {
++		current->flags |= PF_FROZEN;
++		wmb();
++	}
++	clear_freeze_flag(current);
++}
++
++/* Refrigerator is place where frozen processes are stored :-). */
++void refrigerator(void)
++{
++	/* Hmm, should we be allowed to suspend when there are realtime
++	   processes around? */
++	long save;
++
++	task_lock(current);
++	if (freezing(current)) {
++		frozen_process();
++		task_unlock(current);
++	} else {
++		task_unlock(current);
++		return;
++	}
++	save = current->state;
++	pr_debug("%s entered refrigerator\n", current->comm);
++
++	spin_lock_irq(&current->sighand->siglock);
++	recalc_sigpending(); /* We sent fake signal, clean it up */
++	spin_unlock_irq(&current->sighand->siglock);
++
++	for (;;) {
++		set_current_state(TASK_UNINTERRUPTIBLE);
++		if (!frozen(current))
++			break;
++		schedule();
++	}
++	pr_debug("%s left refrigerator\n", current->comm);
++	__set_current_state(save);
++}
++EXPORT_SYMBOL(refrigerator);
++
++static void fake_signal_wake_up(struct task_struct *p)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&p->sighand->siglock, flags);
++	signal_wake_up(p, 0);
++	spin_unlock_irqrestore(&p->sighand->siglock, flags);
++}
++
++/**
++ *	freeze_task - send a freeze request to given task
++ *	@p: task to send the request to
++ *	@sig_only: if set, the request will only be sent if the task has the
++ *		PF_FREEZER_NOSIG flag unset
++ *	Return value: 'false', if @sig_only is set and the task has
++ *		PF_FREEZER_NOSIG set or the task is frozen, 'true', otherwise
++ *
++ *	The freeze request is sent by setting the tasks's TIF_FREEZE flag and
++ *	either sending a fake signal to it or waking it up, depending on whether
++ *	or not it has PF_FREEZER_NOSIG set.  If @sig_only is set and the task
++ *	has PF_FREEZER_NOSIG set (ie. it is a typical kernel thread), its
++ *	TIF_FREEZE flag will not be set.
++ */
++bool freeze_task(struct task_struct *p, bool sig_only)
++{
++	/*
++	 * We first check if the task is freezing and next if it has already
++	 * been frozen to avoid the race with frozen_process() which first marks
++	 * the task as frozen and next clears its TIF_FREEZE.
++	 */
++	if (!freezing(p)) {
++		rmb();
++		if (frozen(p))
++			return false;
++
++		if (!sig_only || should_send_signal(p))
++			set_freeze_flag(p);
++		else
++			return false;
++	}
++
++	if (should_send_signal(p)) {
++		if (!signal_pending(p))
++			fake_signal_wake_up(p);
++	} else if (sig_only) {
++		return false;
++	} else {
++		wake_up_state(p, TASK_INTERRUPTIBLE);
++	}
++
++	return true;
++}
++
++void cancel_freezing(struct task_struct *p)
++{
++	unsigned long flags;
++
++	if (freezing(p)) {
++		pr_debug("  clean up: %s\n", p->comm);
++		clear_freeze_flag(p);
++		spin_lock_irqsave(&p->sighand->siglock, flags);
++		recalc_sigpending_and_wake(p);
++		spin_unlock_irqrestore(&p->sighand->siglock, flags);
++	}
++}
+Index: 2.6.27-lxc/kernel/power/process.c
+===================================================================
+--- 2.6.27-lxc.orig/kernel/power/process.c	2008-10-23 11:24:03.000000000 +0200
++++ 2.6.27-lxc/kernel/power/process.c	2008-10-23 11:24:06.000000000 +0200
+@@ -13,6 +13,7 @@
+ #include <linux/module.h>
+ #include <linux/syscalls.h>
+ #include <linux/freezer.h>
++#include <linux/cgroup_freezer.h>
+ 
+ /* 
+  * Timeout for stopping processes
+@@ -28,121 +29,6 @@ static inline int freezeable(struct task
+ 	return 1;
+ }
+ 
+-/*
+- * freezing is complete, mark current process as frozen
+- */
+-static inline void frozen_process(void)
+-{
+-	if (!unlikely(current->flags & PF_NOFREEZE)) {
+-		current->flags |= PF_FROZEN;
+-		wmb();
+-	}
+-	clear_freeze_flag(current);
+-}
+-
+-/* Refrigerator is place where frozen processes are stored :-). */
+-void refrigerator(void)
+-{
+-	/* Hmm, should we be allowed to suspend when there are realtime
+-	   processes around? */
+-	long save;
+-
+-	task_lock(current);
+-	if (freezing(current)) {
+-		frozen_process();
+-		task_unlock(current);
+-	} else {
+-		task_unlock(current);
+-		return;
+-	}
+-	save = current->state;
+-	pr_debug("%s entered refrigerator\n", current->comm);
+-
+-	spin_lock_irq(&current->sighand->siglock);
+-	recalc_sigpending(); /* We sent fake signal, clean it up */
+-	spin_unlock_irq(&current->sighand->siglock);
+-
+-	for (;;) {
+-		set_current_state(TASK_UNINTERRUPTIBLE);
+-		if (!frozen(current))
+-			break;
+-		schedule();
+-	}
+-	pr_debug("%s left refrigerator\n", current->comm);
+-	__set_current_state(save);
+-}
+-
+-static void fake_signal_wake_up(struct task_struct *p)
+-{
+-	unsigned long flags;
+-
+-	spin_lock_irqsave(&p->sighand->siglock, flags);
+-	signal_wake_up(p, 0);
+-	spin_unlock_irqrestore(&p->sighand->siglock, flags);
+-}
+-
+-static inline bool should_send_signal(struct task_struct *p)
+-{
+-	return !(p->flags & PF_FREEZER_NOSIG);
+-}
+-
+-/**
+- *	freeze_task - send a freeze request to given task
+- *	@p: task to send the request to
+- *	@sig_only: if set, the request will only be sent if the task has the
+- *		PF_FREEZER_NOSIG flag unset
+- *	Return value: 'false', if @sig_only is set and the task has
+- *		PF_FREEZER_NOSIG set or the task is frozen, 'true', otherwise
+- *
+- *	The freeze request is sent by setting the tasks's TIF_FREEZE flag and
+- *	either sending a fake signal to it or waking it up, depending on whether
+- *	or not it has PF_FREEZER_NOSIG set.  If @sig_only is set and the task
+- *	has PF_FREEZER_NOSIG set (ie. it is a typical kernel thread), its
+- *	TIF_FREEZE flag will not be set.
+- */
+-static bool freeze_task(struct task_struct *p, bool sig_only)
+-{
+-	/*
+-	 * We first check if the task is freezing and next if it has already
+-	 * been frozen to avoid the race with frozen_process() which first marks
+-	 * the task as frozen and next clears its TIF_FREEZE.
+-	 */
+-	if (!freezing(p)) {
+-		rmb();
+-		if (frozen(p))
+-			return false;
+-
+-		if (!sig_only || should_send_signal(p))
+-			set_freeze_flag(p);
+-		else
+-			return false;
+-	}
+-
+-	if (should_send_signal(p)) {
+-		if (!signal_pending(p))
+-			fake_signal_wake_up(p);
+-	} else if (sig_only) {
+-		return false;
+-	} else {
+-		wake_up_state(p, TASK_INTERRUPTIBLE);
+-	}
+-
+-	return true;
+-}
+-
+-static void cancel_freezing(struct task_struct *p)
+-{
+-	unsigned long flags;
+-
+-	if (freezing(p)) {
+-		pr_debug("  clean up: %s\n", p->comm);
+-		clear_freeze_flag(p);
+-		spin_lock_irqsave(&p->sighand->siglock, flags);
+-		recalc_sigpending_and_wake(p);
+-		spin_unlock_irqrestore(&p->sighand->siglock, flags);
+-	}
+-}
+-
+ static int try_to_freeze_tasks(bool sig_only)
+ {
+ 	struct task_struct *g, *p;
+@@ -250,6 +136,9 @@ static void thaw_tasks(bool nosig_only)
+ 		if (nosig_only && should_send_signal(p))
+ 			continue;
+ 
++		if (cgroup_frozen(p))
++			continue;
++
+ 		thaw_process(p);
+ 	} while_each_thread(g, p);
+ 	read_unlock(&tasklist_lock);
+@@ -264,4 +153,3 @@ void thaw_processes(void)
+ 	printk("done.\n");
+ }
+ 
+-EXPORT_SYMBOL(refrigerator);
+Index: 2.6.27-lxc/include/linux/cgroup_freezer.h
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ 2.6.27-lxc/include/linux/cgroup_freezer.h	2008-10-23 11:24:06.000000000 +0200
+@@ -0,0 +1,71 @@
++#ifndef _LINUX_CGROUP_FREEZER_H
++#define _LINUX_CGROUP_FREEZER_H
++/*
++ * cgroup_freezer.h -  control group freezer subsystem interface
++ *
++ * Copyright IBM Corporation, 2007
++ *
++ * Author : Cedric Le Goater <clg@fr.ibm.com>
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of version 2.1 of the GNU Lesser General Public License
++ * as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it would be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ */
++
++#include <linux/cgroup.h>
++
++#ifdef CONFIG_CGROUP_FREEZER
++
++enum freezer_state {
++	STATE_RUNNING = 0,
++	STATE_FREEZING,
++	STATE_FROZEN,
++};
++
++struct freezer {
++	struct cgroup_subsys_state css;
++	enum freezer_state state;
++	spinlock_t lock; /* protects _writes_ to state */
++};
++
++static inline struct freezer *cgroup_freezer(
++		struct cgroup *cgroup)
++{
++	return container_of(
++		cgroup_subsys_state(cgroup, freezer_subsys_id),
++		struct freezer, css);
++}
++
++static inline struct freezer *task_freezer(struct task_struct *task)
++{
++	return container_of(task_subsys_state(task, freezer_subsys_id),
++			    struct freezer, css);
++}
++
++static inline int cgroup_frozen(struct task_struct *task)
++{
++	struct freezer *freezer;
++	enum freezer_state state;
++
++	task_lock(task);
++	freezer = task_freezer(task);
++	state = freezer->state;
++	task_unlock(task);
++
++	return state == STATE_FROZEN;
++}
++
++#else /* !CONFIG_CGROUP_FREEZER */
++
++static inline int cgroup_frozen(struct task_struct *task)
++{
++	return 0;
++}
++
++#endif /* !CONFIG_CGROUP_FREEZER */
++
++#endif /* _LINUX_CGROUP_FREEZER_H */
+Index: 2.6.27-lxc/include/linux/cgroup_subsys.h
+===================================================================
+--- 2.6.27-lxc.orig/include/linux/cgroup_subsys.h	2008-10-23 11:24:03.000000000 +0200
++++ 2.6.27-lxc/include/linux/cgroup_subsys.h	2008-10-23 11:24:06.000000000 +0200
+@@ -48,3 +48,9 @@ SUBSYS(devices)
+ #endif
+ 
+ /* */
++
++#ifdef CONFIG_CGROUP_FREEZER
++SUBSYS(freezer)
++#endif
++
++/* */
+Index: 2.6.27-lxc/init/Kconfig
+===================================================================
+--- 2.6.27-lxc.orig/init/Kconfig	2008-10-23 11:24:03.000000000 +0200
++++ 2.6.27-lxc/init/Kconfig	2008-10-23 11:24:06.000000000 +0200
+@@ -271,6 +271,38 @@ config LOG_BUF_SHIFT
+ 		     13 =>  8 KB
+ 		     12 =>  4 KB
+ 
++config CONTAINER
++       bool "Container support"
++       depends on EXPERIMENTAL && NET && NETDEVICES
++       default n
++       select CGROUPS
++       select CGROUP_NS
++       select CGROUP_DEVICE
++       select CPUSETS if SMP
++       select GROUP_SCHED
++       select CGROUP_FREEZER
++       select FAIR_GROUP_SCHED
++       select RT_GROUP_SCHED
++       select CGROUP_MEM_RES_CTLR
++       select CGROUP_SCHED
++       select CGROUP_CPUACCT
++       select RESOURCE_COUNTERS
++       select NAMESPACES
++       select UTS_NS
++       select SYSVIPC
++       select IPC_NS
++       select USER_NS
++       select PID_NS
++       select POSIX_MQUEUE
++       select MQ_NS
++       select NET_NS
++       select BRIDGE
++       select MACVLAN
++       select VETH
++       select SYSFS
++       help
++          This option will select all the kernel features to create a container
++
+ config CGROUPS
+ 	bool "Control Group support"
+ 	help
+@@ -331,6 +363,13 @@ config GROUP_SCHED
+ 	  This feature lets CPU scheduler recognize task groups and control CPU
+ 	  bandwidth allocation to such task groups.
+ 
++config CGROUP_FREEZER
++        bool "control group freezer subsystem"
++        depends on CGROUPS
++        help
++          Provides a way to freeze and unfreeze all tasks in a
++	  cgroup
++
+ config FAIR_GROUP_SCHED
+ 	bool "Group scheduling for SCHED_OTHER"
+ 	depends on GROUP_SCHED
+@@ -779,6 +818,8 @@ config MARKERS
+ 
+ source "arch/Kconfig"
+ 
++source "checkpoint/Kconfig"
++
+ config PROC_PAGE_MONITOR
+  	default y
+ 	depends on PROC_FS && MMU
+Index: 2.6.27-lxc/kernel/cgroup_freezer.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ 2.6.27-lxc/kernel/cgroup_freezer.c	2008-10-23 11:24:06.000000000 +0200
+@@ -0,0 +1,379 @@
++/*
++ * cgroup_freezer.c -  control group freezer subsystem
++ *
++ * Copyright IBM Corporation, 2007
++ *
++ * Author : Cedric Le Goater <clg@fr.ibm.com>
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of version 2.1 of the GNU Lesser General Public License
++ * as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it would be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ */
++
++#include <linux/module.h>
++#include <linux/cgroup.h>
++#include <linux/fs.h>
++#include <linux/uaccess.h>
++#include <linux/freezer.h>
++#include <linux/seq_file.h>
++
++enum freezer_state {
++	CGROUP_THAWED = 0,
++	CGROUP_FREEZING,
++	CGROUP_FROZEN,
++};
++
++struct freezer {
++	struct cgroup_subsys_state css;
++	enum freezer_state state;
++	spinlock_t lock; /* protects _writes_ to state */
++};
++
++static inline struct freezer *cgroup_freezer(
++		struct cgroup *cgroup)
++{
++	return container_of(
++		cgroup_subsys_state(cgroup, freezer_subsys_id),
++		struct freezer, css);
++}
++
++static inline struct freezer *task_freezer(struct task_struct *task)
++{
++	return container_of(task_subsys_state(task, freezer_subsys_id),
++			    struct freezer, css);
++}
++
++int cgroup_frozen(struct task_struct *task)
++{
++	struct freezer *freezer;
++	enum freezer_state state;
++
++	task_lock(task);
++	freezer = task_freezer(task);
++	state = freezer->state;
++	task_unlock(task);
++
++	return state == CGROUP_FROZEN;
++}
++
++/*
++ * cgroups_write_string() limits the size of freezer state strings to
++ * CGROUP_LOCAL_BUFFER_SIZE
++ */
++static const char *freezer_state_strs[] = {
++	"THAWED",
++	"FREEZING",
++	"FROZEN",
++};
++
++/*
++ * State diagram
++ * Transitions are caused by userspace writes to the freezer.state file.
++ * The values in parenthesis are state labels. The rest are edge labels.
++ *
++ * (THAWED) --FROZEN--> (FREEZING) --FROZEN--> (FROZEN)
++ *    ^ ^                    |                     |
++ *    | \_______THAWED_______/                     |
++ *    \__________________________THAWED____________/
++ */
++
++struct cgroup_subsys freezer_subsys;
++
++/* Locks taken and their ordering
++ * ------------------------------
++ * css_set_lock
++ * cgroup_mutex (AKA cgroup_lock)
++ * task->alloc_lock (AKA task_lock)
++ * freezer->lock
++ * task->sighand->siglock
++ *
++ * cgroup code forces css_set_lock to be taken before task->alloc_lock
++ *
++ * freezer_create(), freezer_destroy():
++ * cgroup_mutex [ by cgroup core ]
++ *
++ * can_attach():
++ * cgroup_mutex
++ *
++ * cgroup_frozen():
++ * task->alloc_lock (to get task's cgroup)
++ *
++ * freezer_fork() (preserving fork() performance means can't take cgroup_mutex):
++ * task->alloc_lock (to get task's cgroup)
++ * freezer->lock
++ *  sighand->siglock (if the cgroup is freezing)
++ *
++ * freezer_read():
++ * cgroup_mutex
++ *  freezer->lock
++ *   read_lock css_set_lock (cgroup iterator start)
++ *
++ * freezer_write() (freeze):
++ * cgroup_mutex
++ *  freezer->lock
++ *   read_lock css_set_lock (cgroup iterator start)
++ *    sighand->siglock
++ *
++ * freezer_write() (unfreeze):
++ * cgroup_mutex
++ *  freezer->lock
++ *   read_lock css_set_lock (cgroup iterator start)
++ *    task->alloc_lock (to prevent races with freeze_task())
++ *     sighand->siglock
++ */
++static struct cgroup_subsys_state *freezer_create(struct cgroup_subsys *ss,
++						  struct cgroup *cgroup)
++{
++	struct freezer *freezer;
++
++	freezer = kzalloc(sizeof(struct freezer), GFP_KERNEL);
++	if (!freezer)
++		return ERR_PTR(-ENOMEM);
++
++	spin_lock_init(&freezer->lock);
++	freezer->state = CGROUP_THAWED;
++	return &freezer->css;
++}
++
++static void freezer_destroy(struct cgroup_subsys *ss,
++			    struct cgroup *cgroup)
++{
++	kfree(cgroup_freezer(cgroup));
++}
++
++/* Task is frozen or will freeze immediately when next it gets woken */
++static bool is_task_frozen_enough(struct task_struct *task)
++{
++	return frozen(task) ||
++		(task_is_stopped_or_traced(task) && freezing(task));
++}
++
++/*
++ * The call to cgroup_lock() in the freezer.state write method prevents
++ * a write to that file racing against an attach, and hence the
++ * can_attach() result will remain valid until the attach completes.
++ */
++static int freezer_can_attach(struct cgroup_subsys *ss,
++			      struct cgroup *new_cgroup,
++			      struct task_struct *task)
++{
++	struct freezer *freezer;
++	int retval;
++
++	/* Anything frozen can't move or be moved to/from */
++
++	if (is_task_frozen_enough(task))
++		return -EBUSY;
++
++	freezer = cgroup_freezer(new_cgroup);
++	if (freezer->state == CGROUP_FROZEN)
++		return -EBUSY;
++
++	retval = 0;
++	task_lock(task);
++	freezer = task_freezer(task);
++	if (freezer->state == CGROUP_FROZEN)
++		retval = -EBUSY;
++	task_unlock(task);
++	return retval;
++}
++
++static void freezer_fork(struct cgroup_subsys *ss, struct task_struct *task)
++{
++	struct freezer *freezer;
++
++	task_lock(task);
++	freezer = task_freezer(task);
++	task_unlock(task);
++
++	BUG_ON(freezer->state == CGROUP_FROZEN);
++	spin_lock_irq(&freezer->lock);
++	/* Locking avoids race with FREEZING -> THAWED transitions. */
++	if (freezer->state == CGROUP_FREEZING)
++		freeze_task(task, true);
++	spin_unlock_irq(&freezer->lock);
++}
++
++/*
++ * caller must hold freezer->lock
++ */
++static void update_freezer_state(struct cgroup *cgroup,
++				 struct freezer *freezer)
++{
++	struct cgroup_iter it;
++	struct task_struct *task;
++	unsigned int nfrozen = 0, ntotal = 0;
++
++	cgroup_iter_start(cgroup, &it);
++	while ((task = cgroup_iter_next(cgroup, &it))) {
++		ntotal++;
++		if (is_task_frozen_enough(task))
++			nfrozen++;
++	}
++
++	/*
++	 * Transition to FROZEN when no new tasks can be added ensures
++	 * that we never exist in the FROZEN state while there are unfrozen
++	 * tasks.
++	 */
++	if (nfrozen == ntotal)
++		freezer->state = CGROUP_FROZEN;
++	else if (nfrozen > 0)
++		freezer->state = CGROUP_FREEZING;
++	else
++		freezer->state = CGROUP_THAWED;
++	cgroup_iter_end(cgroup, &it);
++}
++
++static int freezer_read(struct cgroup *cgroup, struct cftype *cft,
++			struct seq_file *m)
++{
++	struct freezer *freezer;
++	enum freezer_state state;
++
++	if (!cgroup_lock_live_group(cgroup))
++		return -ENODEV;
++
++	freezer = cgroup_freezer(cgroup);
++	spin_lock_irq(&freezer->lock);
++	state = freezer->state;
++	if (state == CGROUP_FREEZING) {
++		/* We change from FREEZING to FROZEN lazily if the cgroup was
++		 * only partially frozen when we exitted write. */
++		update_freezer_state(cgroup, freezer);
++		state = freezer->state;
++	}
++	spin_unlock_irq(&freezer->lock);
++	cgroup_unlock();
++
++	seq_puts(m, freezer_state_strs[state]);
++	seq_putc(m, '\n');
++	return 0;
++}
++
++static int try_to_freeze_cgroup(struct cgroup *cgroup, struct freezer *freezer)
++{
++	struct cgroup_iter it;
++	struct task_struct *task;
++	unsigned int num_cant_freeze_now = 0;
++
++	freezer->state = CGROUP_FREEZING;
++	cgroup_iter_start(cgroup, &it);
++	while ((task = cgroup_iter_next(cgroup, &it))) {
++		if (!freeze_task(task, true))
++			continue;
++		if (is_task_frozen_enough(task))
++			continue;
++		if (!freezing(task) && !freezer_should_skip(task))
++			num_cant_freeze_now++;
++	}
++	cgroup_iter_end(cgroup, &it);
++
++	return num_cant_freeze_now ? -EBUSY : 0;
++}
++
++static int unfreeze_cgroup(struct cgroup *cgroup, struct freezer *freezer)
++{
++	struct cgroup_iter it;
++	struct task_struct *task;
++
++	cgroup_iter_start(cgroup, &it);
++	while ((task = cgroup_iter_next(cgroup, &it))) {
++		int do_wake;
++
++		task_lock(task);
++		do_wake = __thaw_process(task);
++		task_unlock(task);
++		if (do_wake)
++			wake_up_process(task);
++	}
++	cgroup_iter_end(cgroup, &it);
++	freezer->state = CGROUP_THAWED;
++
++	return 0;
++}
++
++static int freezer_change_state(struct cgroup *cgroup,
++				enum freezer_state goal_state)
++{
++	struct freezer *freezer;
++	int retval = 0;
++
++	freezer = cgroup_freezer(cgroup);
++	spin_lock_irq(&freezer->lock);
++	update_freezer_state(cgroup, freezer);
++	if (goal_state == freezer->state)
++		goto out;
++	switch (freezer->state) {
++	case CGROUP_THAWED:
++		retval = try_to_freeze_cgroup(cgroup, freezer);
++		break;
++	case CGROUP_FREEZING:
++		if (goal_state == CGROUP_FROZEN) {
++			/* Userspace is retrying after
++			 * "/bin/echo FROZEN > freezer.state" returned -EBUSY */
++			retval = try_to_freeze_cgroup(cgroup, freezer);
++			break;
++		}
++		/* state == FREEZING and goal_state == THAWED, so unfreeze */
++	case CGROUP_FROZEN:
++		retval = unfreeze_cgroup(cgroup, freezer);
++		break;
++	default:
++		break;
++	}
++out:
++	spin_unlock_irq(&freezer->lock);
++
++	return retval;
++}
++
++static int freezer_write(struct cgroup *cgroup,
++			 struct cftype *cft,
++			 const char *buffer)
++{
++	int retval;
++	enum freezer_state goal_state;
++
++	if (strcmp(buffer, freezer_state_strs[CGROUP_THAWED]) == 0)
++		goal_state = CGROUP_THAWED;
++	else if (strcmp(buffer, freezer_state_strs[CGROUP_FROZEN]) == 0)
++		goal_state = CGROUP_FROZEN;
++	else
++		return -EIO;
++
++	if (!cgroup_lock_live_group(cgroup))
++		return -ENODEV;
++	retval = freezer_change_state(cgroup, goal_state);
++	cgroup_unlock();
++	return retval;
++}
++
++static struct cftype files[] = {
++	{
++		.name = "state",
++		.read_seq_string = freezer_read,
++		.write_string = freezer_write,
++	},
++};
++
++static int freezer_populate(struct cgroup_subsys *ss, struct cgroup *cgroup)
++{
++	return cgroup_add_files(cgroup, ss, files, ARRAY_SIZE(files));
++}
++
++struct cgroup_subsys freezer_subsys = {
++	.name		= "freezer",
++	.create		= freezer_create,
++	.destroy	= freezer_destroy,
++	.populate	= freezer_populate,
++	.subsys_id	= freezer_subsys_id,
++	.can_attach	= freezer_can_attach,
++	.attach		= NULL,
++	.fork		= freezer_fork,
++	.exit		= NULL,
++};
+Index: 2.6.27-lxc/Documentation/kobject.txt
+===================================================================
+--- 2.6.27-lxc.orig/Documentation/kobject.txt	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/Documentation/kobject.txt	2008-10-23 11:24:06.000000000 +0200
+@@ -118,6 +118,10 @@ the name of the kobject, call kobject_re
+ 
+     int kobject_rename(struct kobject *kobj, const char *new_name);
+ 
++Note kobject_rename does perform any locking or have a solid notion of
++what names are valid so the provide must provide their own sanity checking
++and serialization.
++
+ There is a function called kobject_set_name() but that is legacy cruft and
+ is being removed.  If your code needs to call this function, it is
+ incorrect and needs to be fixed.
+Index: 2.6.27-lxc/drivers/base/core.c
+===================================================================
+--- 2.6.27-lxc.orig/drivers/base/core.c	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/drivers/base/core.c	2008-10-23 11:24:06.000000000 +0200
+@@ -122,9 +122,21 @@ static void device_release(struct kobjec
+ 			dev->bus_id);
+ }
+ 
++static const void *device_sysfs_tag(struct kobject *kobj)
++{
++	struct device *dev = to_dev(kobj);
++	const void *tag = NULL;
++
++	if (dev->class && dev->class->tag_type)
++		tag = dev->class->sysfs_tag(dev);
++
++	return tag;
++}
++
+ static struct kobj_type device_ktype = {
+ 	.release	= device_release,
+ 	.sysfs_ops	= &dev_sysfs_ops,
++	.sysfs_tag	= device_sysfs_tag,
+ };
+ 
+ 
+@@ -617,6 +629,10 @@ static struct kobject *get_device_parent
+ 			kobject_put(k);
+ 			return NULL;
+ 		}
++		/* If we created a new class-directory setup tagging */
++		if (dev->class->tag_type)
++			sysfs_make_tagged_dir(k, dev->class->tag_type);
++
+ 		/* do not emit an uevent for this simple "glue" directory */
+ 		return k;
+ 	}
+@@ -707,7 +723,7 @@ out_device:
+ out_busid:
+ 	if (dev->kobj.parent != &dev->class->p->class_subsys.kobj &&
+ 	    device_is_not_partition(dev))
+-		sysfs_remove_link(&dev->class->p->class_subsys.kobj,
++		sysfs_delete_link(&dev->class->p->class_subsys.kobj, &dev->kobj,
+ 				  dev->bus_id);
+ #else
+ 	/* link in the class directory pointing to the device */
+@@ -725,7 +741,7 @@ out_busid:
+ 	return 0;
+ 
+ out_busid:
+-	sysfs_remove_link(&dev->class->p->class_subsys.kobj, dev->bus_id);
++	sysfs_delete_link(&dev->class->p->class_subsys.kobj, &dev->kobj, dev->bus_id);
+ #endif
+ 
+ out_subsys:
+@@ -753,13 +769,13 @@ static void device_remove_class_symlinks
+ 
+ 	if (dev->kobj.parent != &dev->class->p->class_subsys.kobj &&
+ 	    device_is_not_partition(dev))
+-		sysfs_remove_link(&dev->class->p->class_subsys.kobj,
++		sysfs_delete_link(&dev->class->p->class_subsys.kobj, &dev->kobj,
+ 				  dev->bus_id);
+ #else
+ 	if (dev->parent && device_is_not_partition(dev))
+ 		sysfs_remove_link(&dev->kobj, "device");
+ 
+-	sysfs_remove_link(&dev->class->p->class_subsys.kobj, dev->bus_id);
++	sysfs_delete_link(&dev->class->p->class_subsys.kobj, &dev->kobj, dev->bus_id);
+ #endif
+ 
+ 	sysfs_remove_link(&dev->kobj, "subsystem");
+@@ -1314,6 +1330,11 @@ EXPORT_SYMBOL_GPL(device_destroy);
+  * device_rename - renames a device
+  * @dev: the pointer to the struct device to be renamed
+  * @new_name: the new name of the device
++ *
++ * It is the responsibility of the caller to provide mutual
++ * exclusion between two different calls of device_rename
++ * on the same device to ensure that new_name is valid and
++ * won't conflict with other devices.
+  */
+ int device_rename(struct device *dev, char *new_name)
+ {
+@@ -1342,6 +1363,15 @@ int device_rename(struct device *dev, ch
+ 	strlcpy(old_device_name, dev->bus_id, BUS_ID_SIZE);
+ 	strlcpy(dev->bus_id, new_name, BUS_ID_SIZE);
+ 
++#ifndef CONFIG_SYSFS_DEPRECATED
++	if (dev->class) {
++		error = sysfs_rename_link(&dev->class->p->class_subsys.kobj,
++			&dev->kobj, old_device_name, new_name);
++		if (error)
++			goto out;
++	}
++#endif
++
+ 	error = kobject_rename(&dev->kobj, new_name);
+ 	if (error) {
+ 		strlcpy(dev->bus_id, old_device_name, BUS_ID_SIZE);
+@@ -1350,24 +1380,13 @@ int device_rename(struct device *dev, ch
+ 
+ #ifdef CONFIG_SYSFS_DEPRECATED
+ 	if (old_class_name) {
++		error = -ENOMEM;
+ 		new_class_name = make_class_name(dev->class->name, &dev->kobj);
+-		if (new_class_name) {
+-			error = sysfs_create_link_nowarn(&dev->parent->kobj,
+-							 &dev->kobj,
+-							 new_class_name);
+-			if (error)
+-				goto out;
+-			sysfs_remove_link(&dev->parent->kobj, old_class_name);
+-		}
+-	}
+-#else
+-	if (dev->class) {
+-		error = sysfs_create_link_nowarn(&dev->class->p->class_subsys.kobj,
+-						 &dev->kobj, dev->bus_id);
+-		if (error)
+-			goto out;
+-		sysfs_remove_link(&dev->class->p->class_subsys.kobj,
+-				  old_device_name);
++		if (new_class_name)
++			error = sysfs_rename_link(&dev->parent->kobj,
++						  &dev->kobj,
++						  old_class_name,
++						  new_class_name);
+ 	}
+ #endif
+ 
+Index: 2.6.27-lxc/include/linux/sysfs.h
+===================================================================
+--- 2.6.27-lxc.orig/include/linux/sysfs.h	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/include/linux/sysfs.h	2008-10-23 11:24:06.000000000 +0200
+@@ -78,6 +78,17 @@ struct sysfs_ops {
+ 	ssize_t	(*store)(struct kobject *,struct attribute *,const char *, size_t);
+ };
+ 
++enum sysfs_tag_type {
++	SYSFS_TAG_TYPE_NONE = 0,
++	SYSFS_TAG_TYPE_NETNS,
++	SYSFS_TAG_TYPE_USERNS,
++	SYSFS_TAG_TYPES
++};
++
++struct sysfs_tag_type_operations {
++	const void *(*mount_tag)(void);
++};
++
+ #ifdef CONFIG_SYSFS
+ 
+ int sysfs_schedule_callback(struct kobject *kobj, void (*func)(void *),
+@@ -106,6 +117,12 @@ int __must_check sysfs_create_link_nowar
+ 					  const char *name);
+ void sysfs_remove_link(struct kobject *kobj, const char *name);
+ 
++int sysfs_rename_link(struct kobject *kobj, struct kobject *target,
++			const char *old_name, const char *new_name);
++
++void sysfs_delete_link(struct kobject *dir, struct kobject *targ,
++			const char *name);
++
+ int __must_check sysfs_create_group(struct kobject *kobj,
+ 				    const struct attribute_group *grp);
+ int sysfs_update_group(struct kobject *kobj,
+@@ -119,6 +136,10 @@ void sysfs_remove_file_from_group(struct
+ 
+ void sysfs_notify(struct kobject *kobj, char *dir, char *attr);
+ 
++int sysfs_make_tagged_dir(struct kobject *, enum sysfs_tag_type tag_type);
++int sysfs_register_tag_type(enum sysfs_tag_type type, struct sysfs_tag_type_operations *ops);
++void sysfs_exit_tag(enum sysfs_tag_type type, const void *tag);
++
+ extern int __must_check sysfs_init(void);
+ 
+ #else /* CONFIG_SYSFS */
+@@ -194,6 +215,17 @@ static inline void sysfs_remove_link(str
+ {
+ }
+ 
++static inline int sysfs_rename_link(struct kobject *k, struct kobject *t,
++				    const char *old_name, const char *new_name)
++{
++	return 0;
++}
++
++static inline void sysfs_delete_link(struct kobject *k, struct kobject *t,
++				     const char *name)
++{
++}
++
+ static inline int sysfs_create_group(struct kobject *kobj,
+ 				     const struct attribute_group *grp)
+ {
+@@ -226,6 +258,22 @@ static inline void sysfs_notify(struct k
+ {
+ }
+ 
++static inline int sysfs_make_tagged_dir(struct kobject *kobj,
++						enum sysfs_tag_type tag_type)
++{
++	return 0;
++}
++
++static inline int sysfs_register_tag_type(enum sysfs_tag_type type,
++					struct sysfs_tag_type_operations *ops)
++{
++	return 0;
++}
++
++static inline void sysfs_exit_tag(enum sysfs_tag_type type, const void *tag)
++{
++}
++
+ static inline int __must_check sysfs_init(void)
+ {
+ 	return 0;
+Index: 2.6.27-lxc/lib/kobject.c
+===================================================================
+--- 2.6.27-lxc.orig/lib/kobject.c	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/lib/kobject.c	2008-10-23 11:24:06.000000000 +0200
+@@ -387,11 +387,17 @@ EXPORT_SYMBOL_GPL(kobject_init_and_add);
+  * kobject_rename - change the name of an object
+  * @kobj: object in question.
+  * @new_name: object's new name
++ *
++ * It is the responsibility of the caller to provide mutual
++ * exclusion between two different calls of kobject_rename
++ * on the same kobject and to ensure that new_name is valid and
++ * won't conflict with other kobjects.
+  */
+ int kobject_rename(struct kobject *kobj, const char *new_name)
+ {
+ 	int error = 0;
+ 	const char *devpath = NULL;
++	const char *dup_name = NULL, *name;
+ 	char *devpath_string = NULL;
+ 	char *envp[2];
+ 
+@@ -401,19 +407,6 @@ int kobject_rename(struct kobject *kobj,
+ 	if (!kobj->parent)
+ 		return -EINVAL;
+ 
+-	/* see if this name is already in use */
+-	if (kobj->kset) {
+-		struct kobject *temp_kobj;
+-		temp_kobj = kset_find_obj(kobj->kset, new_name);
+-		if (temp_kobj) {
+-			printk(KERN_WARNING "kobject '%s' cannot be renamed "
+-			       "to '%s' as '%s' is already in existence.\n",
+-			       kobject_name(kobj), new_name, new_name);
+-			kobject_put(temp_kobj);
+-			return -EINVAL;
+-		}
+-	}
+-
+ 	devpath = kobject_get_path(kobj, GFP_KERNEL);
+ 	if (!devpath) {
+ 		error = -ENOMEM;
+@@ -428,15 +421,27 @@ int kobject_rename(struct kobject *kobj,
+ 	envp[0] = devpath_string;
+ 	envp[1] = NULL;
+ 
++	name = dup_name = kstrdup(new_name, GFP_KERNEL);
++	if (!name) {
++		error = -ENOMEM;
++		goto out;
++	}
++
+ 	error = sysfs_rename_dir(kobj, new_name);
++	if (error)
++		goto out;
++
++	/* Install the new kobject name */
++	dup_name = kobj->name;
++	kobj->name = name;
+ 
+ 	/* This function is mostly/only used for network interface.
+ 	 * Some hotplug package track interfaces by their name and
+ 	 * therefore want to know when the name is changed by the user. */
+-	if (!error)
+-		kobject_uevent_env(kobj, KOBJ_MOVE, envp);
++	kobject_uevent_env(kobj, KOBJ_MOVE, envp);
+ 
+ out:
++	kfree(dup_name);
+ 	kfree(devpath_string);
+ 	kfree(devpath);
+ 	kobject_put(kobj);
+Index: 2.6.27-lxc/fs/sysfs/dir.c
+===================================================================
+--- 2.6.27-lxc.orig/fs/sysfs/dir.c	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/fs/sysfs/dir.c	2008-10-23 11:24:06.000000000 +0200
+@@ -30,6 +30,30 @@ DEFINE_SPINLOCK(sysfs_assoc_lock);
+ static DEFINE_SPINLOCK(sysfs_ino_lock);
+ static DEFINE_IDA(sysfs_ino_ida);
+ 
++static const void *sysfs_creation_tag(struct sysfs_dirent *parent_sd,
++				      struct sysfs_dirent *sd)
++{
++	const void *tag = NULL;
++
++	if (sysfs_tag_type(parent_sd)) {
++		struct kobject *kobj;
++		switch (sysfs_type(sd)) {
++		case SYSFS_DIR:
++			kobj = sd->s_dir.kobj;
++			break;
++		case SYSFS_KOBJ_LINK:
++			kobj = sd->s_symlink.target_sd->s_dir.kobj;
++			break;
++		default:
++			BUG();
++		}
++		tag = kobj->ktype->sysfs_tag(kobj);
++		/* NULL tags are reserved for internal use */
++		BUG_ON(tag == NULL);
++	}
++	return tag;
++}
++
+ /**
+  *	sysfs_link_sibling - link sysfs_dirent into sibling list
+  *	@sd: sysfs_dirent of interest
+@@ -85,6 +109,7 @@ static void sysfs_unlink_sibling(struct 
+ 
+ /**
+  *	sysfs_get_dentry - get dentry for the given sysfs_dirent
++ *	@sb: superblock of the dentry to return
+  *	@sd: sysfs_dirent of interest
+  *
+  *	Get dentry for @sd.  Dentry is looked up if currently not
+@@ -97,10 +122,22 @@ static void sysfs_unlink_sibling(struct 
+  *	RETURNS:
+  *	Pointer to found dentry on success, ERR_PTR() value on error.
+  */
+-struct dentry *sysfs_get_dentry(struct sysfs_dirent *sd)
++struct dentry *sysfs_get_dentry(struct super_block *sb,
++				struct sysfs_dirent *sd)
+ {
+-	struct dentry *dentry = dget(sysfs_sb->s_root);
++	struct dentry *dentry;
++
++	/* Bail if this sd won't show up in this superblock */
++	if (sd->s_parent) {
++		enum sysfs_tag_type type;
++		const void *tag;
++		type = sysfs_tag_type(sd->s_parent);
++		tag = sysfs_info(sb)->tag[type];
++		if (sd->s_tag != tag)
++			return ERR_PTR(-EXDEV);
++	}
+ 
++	dentry = dget(sb->s_root);
+ 	while (dentry->d_fsdata != sd) {
+ 		struct sysfs_dirent *cur;
+ 		struct dentry *parent;
+@@ -419,10 +456,15 @@ void sysfs_addrm_start(struct sysfs_addr
+  */
+ int __sysfs_add_one(struct sysfs_addrm_cxt *acxt, struct sysfs_dirent *sd)
+ {
+-	if (sysfs_find_dirent(acxt->parent_sd, sd->s_name))
++	const void *tag = NULL;
++
++	tag = sysfs_creation_tag(acxt->parent_sd, sd);
++
++	if (sysfs_find_dirent(acxt->parent_sd, tag, sd->s_name))
+ 		return -EEXIST;
+ 
+ 	sd->s_parent = sysfs_get(acxt->parent_sd);
++	sd->s_tag = tag;
+ 
+ 	if (sysfs_type(sd) == SYSFS_DIR && acxt->parent_inode)
+ 		inc_nlink(acxt->parent_inode);
+@@ -600,13 +642,17 @@ void sysfs_addrm_finish(struct sysfs_add
+  *	Pointer to sysfs_dirent if found, NULL if not.
+  */
+ struct sysfs_dirent *sysfs_find_dirent(struct sysfs_dirent *parent_sd,
++				       const void *tag,
+ 				       const unsigned char *name)
+ {
+ 	struct sysfs_dirent *sd;
+ 
+-	for (sd = parent_sd->s_dir.children; sd; sd = sd->s_sibling)
++	for (sd = parent_sd->s_dir.children; sd; sd = sd->s_sibling) {
++		if (sd->s_tag != tag)
++			continue;
+ 		if (!strcmp(sd->s_name, name))
+ 			return sd;
++	}
+ 	return NULL;
+ }
+ 
+@@ -630,7 +676,7 @@ struct sysfs_dirent *sysfs_get_dirent(st
+ 	struct sysfs_dirent *sd;
+ 
+ 	mutex_lock(&sysfs_mutex);
+-	sd = sysfs_find_dirent(parent_sd, name);
++	sd = sysfs_find_dirent(parent_sd, NULL, name);
+ 	sysfs_get(sd);
+ 	mutex_unlock(&sysfs_mutex);
+ 
+@@ -696,13 +742,18 @@ static struct dentry * sysfs_lookup(stru
+ 				struct nameidata *nd)
+ {
+ 	struct dentry *ret = NULL;
+-	struct sysfs_dirent *parent_sd = dentry->d_parent->d_fsdata;
++	struct dentry *parent = dentry->d_parent;
++	struct sysfs_dirent *parent_sd = parent->d_fsdata;
+ 	struct sysfs_dirent *sd;
+ 	struct inode *inode;
++	enum sysfs_tag_type type;
++	const void *tag;
+ 
+ 	mutex_lock(&sysfs_mutex);
+ 
+-	sd = sysfs_find_dirent(parent_sd, dentry->d_name.name);
++	type = sysfs_tag_type(parent_sd);
++	tag = sysfs_info(parent->d_sb)->tag[type];
++	sd = sysfs_find_dirent(parent_sd, tag, dentry->d_name.name);
+ 
+ 	/* no such entry */
+ 	if (!sd) {
+@@ -792,124 +843,199 @@ void sysfs_remove_dir(struct kobject * k
+ 	__sysfs_remove_dir(sd);
+ }
+ 
+-int sysfs_rename_dir(struct kobject * kobj, const char *new_name)
++/**
++ *	__sysfs_get_dentry - get dentry for the given sysfs_dirent
++ *	@sb: superblock of the dentry to return
++ *	@sd: sysfs_dirent of interest
++ *
++ *	Get dentry for @sd.  Only return a dentry if one currently
++ *	exists.
++ *
++ *	LOCKING:
++ *	Kernel thread context (may sleep)
++ *
++ *	RETURNS:
++ *	Pointer to found dentry on success, NULL on failure.
++ */
++static struct dentry *__sysfs_get_dentry(struct super_block *sb,
++					 struct sysfs_dirent *sd)
+ {
+-	struct sysfs_dirent *sd = kobj->sd;
+-	struct dentry *parent = NULL;
+-	struct dentry *old_dentry = NULL, *new_dentry = NULL;
+-	const char *dup_name = NULL;
+-	int error;
+-
+-	mutex_lock(&sysfs_rename_mutex);
+-
+-	error = 0;
+-	if (strcmp(sd->s_name, new_name) == 0)
+-		goto out;	/* nothing to rename */
++	struct inode *inode;
++	struct dentry *dentry = NULL;
+ 
+-	/* get the original dentry */
+-	old_dentry = sysfs_get_dentry(sd);
+-	if (IS_ERR(old_dentry)) {
+-		error = PTR_ERR(old_dentry);
+-		old_dentry = NULL;
+-		goto out;
++	inode = ilookup5_nowait(sysfs_sb, sd->s_ino, sysfs_ilookup_test, sd);
++	if (inode && !(inode->i_state & I_NEW)) {
++		struct dentry *alias;
++		spin_lock(&dcache_lock);
++		list_for_each_entry(alias, &inode->i_dentry, d_alias) {
++			if (!IS_ROOT(alias) && d_unhashed(alias))
++				continue;
++			if (alias->d_sb != sb)
++				continue;
++			dentry = alias;
++			dget_locked(dentry);
++			break;
++		}
++		spin_unlock(&dcache_lock);
+ 	}
++	iput(inode);
++	return dentry;
++}
+ 
+-	parent = old_dentry->d_parent;
+-
+-	/* lock parent and get dentry for new name */
+-	mutex_lock(&parent->d_inode->i_mutex);
+-	mutex_lock(&sysfs_mutex);
++struct sysfs_rename_struct {
++	struct list_head list;
++	struct dentry *old_dentry;
++	struct dentry *new_dentry;
++	struct dentry *old_parent;
++	struct dentry *new_parent;
++};
+ 
+-	error = -EEXIST;
+-	if (sysfs_find_dirent(sd->s_parent, new_name))
+-		goto out_unlock;
++static void post_rename(struct list_head *head)
++{
++	struct sysfs_rename_struct *srs;
++	while (!list_empty(head)) {
++		srs = list_entry(head->next, struct sysfs_rename_struct, list);
++		dput(srs->old_dentry);
++		dput(srs->new_dentry);
++		dput(srs->old_parent);
++		dput(srs->new_parent);
++		list_del(&srs->list);
++		kfree(srs);
++	}
++}
+ 
+-	error = -ENOMEM;
+-	new_dentry = d_alloc_name(parent, new_name);
+-	if (!new_dentry)
+-		goto out_unlock;
++static int prep_rename(struct list_head *head,
++	struct sysfs_dirent *sd, struct sysfs_dirent *new_parent_sd,
++	const char *name)
++{
++	struct sysfs_rename_struct *srs;
++	struct super_block *sb;
++	struct dentry *dentry;
++	int error;
+ 
+-	/* rename kobject and sysfs_dirent */
+-	error = -ENOMEM;
+-	new_name = dup_name = kstrdup(new_name, GFP_KERNEL);
+-	if (!new_name)
+-		goto out_unlock;
++	list_for_each_entry(sb, &sysfs_fs_type.fs_supers, s_instances) {
++		dentry = sysfs_get_dentry(sb, sd);
++		if (dentry == ERR_PTR(-EXDEV))
++			continue;
++		if (IS_ERR(dentry)) {
++			error = PTR_ERR(dentry);
++			goto err_out;
++		}
+ 
+-	error = kobject_set_name(kobj, "%s", new_name);
+-	if (error)
+-		goto out_unlock;
++		srs = kzalloc(sizeof(*srs), GFP_KERNEL);
++		if (!srs) {
++			error = -ENOMEM;
++			dput(dentry);
++			goto err_out;
++		}
+ 
+-	dup_name = sd->s_name;
+-	sd->s_name = new_name;
++		INIT_LIST_HEAD(&srs->list);
++		list_add(head, &srs->list);
++		srs->old_dentry = dentry;
++		srs->old_parent = dget(dentry->d_parent);
++
++		dentry = sysfs_get_dentry(sb, new_parent_sd);
++		if (IS_ERR(dentry)) {
++			error = PTR_ERR(dentry);
++			goto err_out;
++		}
++		srs->new_parent = dentry;
+ 
+-	/* rename */
+-	d_add(new_dentry, NULL);
+-	d_move(old_dentry, new_dentry);
++		error = -ENOMEM;
++		dentry = d_alloc_name(srs->new_parent, name);
++		if (!dentry)
++			goto err_out;
++		srs->new_dentry = dentry;
++	}
++	return 0;
+ 
+-	error = 0;
+- out_unlock:
+-	mutex_unlock(&sysfs_mutex);
+-	mutex_unlock(&parent->d_inode->i_mutex);
+-	kfree(dup_name);
+-	dput(old_dentry);
+-	dput(new_dentry);
+- out:
+-	mutex_unlock(&sysfs_rename_mutex);
++err_out:
++	post_rename(head);
+ 	return error;
+ }
+ 
+-int sysfs_move_dir(struct kobject *kobj, struct kobject *new_parent_kobj)
++static int sysfs_mv_dir(struct sysfs_dirent *sd,
++	struct sysfs_dirent *new_parent_sd, const char *new_name)
+ {
+-	struct sysfs_dirent *sd = kobj->sd;
+-	struct sysfs_dirent *new_parent_sd;
+-	struct dentry *old_parent, *new_parent = NULL;
+-	struct dentry *old_dentry = NULL, *new_dentry = NULL;
++	struct list_head todo;
++	struct sysfs_rename_struct *srs;
++	struct inode *old_parent_inode = NULL, *new_parent_inode = NULL;
++	const char *dup_name = NULL;
++	const void *old_tag, *tag;
+ 	int error;
+ 
+-	mutex_lock(&sysfs_rename_mutex);
++	INIT_LIST_HEAD(&todo);
+ 	BUG_ON(!sd->s_parent);
+-	new_parent_sd = new_parent_kobj->sd ? new_parent_kobj->sd : &sysfs_root;
++	mutex_lock(&sysfs_rename_mutex);
++	if (!new_parent_sd)
++		new_parent_sd = &sysfs_root;
+ 
+-	error = 0;
+-	if (sd->s_parent == new_parent_sd)
+-		goto out;	/* nothing to move */
++	old_tag = sd->s_tag;
++	tag = sysfs_creation_tag(sd->s_parent, sd);
+ 
+-	/* get dentries */
+-	old_dentry = sysfs_get_dentry(sd);
+-	if (IS_ERR(old_dentry)) {
+-		error = PTR_ERR(old_dentry);
+-		old_dentry = NULL;
+-		goto out;
+-	}
+-	old_parent = old_dentry->d_parent;
+-
+-	new_parent = sysfs_get_dentry(new_parent_sd);
+-	if (IS_ERR(new_parent)) {
+-		error = PTR_ERR(new_parent);
+-		new_parent = NULL;
+-		goto out;
++	error = 0;
++	if ((sd->s_parent == new_parent_sd) && (old_tag == tag) &&
++	    (strcmp(sd->s_name, new_name) == 0))
++		goto out;	/* nothing to do */
++
++	sysfs_grab_supers();
++	if (old_tag == tag) {
++		error = prep_rename(&todo, sd, new_parent_sd, new_name);
++		if (error)
++			goto out_release;
+ 	}
+ 
++	error = -ENOMEM;
++	mutex_lock(&sysfs_mutex);
++	old_parent_inode = sysfs_get_inode(sd->s_parent);
++	new_parent_inode = sysfs_get_inode(new_parent_sd);
++	mutex_unlock(&sysfs_mutex);
++	if (!old_parent_inode || !new_parent_inode)
++		goto out_release;
++
+ again:
+-	mutex_lock(&old_parent->d_inode->i_mutex);
+-	if (!mutex_trylock(&new_parent->d_inode->i_mutex)) {
+-		mutex_unlock(&old_parent->d_inode->i_mutex);
+-		goto again;
++	mutex_lock(&old_parent_inode->i_mutex);
++	if (old_parent_inode != new_parent_inode) {
++		if (!mutex_trylock(&new_parent_inode->i_mutex)) {
++			mutex_unlock(&old_parent_inode->i_mutex);
++			goto again;
++		}
+ 	}
+ 	mutex_lock(&sysfs_mutex);
+ 
+ 	error = -EEXIST;
+-	if (sysfs_find_dirent(new_parent_sd, sd->s_name))
++	if (sysfs_find_dirent(new_parent_sd, tag, new_name))
+ 		goto out_unlock;
+ 
++	/* rename sysfs_dirent */
+ 	error = -ENOMEM;
+-	new_dentry = d_alloc_name(new_parent, sd->s_name);
+-	if (!new_dentry)
++	new_name = dup_name = kstrdup(new_name, GFP_KERNEL);
++	if (!new_name)
+ 		goto out_unlock;
+ 
+-	error = 0;
+-	d_add(new_dentry, NULL);
+-	d_move(old_dentry, new_dentry);
++	dup_name = sd->s_name;
++	sd->s_name = new_name;
++	sd->s_tag = tag;
++
++	/* rename dcache entries */
++	list_for_each_entry(srs, &todo, list) {
++		d_add(srs->new_dentry, NULL);
++		d_move(srs->old_dentry, srs->new_dentry);
++	}
++
++	/* If we are moving across superblocks drop the dcache entries */
++	if (old_tag != tag) {
++		struct super_block *sb;
++		struct dentry *dentry;
++		list_for_each_entry(sb, &sysfs_fs_type.fs_supers, s_instances) {
++			dentry = __sysfs_get_dentry(sb, sd);
++			if (!dentry)
++				continue;
++			shrink_dcache_parent(dentry);
++			d_drop(dentry);
++			dput(dentry);
++		}
++	}
+ 
+ 	/* Remove from old parent's list and insert into new parent's list. */
+ 	sysfs_unlink_sibling(sd);
+@@ -918,18 +1044,34 @@ again:
+ 	sd->s_parent = new_parent_sd;
+ 	sysfs_link_sibling(sd);
+ 
+- out_unlock:
++	error = 0;
++out_unlock:
+ 	mutex_unlock(&sysfs_mutex);
+-	mutex_unlock(&new_parent->d_inode->i_mutex);
+-	mutex_unlock(&old_parent->d_inode->i_mutex);
+- out:
+-	dput(new_parent);
+-	dput(old_dentry);
+-	dput(new_dentry);
++	if (new_parent_inode != old_parent_inode)
++		mutex_unlock(&new_parent_inode->i_mutex);
++	mutex_unlock(&old_parent_inode->i_mutex);
++	kfree(dup_name);
++
++out_release:
++	iput(new_parent_inode);
++	iput(old_parent_inode);
++	post_rename(&todo);
++	sysfs_release_supers();
++out:
+ 	mutex_unlock(&sysfs_rename_mutex);
+ 	return error;
+ }
+ 
++int sysfs_rename_dir(struct kobject * kobj, const char *new_name)
++{
++	return sysfs_mv_dir(kobj->sd, kobj->sd->s_parent, new_name);
++}
++
++int sysfs_move_dir(struct kobject *kobj, struct kobject *new_parent_kobj)
++{
++	return sysfs_mv_dir(kobj->sd, new_parent_kobj->sd, kobj->sd->s_name);
++}
++
+ /* Relationship between s_mode and the DT_xxx types */
+ static inline unsigned char dt_type(struct sysfs_dirent *sd)
+ {
+@@ -938,10 +1080,12 @@ static inline unsigned char dt_type(stru
+ 
+ static int sysfs_readdir(struct file * filp, void * dirent, filldir_t filldir)
+ {
+-	struct dentry *dentry = filp->f_path.dentry;
+-	struct sysfs_dirent * parent_sd = dentry->d_fsdata;
++	struct dentry *parent = filp->f_path.dentry;
++	struct sysfs_dirent *parent_sd = parent->d_fsdata;
+ 	struct sysfs_dirent *pos;
+ 	ino_t ino;
++	enum sysfs_tag_type type;
++	const void *tag;
+ 
+ 	if (filp->f_pos == 0) {
+ 		ino = parent_sd->s_ino;
+@@ -959,6 +1103,9 @@ static int sysfs_readdir(struct file * f
+ 	if ((filp->f_pos > 1) && (filp->f_pos < INT_MAX)) {
+ 		mutex_lock(&sysfs_mutex);
+ 
++		type = sysfs_tag_type(parent_sd);
++		tag = sysfs_info(parent->d_sb)->tag[type];
++
+ 		/* Skip the dentries we have already reported */
+ 		pos = parent_sd->s_dir.children;
+ 		while (pos && (filp->f_pos > pos->s_ino))
+@@ -968,6 +1115,9 @@ static int sysfs_readdir(struct file * f
+ 			const char * name;
+ 			int len;
+ 
++			if (pos->s_tag != tag)
++				continue;
++
+ 			name = pos->s_name;
+ 			len = strlen(name);
+ 			filp->f_pos = ino = pos->s_ino;
+@@ -988,3 +1138,35 @@ const struct file_operations sysfs_dir_o
+ 	.read		= generic_read_dir,
+ 	.readdir	= sysfs_readdir,
+ };
++
++/**
++ *	sysfs_make_tagged_dir - Require tags of all the entries in a directory.
++ *	@kobj:	object whose children should be filtered by tags
++ *
++ *	Once tagging has been enabled on a directory the contents
++ *	of the directory become dependent upon context captured when
++ *	sysfs was mounted.
++ */
++int sysfs_make_tagged_dir(struct kobject *kobj, enum sysfs_tag_type type)
++{
++	struct sysfs_dirent *sd;
++	int err;
++
++	err = -ENOENT;
++	sd = kobj->sd;
++
++	mutex_lock(&sysfs_mutex);
++	err = -EINVAL;
++	/* We can only enable tagging when we have a valid tag type
++	 * on empty directories where taggint has not already been
++	 * enabled.
++	 */
++	if ((type > SYSFS_TAG_TYPE_NONE) && (type < SYSFS_TAG_TYPES) &&
++	    tag_ops[type] && !sysfs_tag_type(sd) &&
++	    (sysfs_type(sd) == SYSFS_DIR) && !sd->s_dir.children) {
++		err = 0;
++		sd->s_flags |= (type << SYSFS_TAG_TYPE_SHIFT);
++	}
++	mutex_unlock(&sysfs_mutex);
++	return err;
++}
+Index: 2.6.27-lxc/fs/sysfs/mount.c
+===================================================================
+--- 2.6.27-lxc.orig/fs/sysfs/mount.c	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/fs/sysfs/mount.c	2008-10-23 11:24:06.000000000 +0200
+@@ -34,54 +34,220 @@ static const struct super_operations sys
+ struct sysfs_dirent sysfs_root = {
+ 	.s_name		= "",
+ 	.s_count	= ATOMIC_INIT(1),
+-	.s_flags	= SYSFS_DIR,
++	.s_flags	= SYSFS_DIR | (SYSFS_TAG_TYPE_NONE << SYSFS_TAG_TYPE_SHIFT),
+ 	.s_mode		= S_IFDIR | S_IRWXU | S_IRUGO | S_IXUGO,
+ 	.s_ino		= 1,
+ };
+ 
+-static int sysfs_fill_super(struct super_block *sb, void *data, int silent)
++struct sysfs_tag_type_operations *tag_ops[SYSFS_TAG_TYPES];
++
++static int sysfs_fill_super(struct super_block *sb, void *data, int silent,
++	const void *tags[SYSFS_TAG_TYPES])
+ {
+-	struct inode *inode;
+-	struct dentry *root;
++	struct sysfs_super_info *info = NULL;
++	struct inode *inode = NULL;
++	struct dentry *root = NULL;
++	int error;
+ 
+ 	sb->s_blocksize = PAGE_CACHE_SIZE;
+ 	sb->s_blocksize_bits = PAGE_CACHE_SHIFT;
+ 	sb->s_magic = SYSFS_MAGIC;
+ 	sb->s_op = &sysfs_ops;
+ 	sb->s_time_gran = 1;
+-	sysfs_sb = sb;
++	if (!sysfs_sb)
++		sysfs_sb = sb;
++
++	error = -ENOMEM;
++	info = kzalloc(sizeof(*info), GFP_KERNEL);
++	if (!info)
++		goto out_err;
+ 
+ 	/* get root inode, initialize and unlock it */
++	error = -ENOMEM;
+ 	inode = sysfs_get_inode(&sysfs_root);
+ 	if (!inode) {
+ 		pr_debug("sysfs: could not get root inode\n");
+-		return -ENOMEM;
++		goto out_err;
+ 	}
+ 
+ 	/* instantiate and link root dentry */
++	error = -ENOMEM;
+ 	root = d_alloc_root(inode);
+ 	if (!root) {
+ 		pr_debug("%s: could not get root dentry!\n",__func__);
+-		iput(inode);
+-		return -ENOMEM;
++		goto out_err;
+ 	}
+ 	root->d_fsdata = &sysfs_root;
++	root->d_sb = sb;
+ 	sb->s_root = root;
++	sb->s_fs_info = info;
++	memcpy(info->tag, tags, sizeof(info->tag[0])*SYSFS_TAG_TYPES);
+ 	return 0;
++
++out_err:
++	dput(root);
++	iput(inode);
++	kfree(info);
++	if (sysfs_sb == sb)
++		sysfs_sb = NULL;
++	return error;
++}
++
++static int sysfs_test_super(struct super_block *sb, void *ptr)
++{
++	const void **tag = ptr;
++	struct sysfs_super_info *info = sysfs_info(sb);
++	enum sysfs_tag_type type;
++	int found = 1;
++
++	for (type = SYSFS_TAG_TYPE_NONE; type < SYSFS_TAG_TYPES; type++) {
++		if (info->tag[type] != tag[type]) {
++			found = 0;
++			break;
++		}
++	}
++
++	return found;
+ }
+ 
+ static int sysfs_get_sb(struct file_system_type *fs_type,
+ 	int flags, const char *dev_name, void *data, struct vfsmount *mnt)
+ {
+-	return get_sb_single(fs_type, flags, data, sysfs_fill_super, mnt);
++	const void *tag[SYSFS_TAG_TYPES];
++	struct super_block *sb;
++	int error;
++	enum sysfs_tag_type type;
++
++	for (type = SYSFS_TAG_TYPE_NONE; type < SYSFS_TAG_TYPES; type++) {
++		tag[type] = NULL;
++		if (!tag_ops[type])
++			continue;
++		tag[type] = tag_ops[type]->mount_tag();
++	}
++
++	mutex_lock(&sysfs_rename_mutex);
++	sb = sget(fs_type, sysfs_test_super, set_anon_super, tag);
++	if (IS_ERR(sb)) {
++		error = PTR_ERR(sb);
++		goto out;
++	}
++	if (!sb->s_root) {
++		sb->s_flags = flags;
++		error = sysfs_fill_super(sb, data, flags & MS_SILENT ? 1 : 0,
++					tag);
++		if (error) {
++			up_write(&sb->s_umount);
++			deactivate_super(sb);
++			goto out;
++		}
++		sb->s_flags |= MS_ACTIVE;
++	}
++	do_remount_sb(sb, flags, data, 0);
++	error = simple_set_mnt(mnt, sb);
++out:
++	mutex_unlock(&sysfs_rename_mutex);
++	return error;
++}
++
++static void sysfs_kill_sb(struct super_block *sb)
++{
++	struct sysfs_super_info *info = sysfs_info(sb);
++
++	kill_anon_super(sb);
++	kfree(info);
+ }
+ 
+-static struct file_system_type sysfs_fs_type = {
++struct file_system_type sysfs_fs_type = {
+ 	.name		= "sysfs",
+ 	.get_sb		= sysfs_get_sb,
+-	.kill_sb	= kill_anon_super,
++	.kill_sb	= sysfs_kill_sb,
+ };
+ 
++void sysfs_grab_supers(void)
++{
++	/* must hold sysfs_rename_mutex */
++	struct super_block *sb;
++	/* Loop until I have taken s_umount on all sysfs superblocks */
++restart:
++	spin_lock(&sb_lock);
++	list_for_each_entry(sb, &sysfs_fs_type.fs_supers, s_instances) {
++		if (sysfs_info(sb)->grabbed)
++			continue;
++		/* Wait for unmount activity to complete. */
++		if (sb->s_count < S_BIAS) {
++			sb->s_count += 1;
++			spin_unlock(&sb_lock);
++			down_read(&sb->s_umount);
++			drop_super(sb);
++			goto restart;
++		}
++		atomic_inc(&sb->s_active);
++		sysfs_info(sb)->grabbed = 1;
++	}
++	spin_unlock(&sb_lock);
++}
++
++void sysfs_release_supers(void)
++{
++	/* must hold sysfs_rename_mutex */
++	struct super_block *sb;
++restart:
++	spin_lock(&sb_lock);
++	list_for_each_entry(sb, &sysfs_fs_type.fs_supers, s_instances) {
++		if (!sysfs_info(sb)->grabbed)
++			continue;
++		sysfs_info(sb)->grabbed = 0;
++		spin_unlock(&sb_lock);
++		deactivate_super(sb);
++		goto restart;
++	}
++	spin_unlock(&sb_lock);
++}
++
++int sysfs_register_tag_type(enum sysfs_tag_type type, struct sysfs_tag_type_operations *ops)
++{
++	int error;
++
++	mutex_lock(&sysfs_rename_mutex);
++
++	error = -EINVAL;
++	if (type >= SYSFS_TAG_TYPES)
++		goto out;
++
++	error = -EINVAL;
++	if (type <= SYSFS_TAG_TYPE_NONE)
++		goto out;
++
++	error = -EBUSY;
++	if (tag_ops[type])
++		goto out;
++
++	error = 0;
++	tag_ops[type] = ops;
++
++out:
++	mutex_unlock(&sysfs_rename_mutex);
++	return error;
++}
++
++void sysfs_exit_tag(enum sysfs_tag_type type, const void *tag)
++{
++	/* Allow the tag to go away while sysfs is still mounted. */
++	struct super_block *sb;
++	mutex_lock(&sysfs_rename_mutex);
++	sysfs_grab_supers();
++	mutex_lock(&sysfs_mutex);
++	list_for_each_entry(sb, &sysfs_fs_type.fs_supers, s_instances) {
++		struct sysfs_super_info *info = sysfs_info(sb);
++		if (info->tag[type] != tag)
++			continue;
++		info->tag[type] = NULL;
++	}
++	mutex_unlock(&sysfs_mutex);
++	sysfs_release_supers();
++	mutex_unlock(&sysfs_rename_mutex);
++}
++
+ int __init sysfs_init(void)
+ {
+ 	int err = -ENOMEM;
+Index: 2.6.27-lxc/fs/sysfs/sysfs.h
+===================================================================
+--- 2.6.27-lxc.orig/fs/sysfs/sysfs.h	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/fs/sysfs/sysfs.h	2008-10-23 11:24:06.000000000 +0200
+@@ -45,6 +45,7 @@ struct sysfs_dirent {
+ 	struct sysfs_dirent	*s_sibling;
+ 	const char		*s_name;
+ 
++	const void		*s_tag;
+ 	union {
+ 		struct sysfs_elem_dir		s_dir;
+ 		struct sysfs_elem_symlink	s_symlink;
+@@ -67,14 +68,22 @@ struct sysfs_dirent {
+ #define SYSFS_KOBJ_LINK			0x0008
+ #define SYSFS_COPY_NAME			(SYSFS_DIR | SYSFS_KOBJ_LINK)
+ 
+-#define SYSFS_FLAG_MASK			~SYSFS_TYPE_MASK
+-#define SYSFS_FLAG_REMOVED		0x0200
++#define SYSFS_TAG_TYPE_MASK		0xff00
++#define SYSFS_TAG_TYPE_SHIFT		8
++
++#define SYSFS_FLAG_MASK			~(SYSFS_TYPE_MASK | SYSFS_TAG_TYPE_MASK)
++#define SYSFS_FLAG_REMOVED		0x020000
+ 
+ static inline unsigned int sysfs_type(struct sysfs_dirent *sd)
+ {
+ 	return sd->s_flags & SYSFS_TYPE_MASK;
+ }
+ 
++static inline enum sysfs_tag_type sysfs_tag_type(struct sysfs_dirent *sd)
++{
++	return (sd->s_flags & SYSFS_TAG_TYPE_MASK) >> SYSFS_TAG_TYPE_SHIFT;
++}
++
+ /*
+  * Context structure to be used while adding/removing nodes.
+  */
+@@ -85,12 +94,24 @@ struct sysfs_addrm_cxt {
+ 	int			cnt;
+ };
+ 
++struct sysfs_super_info {
++	int	grabbed;
++	const void *tag[SYSFS_TAG_TYPES];
++};
++
++#define sysfs_info(SB) ((struct sysfs_super_info *)(SB)->s_fs_info)
++
+ /*
+  * mount.c
+  */
+ extern struct sysfs_dirent sysfs_root;
+ extern struct super_block *sysfs_sb;
+ extern struct kmem_cache *sysfs_dir_cachep;
++extern struct file_system_type sysfs_fs_type;
++extern struct sysfs_tag_type_operations *tag_ops[SYSFS_TAG_TYPES];
++
++void sysfs_grab_supers(void);
++void sysfs_release_supers(void);
+ 
+ /*
+  * dir.c
+@@ -102,7 +123,8 @@ extern spinlock_t sysfs_assoc_lock;
+ extern const struct file_operations sysfs_dir_operations;
+ extern const struct inode_operations sysfs_dir_inode_operations;
+ 
+-struct dentry *sysfs_get_dentry(struct sysfs_dirent *sd);
++struct dentry *sysfs_get_dentry(struct super_block *sb,
++				struct sysfs_dirent *sd);
+ struct sysfs_dirent *sysfs_get_active_two(struct sysfs_dirent *sd);
+ void sysfs_put_active_two(struct sysfs_dirent *sd);
+ void sysfs_addrm_start(struct sysfs_addrm_cxt *acxt,
+@@ -113,6 +135,7 @@ void sysfs_remove_one(struct sysfs_addrm
+ void sysfs_addrm_finish(struct sysfs_addrm_cxt *acxt);
+ 
+ struct sysfs_dirent *sysfs_find_dirent(struct sysfs_dirent *parent_sd,
++				       const void *tag,
+ 				       const unsigned char *name);
+ struct sysfs_dirent *sysfs_get_dirent(struct sysfs_dirent *parent_sd,
+ 				      const unsigned char *name);
+@@ -143,8 +166,10 @@ static inline void sysfs_put(struct sysf
+  * inode.c
+  */
+ struct inode *sysfs_get_inode(struct sysfs_dirent *sd);
++int sysfs_sd_setattr(struct sysfs_dirent *sd, struct inode *inode, struct iattr *iattr);
+ int sysfs_setattr(struct dentry *dentry, struct iattr *iattr);
+-int sysfs_hash_and_remove(struct sysfs_dirent *dir_sd, const char *name);
++int sysfs_hash_and_remove(struct kobject *kobj, struct sysfs_dirent *dir_sd,
++			  const char *name);
+ int sysfs_inode_init(void);
+ 
+ /*
+Index: 2.6.27-lxc/fs/sysfs/file.c
+===================================================================
+--- 2.6.27-lxc.orig/fs/sysfs/file.c	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/fs/sysfs/file.c	2008-10-23 11:24:06.000000000 +0200
+@@ -447,9 +447,11 @@ void sysfs_notify(struct kobject *k, cha
+ 	mutex_lock(&sysfs_mutex);
+ 
+ 	if (sd && dir)
+-		sd = sysfs_find_dirent(sd, dir);
++		/* only directories are tagged, so no need to pass
++		 a tag explicitly */
++		sd = sysfs_find_dirent(sd, NULL, dir);
+ 	if (sd && attr)
+-		sd = sysfs_find_dirent(sd, attr);
++		sd = sysfs_find_dirent(sd, NULL, attr);
+ 	if (sd) {
+ 		struct sysfs_open_dirent *od;
+ 
+@@ -560,8 +562,8 @@ EXPORT_SYMBOL_GPL(sysfs_add_file_to_grou
+ int sysfs_chmod_file(struct kobject *kobj, struct attribute *attr, mode_t mode)
+ {
+ 	struct sysfs_dirent *victim_sd = NULL;
+-	struct dentry *victim = NULL;
+-	struct inode * inode;
++	struct super_block *sb;
++	struct inode * inode = NULL;
+ 	struct iattr newattrs;
+ 	int rc;
+ 
+@@ -570,34 +572,42 @@ int sysfs_chmod_file(struct kobject *kob
+ 	if (!victim_sd)
+ 		goto out;
+ 
+-	mutex_lock(&sysfs_rename_mutex);
+-	victim = sysfs_get_dentry(victim_sd);
+-	mutex_unlock(&sysfs_rename_mutex);
+-	if (IS_ERR(victim)) {
+-		rc = PTR_ERR(victim);
+-		victim = NULL;
+-		goto out;
+-	}
+-
+-	inode = victim->d_inode;
++	rc = -ENOENT;
++	mutex_lock(&sysfs_mutex);
++	inode = sysfs_get_inode(victim_sd);
++	mutex_unlock(&sysfs_mutex);
++	if (!inode)
++ 		goto out;
+ 
++	mutex_lock(&sysfs_rename_mutex);
++	sysfs_grab_supers();
+ 	mutex_lock(&inode->i_mutex);
+ 
+ 	newattrs.ia_mode = (mode & S_IALLUGO) | (inode->i_mode & ~S_IALLUGO);
+ 	newattrs.ia_valid = ATTR_MODE | ATTR_CTIME;
+ 	newattrs.ia_ctime = current_fs_time(inode->i_sb);
+-	rc = sysfs_setattr(victim, &newattrs);
++	rc = sysfs_sd_setattr(victim_sd, inode, &newattrs);
++	if (rc)
++		goto out_unlock;
++
++	list_for_each_entry(sb, &sysfs_fs_type.fs_supers, s_instances) {
++		/* Ignore it when the dentry does not exist on the
++		 * target superblock.
++		 */
++		struct dentry *	victim = sysfs_get_dentry(sb, victim_sd);
++		if (IS_ERR(victim))
++			continue;
+ 
+-	if (rc == 0) {
+ 		fsnotify_change(victim, newattrs.ia_valid);
+-		mutex_lock(&sysfs_mutex);
+-		victim_sd->s_mode = newattrs.ia_mode;
+-		mutex_unlock(&sysfs_mutex);
++		dput(victim);
+ 	}
+ 
++ out_unlock:
+ 	mutex_unlock(&inode->i_mutex);
++	sysfs_release_supers();
++	mutex_unlock(&sysfs_rename_mutex);
+  out:
+-	dput(victim);
++	iput(inode);
+ 	sysfs_put(victim_sd);
+ 	return rc;
+ }
+@@ -614,7 +624,7 @@ EXPORT_SYMBOL_GPL(sysfs_chmod_file);
+ 
+ void sysfs_remove_file(struct kobject * kobj, const struct attribute * attr)
+ {
+-	sysfs_hash_and_remove(kobj->sd, attr->name);
++	sysfs_hash_and_remove(kobj, kobj->sd, attr->name);
+ }
+ 
+ 
+@@ -634,7 +644,7 @@ void sysfs_remove_file_from_group(struct
+ 	else
+ 		dir_sd = sysfs_get(kobj->sd);
+ 	if (dir_sd) {
+-		sysfs_hash_and_remove(dir_sd, attr->name);
++		sysfs_hash_and_remove(kobj, dir_sd, attr->name);
+ 		sysfs_put(dir_sd);
+ 	}
+ }
+Index: 2.6.27-lxc/fs/sysfs/inode.c
+===================================================================
+--- 2.6.27-lxc.orig/fs/sysfs/inode.c	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/fs/sysfs/inode.c	2008-10-23 11:24:06.000000000 +0200
+@@ -42,10 +42,9 @@ int __init sysfs_inode_init(void)
+ 	return bdi_init(&sysfs_backing_dev_info);
+ }
+ 
+-int sysfs_setattr(struct dentry * dentry, struct iattr * iattr)
++int sysfs_sd_setattr(struct sysfs_dirent *sd, struct inode *inode,
++			struct iattr * iattr)
+ {
+-	struct inode * inode = dentry->d_inode;
+-	struct sysfs_dirent * sd = dentry->d_fsdata;
+ 	struct iattr * sd_iattr;
+ 	unsigned int ia_valid = iattr->ia_valid;
+ 	int error;
+@@ -55,10 +54,6 @@ int sysfs_setattr(struct dentry * dentry
+ 
+ 	sd_iattr = sd->s_iattr;
+ 
+-	error = inode_change_ok(inode, iattr);
+-	if (error)
+-		return error;
+-
+ 	iattr->ia_valid &= ~ATTR_SIZE; /* ignore size changes */
+ 
+ 	error = inode_setattr(inode, iattr);
+@@ -104,6 +99,20 @@ int sysfs_setattr(struct dentry * dentry
+ 	return error;
+ }
+ 
++int sysfs_setattr(struct dentry *dentry, struct iattr *iattr)
++{
++	struct inode * inode = dentry->d_inode;
++	struct sysfs_dirent * sd = dentry->d_fsdata;
++	int error;
++
++	error = inode_change_ok(inode, iattr);
++	if (error)
++		return error;
++
++	return sysfs_sd_setattr(sd, inode, iattr);
++}
++
++
+ static inline void set_default_inode_attr(struct inode * inode, mode_t mode)
+ {
+ 	inode->i_mode = mode;
+@@ -217,17 +226,20 @@ struct inode * sysfs_get_inode(struct sy
+ 	return inode;
+ }
+ 
+-int sysfs_hash_and_remove(struct sysfs_dirent *dir_sd, const char *name)
++int sysfs_hash_and_remove(struct kobject *kobj, struct sysfs_dirent *dir_sd,
++			  const char *name)
+ {
+ 	struct sysfs_addrm_cxt acxt;
+ 	struct sysfs_dirent *sd;
++	const void *tag;
+ 
+ 	if (!dir_sd)
+ 		return -ENOENT;
+ 
+ 	sysfs_addrm_start(&acxt, dir_sd);
++	tag = kobj->sd->s_tag;
+ 
+-	sd = sysfs_find_dirent(dir_sd, name);
++	sd = sysfs_find_dirent(dir_sd, tag, name);
+ 	if (sd)
+ 		sysfs_remove_one(&acxt, sd);
+ 
+Index: 2.6.27-lxc/fs/sysfs/bin.c
+===================================================================
+--- 2.6.27-lxc.orig/fs/sysfs/bin.c	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/fs/sysfs/bin.c	2008-10-23 11:24:06.000000000 +0200
+@@ -252,7 +252,7 @@ int sysfs_create_bin_file(struct kobject
+ 
+ void sysfs_remove_bin_file(struct kobject * kobj, struct bin_attribute * attr)
+ {
+-	sysfs_hash_and_remove(kobj->sd, attr->attr.name);
++	sysfs_hash_and_remove(kobj, kobj->sd, attr->attr.name);
+ }
+ 
+ EXPORT_SYMBOL_GPL(sysfs_create_bin_file);
+Index: 2.6.27-lxc/fs/sysfs/group.c
+===================================================================
+--- 2.6.27-lxc.orig/fs/sysfs/group.c	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/fs/sysfs/group.c	2008-10-23 11:24:06.000000000 +0200
+@@ -23,7 +23,7 @@ static void remove_files(struct sysfs_di
+ 	int i;
+ 
+ 	for (i = 0, attr = grp->attrs; *attr; i++, attr++)
+-		sysfs_hash_and_remove(dir_sd, (*attr)->name);
++		sysfs_hash_and_remove(kobj, dir_sd, (*attr)->name);
+ }
+ 
+ static int create_files(struct sysfs_dirent *dir_sd, struct kobject *kobj,
+@@ -39,7 +39,7 @@ static int create_files(struct sysfs_dir
+ 		 * visibility.  Do this by first removing then
+ 		 * re-adding (if required) the file */
+ 		if (update)
+-			sysfs_hash_and_remove(dir_sd, (*attr)->name);
++			sysfs_hash_and_remove(kobj, dir_sd, (*attr)->name);
+ 		if (grp->is_visible) {
+ 			mode = grp->is_visible(kobj, *attr, i);
+ 			if (!mode)
+Index: 2.6.27-lxc/fs/sysfs/symlink.c
+===================================================================
+--- 2.6.27-lxc.orig/fs/sysfs/symlink.c	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/fs/sysfs/symlink.c	2008-10-23 11:24:06.000000000 +0200
+@@ -105,6 +105,21 @@ int sysfs_create_link_nowarn(struct kobj
+ }
+ 
+ /**
++ *	sysfs_delete_link - remove symlink in object's directory.
++ *	@kobj:	object we're acting for.
++ *	@targ:	object we're pointing to.
++ *	@name:	name of the symlink to remove.
++ *
++ *	Unlike sysfs_remove_link sysfs_delete_link has enough information
++ *	to successfully delete symlinks in tagged directories.
++ */
++void sysfs_delete_link(struct kobject *kobj, struct kobject *targ,
++			const char *name)
++{
++	sysfs_hash_and_remove(targ, kobj->sd, name);
++}
++
++/**
+  *	sysfs_remove_link - remove symlink in object's directory.
+  *	@kobj:	object we're acting for.
+  *	@name:	name of the symlink to remove.
+@@ -119,7 +134,23 @@ void sysfs_remove_link(struct kobject * 
+ 	else
+ 		parent_sd = kobj->sd;
+ 
+-	sysfs_hash_and_remove(parent_sd, name);
++	sysfs_hash_and_remove(kobj, parent_sd, name);
++}
++
++/**
++ *	sysfs_rename_link - rename symlink in object's directory.
++ *	@kobj:	object we're acting for.
++ *	@targ:	object we're pointing to.
++ *	@old:	previous name of the symlink.
++ *	@new:	new name of the symlink.
++ *
++ *	A helper function for the common rename symlink idiom.
++ */
++int sysfs_rename_link(struct kobject *kobj, struct kobject *targ,
++			const char *old, const char *new)
++{
++	sysfs_delete_link(kobj, targ, old);
++	return sysfs_create_link(kobj, targ, new);
+ }
+ 
+ static int sysfs_get_target_path(struct sysfs_dirent *parent_sd,
+Index: 2.6.27-lxc/include/linux/kobject.h
+===================================================================
+--- 2.6.27-lxc.orig/include/linux/kobject.h	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/include/linux/kobject.h	2008-10-23 11:24:06.000000000 +0200
+@@ -105,6 +105,7 @@ struct kobj_type {
+ 	void (*release)(struct kobject *kobj);
+ 	struct sysfs_ops *sysfs_ops;
+ 	struct attribute **default_attrs;
++	const void *(*sysfs_tag)(struct kobject *kobj);
+ };
+ 
+ struct kobj_uevent_env {
+Index: 2.6.27-lxc/drivers/base/class.c
+===================================================================
+--- 2.6.27-lxc.orig/drivers/base/class.c	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/drivers/base/class.c	2008-10-23 11:24:06.000000000 +0200
+@@ -135,6 +135,17 @@ static void remove_class_attrs(struct cl
+ 	}
+ }
+ 
++static int class_setup_tagging(struct class *cls)
++{
++	enum sysfs_tag_type type;
++
++	type = cls->tag_type;
++	if (type == SYSFS_TAG_TYPE_NONE)
++		return 0;
++
++	return sysfs_make_tagged_dir(&cls->p->class_subsys.kobj, type);
++}
++
+ int __class_register(struct class *cls, struct lock_class_key *key)
+ {
+ 	struct class_private *cp;
+@@ -171,13 +182,24 @@ int __class_register(struct class *cls, 
+ 	cls->p = cp;
+ 
+ 	error = kset_register(&cp->class_subsys);
+-	if (error) {
+-		kfree(cp);
+-		return error;
+-	}
++	if (error)
++		goto out_free_cp;
++
++	error = class_setup_tagging(cls);
++	if (error)
++		goto out_unregister;
++
+ 	error = add_class_attrs(class_get(cls));
+ 	class_put(cls);
++	if (error)
++		goto out_unregister;
++out:
+ 	return error;
++out_unregister:
++	kset_unregister(&cp->class_subsys);
++out_free_cp:
++	kfree(cp);
++	goto out;
+ }
+ EXPORT_SYMBOL_GPL(__class_register);
+ 
+Index: 2.6.27-lxc/include/linux/device.h
+===================================================================
+--- 2.6.27-lxc.orig/include/linux/device.h	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/include/linux/device.h	2008-10-23 11:24:06.000000000 +0200
+@@ -195,6 +195,9 @@ struct class {
+ 	int (*suspend)(struct device *dev, pm_message_t state);
+ 	int (*resume)(struct device *dev);
+ 
++	enum sysfs_tag_type tag_type;
++	const void *(*sysfs_tag)(struct device *dev);
++
+ 	struct pm_ops *pm;
+ 	struct class_private *p;
+ };
+Index: 2.6.27-lxc/net/core/dev.c
+===================================================================
+--- 2.6.27-lxc.orig/net/core/dev.c	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/net/core/dev.c	2008-10-23 11:24:06.000000000 +0200
+@@ -1623,6 +1623,9 @@ static int dev_gso_segment(struct sk_buf
+ int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
+ 			struct netdev_queue *txq)
+ {
++	if (dev_net(dev)->frozen)
++		goto out_kfree_skb;
++
+ 	if (likely(!skb->next)) {
+ 		if (!list_empty(&ptype_all))
+ 			dev_queue_xmit_nit(skb, dev);
+@@ -2217,7 +2220,7 @@ int netif_receive_skb(struct sk_buff *sk
+ 	rcu_read_lock();
+ 
+ 	/* Don't receive packets in an exiting network namespace */
+-	if (!net_alive(dev_net(skb->dev)))
++	if (!net_alive(dev_net(skb->dev)) || dev_net(skb->dev)->frozen)
+ 		goto out;
+ 
+ #ifdef CONFIG_NET_CLS_ACT
+@@ -4008,7 +4011,6 @@ int register_netdevice(struct net_device
+ 	if (dev->features & NETIF_F_SG)
+ 		dev->features |= NETIF_F_GSO;
+ 
+-	netdev_initialize_kobject(dev);
+ 	ret = netdev_register_kobject(dev);
+ 	if (ret)
+ 		goto err_uninit;
+@@ -4458,8 +4460,7 @@ int dev_change_net_namespace(struct net_
+ 	}
+ 
+ 	/* Fixup kobjects */
+-	netdev_unregister_kobject(dev);
+-	err = netdev_register_kobject(dev);
++	err = device_rename(&dev->dev, dev->name);
+ 	WARN_ON(err);
+ 
+ 	/* Add the device back in the hashes */
+Index: 2.6.27-lxc/net/core/net-sysfs.c
+===================================================================
+--- 2.6.27-lxc.orig/net/core/net-sysfs.c	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/net/core/net-sysfs.c	2008-10-23 11:24:06.000000000 +0200
+@@ -13,7 +13,9 @@
+ #include <linux/kernel.h>
+ #include <linux/netdevice.h>
+ #include <linux/if_arp.h>
++#include <linux/nsproxy.h>
+ #include <net/sock.h>
++#include <net/net_namespace.h>
+ #include <linux/rtnetlink.h>
+ #include <linux/wireless.h>
+ #include <net/iw_handler.h>
+@@ -385,6 +387,24 @@ static struct attribute_group wireless_g
+ };
+ #endif
+ 
++static const void *net_sysfs_mount_tag(void)
++{
++	return current->nsproxy->net_ns;
++}
++
++static struct sysfs_tag_type_operations net_tag_type_operations = {
++	.mount_tag = net_sysfs_mount_tag,
++};
++
++static void net_sysfs_net_exit(struct net *net)
++{
++	sysfs_exit_tag(SYSFS_TAG_TYPE_NETNS, net);
++}
++
++static struct pernet_operations sysfs_net_ops = {
++	.exit = net_sysfs_net_exit,
++};
++
+ #endif /* CONFIG_SYSFS */
+ 
+ #ifdef CONFIG_HOTPLUG
+@@ -421,6 +441,13 @@ static void netdev_release(struct device
+ 	kfree((char *)dev - dev->padded);
+ }
+ 
++static const void *net_sysfs_tag(struct device *d)
++{
++	struct net_device *dev;
++	dev = container_of(d, struct net_device, dev);
++	return dev_net(dev);
++}
++
+ static struct class net_class = {
+ 	.name = "net",
+ 	.dev_release = netdev_release,
+@@ -430,6 +457,8 @@ static struct class net_class = {
+ #ifdef CONFIG_HOTPLUG
+ 	.dev_uevent = netdev_uevent,
+ #endif
++	.tag_type = SYSFS_TAG_TYPE_NETNS,
++	.sysfs_tag = net_sysfs_tag,
+ };
+ 
+ /* Delete sysfs entries but hold kobject reference until after all
+@@ -449,6 +478,7 @@ int netdev_register_kobject(struct net_d
+ 	struct device *dev = &(net->dev);
+ 	struct attribute_group **groups = net->sysfs_groups;
+ 
++	device_initialize(dev);
+ 	dev->class = &net_class;
+ 	dev->platform_data = net;
+ 	dev->groups = groups;
+@@ -481,13 +511,11 @@ void netdev_class_remove_file(struct cla
+ EXPORT_SYMBOL(netdev_class_create_file);
+ EXPORT_SYMBOL(netdev_class_remove_file);
+ 
+-void netdev_initialize_kobject(struct net_device *net)
+-{
+-	struct device *device = &(net->dev);
+-	device_initialize(device);
+-}
+-
+ int netdev_kobject_init(void)
+ {
++#ifdef CONFIG_SYSFS
++	sysfs_register_tag_type(SYSFS_TAG_TYPE_NETNS, &net_tag_type_operations);
++	register_pernet_subsys(&sysfs_net_ops);
++#endif
+ 	return class_register(&net_class);
+ }
+Index: 2.6.27-lxc/net/core/net-sysfs.h
+===================================================================
+--- 2.6.27-lxc.orig/net/core/net-sysfs.h	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/net/core/net-sysfs.h	2008-10-23 11:24:06.000000000 +0200
+@@ -4,5 +4,5 @@
+ int netdev_kobject_init(void);
+ int netdev_register_kobject(struct net_device *);
+ void netdev_unregister_kobject(struct net_device *);
+-void netdev_initialize_kobject(struct net_device *);
++
+ #endif
+Index: 2.6.27-lxc/net/Kconfig
+===================================================================
+--- 2.6.27-lxc.orig/net/Kconfig	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/net/Kconfig	2008-10-23 11:24:06.000000000 +0200
+@@ -27,7 +27,7 @@ menu "Networking options"
+ config NET_NS
+ 	bool "Network namespace support"
+ 	default n
+-	depends on EXPERIMENTAL && !SYSFS && NAMESPACES
++	depends on EXPERIMENTAL && NAMESPACES
+ 	help
+ 	  Allow user space to create what appear to be multiple instances
+ 	  of the network stack.
+Index: 2.6.27-lxc/include/linux/sched.h
+===================================================================
+--- 2.6.27-lxc.orig/include/linux/sched.h	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/include/linux/sched.h	2008-10-23 11:24:06.000000000 +0200
+@@ -601,6 +601,7 @@ struct user_struct {
+ 	/* Hash table maintenance information */
+ 	struct hlist_node uidhash_node;
+ 	uid_t uid;
++	struct user_namespace *user_ns;
+ 
+ #ifdef CONFIG_USER_SCHED
+ 	struct task_group *tg;
+Index: 2.6.27-lxc/kernel/user.c
+===================================================================
+--- 2.6.27-lxc.orig/kernel/user.c	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/kernel/user.c	2008-10-23 11:24:06.000000000 +0200
+@@ -53,6 +53,7 @@ struct user_struct root_user = {
+ 	.files		= ATOMIC_INIT(0),
+ 	.sigpending	= ATOMIC_INIT(0),
+ 	.locked_shm     = 0,
++	.user_ns	= &init_user_ns,
+ #ifdef CONFIG_USER_SCHED
+ 	.tg		= &init_task_group,
+ #endif
+@@ -230,16 +231,33 @@ static struct attribute *uids_attributes
+ 	NULL
+ };
+ 
++static const void *uids_mount_tag(void)
++{
++	return current->nsproxy->user_ns;
++}
++
++static struct sysfs_tag_type_operations uids_tag_type_operations = {
++	.mount_tag = uids_mount_tag,
++};
++
+ /* the lifetime of user_struct is not managed by the core (now) */
+ static void uids_release(struct kobject *kobj)
+ {
+ 	return;
+ }
+ 
++static const void *uids_sysfs_tag(struct kobject *kobj)
++{
++	struct user_struct *up;
++	up = container_of(kobj, struct user_struct, kobj);
++	return up->user_ns;
++}
++
+ static struct kobj_type uids_ktype = {
+ 	.sysfs_ops = &kobj_sysfs_ops,
+ 	.default_attrs = uids_attributes,
+ 	.release = uids_release,
++	.sysfs_tag = uids_sysfs_tag,
+ };
+ 
+ /* create /sys/kernel/uids/<uid>/cpu_share file for this user */
+@@ -272,6 +290,9 @@ int __init uids_sysfs_init(void)
+ 	if (!uids_kset)
+ 		return -ENOMEM;
+ 
++	sysfs_register_tag_type(SYSFS_TAG_TYPE_USERNS, &uids_tag_type_operations);
++	sysfs_make_tagged_dir(&uids_kset->kobj, SYSFS_TAG_TYPE_USERNS);
++
+ 	return uids_user_create(&root_user);
+ }
+ 
+@@ -405,6 +426,7 @@ struct user_struct *alloc_uid(struct use
+ 
+ 		new->uid = uid;
+ 		atomic_set(&new->__count, 1);
++		new->user_ns = ns;
+ 
+ 		if (sched_create_user(new) < 0)
+ 			goto out_free_user;
+Index: 2.6.27-lxc/kernel/user_namespace.c
+===================================================================
+--- 2.6.27-lxc.orig/kernel/user_namespace.c	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/kernel/user_namespace.c	2008-10-23 11:24:06.000000000 +0200
+@@ -70,6 +70,7 @@ void free_user_ns(struct kref *kref)
+ 	struct user_namespace *ns;
+ 
+ 	ns = container_of(kref, struct user_namespace, kref);
++	sysfs_exit_tag(SYSFS_TAG_TYPE_USERNS, ns);
+ 	release_uids(ns);
+ 	kfree(ns);
+ }
+Index: 2.6.27-lxc/include/net/net_namespace.h
+===================================================================
+--- 2.6.27-lxc.orig/include/net/net_namespace.h	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/include/net/net_namespace.h	2008-10-23 11:24:06.000000000 +0200
+@@ -24,6 +24,7 @@ struct ctl_table_header;
+ struct net_generic;
+ 
+ struct net {
++	int                     frozen;         /* To drop all incoming/outgoing packets */
+ 	atomic_t		count;		/* To decided when the network
+ 						 *  namespace should be freed.
+ 						 */
+Index: 2.6.27-lxc/include/linux/sysctl.h
+===================================================================
+--- 2.6.27-lxc.orig/include/linux/sysctl.h	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/include/linux/sysctl.h	2008-10-23 11:24:06.000000000 +0200
+@@ -285,6 +285,7 @@ enum
+ 	NET_CORE_AEVENT_ETIME=20,
+ 	NET_CORE_AEVENT_RSEQTH=21,
+ 	NET_CORE_WARNINGS=22,
++	NET_CORE_FROZEN=23,
+ };
+ 
+ /* /proc/sys/net/ethernet */
+Index: 2.6.27-lxc/kernel/sysctl_check.c
+===================================================================
+--- 2.6.27-lxc.orig/kernel/sysctl_check.c	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/kernel/sysctl_check.c	2008-10-23 11:24:06.000000000 +0200
+@@ -162,6 +162,7 @@ static const struct trans_ctl_table tran
+ 	{ NET_CORE_AEVENT_ETIME,	"xfrm_aevent_etime" },
+ 	{ NET_CORE_AEVENT_RSEQTH,	"xfrm_aevent_rseqth" },
+ 	{ NET_CORE_WARNINGS,		"warnings" },
++	{ NET_CORE_FROZEN,              "frozen" },
+ 	{},
+ };
+ 
+Index: 2.6.27-lxc/net/core/sysctl_net_core.c
+===================================================================
+--- 2.6.27-lxc.orig/net/core/sysctl_net_core.c	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/net/core/sysctl_net_core.c	2008-10-23 11:24:06.000000000 +0200
+@@ -152,6 +152,14 @@ static struct ctl_table netns_core_table
+ 		.mode		= 0644,
+ 		.proc_handler	= &proc_dointvec
+ 	},
++	{
++		.ctl_name	= NET_CORE_FROZEN,
++		.procname	= "frozen",
++		.data		= &init_net.frozen,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec
++	},
+ 	{ .ctl_name = 0 }
+ };
+ 
+@@ -174,6 +182,7 @@ static __net_init int sysctl_core_net_in
+ 			goto err_dup;
+ 
+ 		tbl[0].data = &net->core.sysctl_somaxconn;
++		tbl[1].data = &net->frozen;
+ 	}
+ 
+ 	net->core.sysctl_hdr = register_net_sysctl_table(net,
+Index: 2.6.27-lxc/arch/x86/kernel/syscall_table_32.S
+===================================================================
+--- 2.6.27-lxc.orig/arch/x86/kernel/syscall_table_32.S	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/arch/x86/kernel/syscall_table_32.S	2008-10-23 11:24:06.000000000 +0200
+@@ -332,3 +332,5 @@ ENTRY(sys_call_table)
+ 	.long sys_dup3			/* 330 */
+ 	.long sys_pipe2
+ 	.long sys_inotify_init1
++	.long sys_checkpoint
++	.long sys_restart
+Index: 2.6.27-lxc/checkpoint/Kconfig
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ 2.6.27-lxc/checkpoint/Kconfig	2008-10-23 11:24:06.000000000 +0200
+@@ -0,0 +1,11 @@
++config CHECKPOINT_RESTART
++	prompt "Enable checkpoint/restart (EXPERIMENTAL)"
++	def_bool n
++	depends on X86_32 && EXPERIMENTAL
++	help
++	  Application checkpoint/restart is the ability to save the
++	  state of a running application so that it can later resume
++	  its execution from the time at which it was checkpointed.
++
++	  Turning this option on will enable checkpoint and restart
++	  functionality in the kernel.
+Index: 2.6.27-lxc/checkpoint/Makefile
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ 2.6.27-lxc/checkpoint/Makefile	2008-10-23 11:24:06.000000000 +0200
+@@ -0,0 +1,6 @@
++#
++# Makefile for linux checkpoint/restart.
++#
++
++obj-$(CONFIG_CHECKPOINT_RESTART) += sys.o checkpoint.o restart.o objhash.o \
++		ckpt_mem.o rstr_mem.o ckpt_file.o rstr_file.o
+Index: 2.6.27-lxc/checkpoint/sys.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ 2.6.27-lxc/checkpoint/sys.c	2008-10-23 11:24:06.000000000 +0200
+@@ -0,0 +1,336 @@
++/*
++ *  Generic container checkpoint-restart
++ *
++ *  Copyright (C) 2008 Oren Laadan
++ *
++ *  This file is subject to the terms and conditions of the GNU General Public
++ *  License.  See the file COPYING in the main directory of the Linux
++ *  distribution for more details.
++ */
++
++#include <linux/sched.h>
++#include <linux/nsproxy.h>
++#include <linux/ptrace.h>
++#include <linux/kernel.h>
++#include <linux/fs.h>
++#include <linux/file.h>
++#include <linux/uaccess.h>
++#include <linux/capability.h>
++#include <linux/checkpoint.h>
++
++#include "checkpoint_mem.h"
++
++/*
++ * helpers to write/read to/from the image file descriptor
++ *
++ *   cr_uwrite() - write a user-space buffer to the checkpoint image
++ *   cr_kwrite() - write a kernel-space buffer to the checkpoint image
++ *   cr_uread() - read from the checkpoint image to a user-space buffer
++ *   cr_kread() - read from the checkpoint image to a kernel-space buffer
++ */
++
++int cr_uwrite(struct cr_ctx *ctx, void *buf, int count)
++{
++	struct file *file = ctx->file;
++	ssize_t nwrite;
++	int nleft;
++
++	for (nleft = count; nleft; nleft -= nwrite) {
++		loff_t pos = file_pos_read(file);
++		nwrite = vfs_write(file, (char __user *) buf, nleft, &pos);
++		file_pos_write(file, pos);
++		if (nwrite <= 0) {
++			if (nwrite == -EAGAIN)
++				nwrite = 0;
++			else
++				return nwrite;
++		}
++		buf += nwrite;
++	}
++
++	ctx->total += count;
++	return 0;
++}
++
++int cr_kwrite(struct cr_ctx *ctx, void *buf, int count)
++{
++	mm_segment_t oldfs;
++	int ret;
++
++	oldfs = get_fs();
++	set_fs(KERNEL_DS);
++	ret = cr_uwrite(ctx, buf, count);
++	set_fs(oldfs);
++
++	return ret;
++}
++
++int cr_uread(struct cr_ctx *ctx, void *buf, int count)
++{
++	struct file *file = ctx->file;
++	ssize_t nread;
++	int nleft;
++
++	for (nleft = count; nleft; nleft -= nread) {
++		loff_t pos = file_pos_read(file);
++		nread = vfs_read(file, (char __user *) buf, nleft, &pos);
++		file_pos_write(file, pos);
++		if (nread <= 0) {
++			if (nread == -EAGAIN)
++				nread = 0;
++			else
++				return nread;
++		}
++		buf += nread;
++	}
++
++	ctx->total += count;
++	return 0;
++}
++
++int cr_kread(struct cr_ctx *ctx, void *buf, int count)
++{
++	mm_segment_t oldfs;
++	int ret;
++
++	oldfs = get_fs();
++	set_fs(KERNEL_DS);
++	ret = cr_uread(ctx, buf, count);
++	set_fs(oldfs);
++
++	return ret;
++}
++
++/*
++ * During checkpoint and restart the code writes outs/reads in data
++ * to/from the chekcpoint image from/to a temporary buffer (ctx->hbuf).
++ * Because operations can be nested, one should call cr_hbuf_get() to
++ * reserve space in the buffer, and then cr_hbuf_put() when no longer
++ * needs that space.
++ */
++
++/*
++ * ctx->hbuf is used to hold headers and data of known (or bound),
++ * static sizes. In some cases, multiple headers may be allocated in
++ * a nested manner. The size should accommodate all headers, nested
++ * or not, on all archs.
++ */
++#define CR_HBUF_TOTAL  (8 * 4096)
++
++/**
++ * cr_hbuf_get - reserve space on the hbuf
++ * @ctx: checkpoint context
++ * @n: number of bytes to reserve
++ *
++ * Returns pointer to reserved space
++ */
++void *cr_hbuf_get(struct cr_ctx *ctx, int n)
++{
++	void *ptr;
++
++	/*
++	 * Since requests depend on logic and static header sizes (not on
++	 * user data), space should always suffice, unless someone either
++	 * made a structure bigger or call path deeper than expected.
++	 */
++	BUG_ON(ctx->hpos + n > CR_HBUF_TOTAL);
++	ptr = ctx->hbuf + ctx->hpos;
++	ctx->hpos += n;
++	return ptr;
++}
++
++/**
++ * cr_hbuf_put - unreserve space on the hbuf
++ * @ctx: checkpoint context
++ * @n: number of bytes to reserve
++ */
++void cr_hbuf_put(struct cr_ctx *ctx, int n)
++{
++	BUG_ON(ctx->hpos < n);
++	ctx->hpos -= n;
++}
++
++/*
++ * helpers to manage CR contexts: allocated for each checkpoint and/or
++ * restart operation, and persists until the operation is completed.
++ */
++
++static void cr_ctx_put_container(struct cr_ctx *ctx)
++{
++	if (ctx->root_nsproxy)
++		put_nsproxy(ctx->root_nsproxy);
++	if (ctx->root_task)
++		put_task_struct(ctx->root_task);
++	ctx->root_pid = 0;
++}
++
++static int cr_ctx_get_container(pid_t pid, struct cr_ctx *ctx)
++{
++	struct task_struct *task = NULL;
++	struct nsproxy *nsproxy = NULL;
++	int err = -ESRCH;
++
++	read_lock(&tasklist_lock);
++	task = find_task_by_vpid(pid);
++	if (task)
++		get_task_struct(task);
++	read_unlock(&tasklist_lock);
++
++	if (!task)
++		goto out;
++
++	if (!ptrace_may_access(task, PTRACE_MODE_READ)) {
++		err = -EPERM;
++		goto out;
++	}
++
++	rcu_read_lock();
++	if (task_nsproxy(task)) {
++		nsproxy = task_nsproxy(task);
++		get_nsproxy(nsproxy);
++	}
++	rcu_read_unlock();
++
++	if (!nsproxy)
++		goto out;
++
++	/* TODO: verify that the task is the container's root */
++	/* TODO: verify that the container is frozen */
++
++	ctx->root_pid = pid;
++	ctx->root_task = task;
++	ctx->root_nsproxy = nsproxy;
++
++	return 0;
++
++ out:
++	if (task)
++		put_task_struct(task);
++	return err;
++}
++
++/* unique checkpoint identifier (FIXME: should be per-container) */
++static atomic_t cr_ctx_count;
++
++static void cr_ctx_free(struct cr_ctx *ctx)
++{
++	if (ctx->file)
++		fput(ctx->file);
++
++	if (ctx->hbuf)
++		kfree(ctx->hbuf);
++
++	if (ctx->vfsroot)
++		path_put(ctx->vfsroot);
++
++	cr_pgarr_free(ctx);
++	cr_objhash_free(ctx);
++
++	cr_ctx_put_container(ctx);
++
++	kfree(ctx);
++}
++
++static struct cr_ctx *cr_ctx_alloc(pid_t pid, int fd, unsigned long flags)
++{
++	struct cr_ctx *ctx;
++	int err;
++
++	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
++	if (!ctx)
++		return ERR_PTR(-ENOMEM);
++
++	INIT_LIST_HEAD(&ctx->pgarr_list);
++	ctx->flags = flags;
++
++	err = -EBADF;
++	ctx->file = fget(fd);
++	if (!ctx->file)
++		goto err;
++
++	err = cr_ctx_get_container(pid, ctx);
++	if (err < 0)
++		goto err;
++
++	err = -ENOMEM;
++	ctx->hbuf = kmalloc(CR_HBUF_TOTAL, GFP_KERNEL);
++	if (!ctx->hbuf)
++		goto err;
++
++	if (cr_objhash_alloc(ctx) < 0)
++		goto err;
++
++	/*
++	 * assume checkpointer is in container's root vfs
++	 * FIXME: this works for now, but will change with real containers
++	 */
++	ctx->vfsroot = &ctx->root_task->fs->root;
++	path_get(ctx->vfsroot);
++
++	ctx->crid = atomic_inc_return(&cr_ctx_count);
++
++	return ctx;
++
++ err:
++	cr_ctx_free(ctx);
++	return ERR_PTR(err);
++}
++
++/**
++ * sys_checkpoint - checkpoint a container
++ * @pid: pid of the container init(1) process
++ * @fd: file to which dump the checkpoint image
++ * @flags: checkpoint operation flags
++ *
++ * Returns positive identifier on success, 0 when returning from restart
++ * or negative value on error
++ */
++asmlinkage long sys_checkpoint(pid_t pid, int fd, unsigned long flags)
++{
++	struct cr_ctx *ctx;
++	int ret;
++
++	/* no flags for now */
++	if (flags)
++		return -EINVAL;
++
++	ctx = cr_ctx_alloc(pid, fd, flags | CR_CTX_CKPT);
++	if (IS_ERR(ctx))
++		return PTR_ERR(ctx);
++
++	ret = do_checkpoint(ctx);
++
++	if (!ret)
++		ret = ctx->crid;
++
++	cr_ctx_free(ctx);
++	return ret;
++}
++
++/**
++ * sys_restart - restart a container
++ * @crid: checkpoint image identifier
++ * @fd: file from which read the checkpoint image
++ * @flags: restart operation flags
++ *
++ * Returns negative value on error, or otherwise returns in the realm
++ * of the original checkpoint
++ */
++asmlinkage long sys_restart(int crid, int fd, unsigned long flags)
++{
++	struct cr_ctx *ctx;
++	int ret;
++
++	/* no flags for now */
++	if (flags)
++		return -EINVAL;
++
++	ctx = cr_ctx_alloc(crid, fd, flags | CR_CTX_RSTR);
++	if (IS_ERR(ctx))
++		return PTR_ERR(ctx);
++
++	ret = do_restart(ctx);
++
++	cr_ctx_free(ctx);
++	return ret;
++}
+Index: 2.6.27-lxc/include/asm-x86/unistd_32.h
+===================================================================
+--- 2.6.27-lxc.orig/include/asm-x86/unistd_32.h	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/include/asm-x86/unistd_32.h	2008-10-23 11:24:06.000000000 +0200
+@@ -338,6 +338,8 @@
+ #define __NR_dup3		330
+ #define __NR_pipe2		331
+ #define __NR_inotify_init1	332
++#define __NR_checkpoint		333
++#define __NR_restart		334
+ 
+ #ifdef __KERNEL__
+ 
+Index: 2.6.27-lxc/include/linux/syscalls.h
+===================================================================
+--- 2.6.27-lxc.orig/include/linux/syscalls.h	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/include/linux/syscalls.h	2008-10-23 11:24:06.000000000 +0200
+@@ -622,6 +622,8 @@ asmlinkage long sys_timerfd_gettime(int 
+ asmlinkage long sys_eventfd(unsigned int count);
+ asmlinkage long sys_eventfd2(unsigned int count, int flags);
+ asmlinkage long sys_fallocate(int fd, int mode, loff_t offset, loff_t len);
++asmlinkage long sys_checkpoint(pid_t pid, int fd, unsigned long flags);
++asmlinkage long sys_restart(int crid, int fd, unsigned long flags);
+ 
+ int kernel_execve(const char *filename, char *const argv[], char *const envp[]);
+ 
+Index: 2.6.27-lxc/kernel/sys_ni.c
+===================================================================
+--- 2.6.27-lxc.orig/kernel/sys_ni.c	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/kernel/sys_ni.c	2008-10-23 11:24:06.000000000 +0200
+@@ -168,3 +168,7 @@ cond_syscall(compat_sys_timerfd_settime)
+ cond_syscall(compat_sys_timerfd_gettime);
+ cond_syscall(sys_eventfd);
+ cond_syscall(sys_eventfd2);
++
++/* checkpoint/restart */
++cond_syscall(sys_checkpoint);
++cond_syscall(sys_restart);
+Index: 2.6.27-lxc/Makefile
+===================================================================
+--- 2.6.27-lxc.orig/Makefile	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/Makefile	2008-10-23 11:24:06.000000000 +0200
+@@ -619,7 +619,7 @@ export mod_strip_cmd
+ 
+ 
+ ifeq ($(KBUILD_EXTMOD),)
+-core-y		+= kernel/ mm/ fs/ ipc/ security/ crypto/ block/
++core-y		+= kernel/ mm/ fs/ ipc/ security/ crypto/ block/ checkpoint/
+ 
+ vmlinux-dirs	:= $(patsubst %/,%,$(filter %/, $(init-y) $(init-m) \
+ 		     $(core-y) $(core-m) $(drivers-y) $(drivers-m) \
+Index: 2.6.27-lxc/checkpoint/checkpoint.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ 2.6.27-lxc/checkpoint/checkpoint.c	2008-10-23 11:24:06.000000000 +0200
+@@ -0,0 +1,244 @@
++/*
++ *  Checkpoint logic and helpers
++ *
++ *  Copyright (C) 2008 Oren Laadan
++ *
++ *  This file is subject to the terms and conditions of the GNU General Public
++ *  License.  See the file COPYING in the main directory of the Linux
++ *  distribution for more details.
++ */
++
++#include <linux/version.h>
++#include <linux/sched.h>
++#include <linux/time.h>
++#include <linux/fs.h>
++#include <linux/file.h>
++#include <linux/dcache.h>
++#include <linux/mount.h>
++#include <linux/utsname.h>
++#include <linux/magic.h>
++#include <linux/checkpoint.h>
++#include <linux/checkpoint_hdr.h>
++
++#include "checkpoint_arch.h"
++
++/**
++ * cr_write_obj - write a record described by a cr_hdr
++ * @ctx: checkpoint context
++ * @h: record descriptor
++ * @buf: record buffer
++ */
++int cr_write_obj(struct cr_ctx *ctx, struct cr_hdr *h, void *buf)
++{
++	int ret;
++
++	ret = cr_kwrite(ctx, h, sizeof(*h));
++	if (ret < 0)
++		return ret;
++	return cr_kwrite(ctx, buf, h->len);
++}
++
++/**
++ * cr_write_string - write a string
++ * @ctx: checkpoint context
++ * @str: string pointer
++ * @len: string length
++ */
++int cr_write_string(struct cr_ctx *ctx, char *str, int len)
++{
++	struct cr_hdr h;
++
++	h.type = CR_HDR_STRING;
++	h.len = len;
++	h.parent = 0;
++
++	return cr_write_obj(ctx, &h, str);
++}
++
++/**
++ * cr_fill_fname - return pathname of a given file
++ * @path: path name
++ * @root: relative root
++ * @buf: buffer for pathname
++ * @n: buffer length (in) and pathname length (out)
++ */
++static char *
++cr_fill_fname(struct path *path, struct path *root, char *buf, int *n)
++{
++	char *fname;
++
++	BUG_ON(!buf);
++	fname = __d_path(path, root, buf, *n);
++	if (!IS_ERR(fname))
++		*n = (buf + (*n) - fname);
++	return fname;
++}
++
++/**
++ * cr_write_fname - write a file name
++ * @ctx: checkpoint context
++ * @path: path name
++ * @root: relative root
++ */
++int cr_write_fname(struct cr_ctx *ctx, struct path *path, struct path *root)
++{
++	struct cr_hdr h;
++	char *buf, *fname;
++	int ret, flen;
++
++	flen = PATH_MAX;
++	buf = kmalloc(flen, GFP_KERNEL);
++	if (!buf)
++		return -ENOMEM;
++
++	fname = cr_fill_fname(path, root, buf, &flen);
++	if (!IS_ERR(fname)) {
++		h.type = CR_HDR_FNAME;
++		h.len = flen;
++		h.parent = 0;
++		ret = cr_write_obj(ctx, &h, fname);
++	} else
++		ret = PTR_ERR(fname);
++
++	kfree(buf);
++	return ret;
++}
++
++/* write the checkpoint header */
++static int cr_write_head(struct cr_ctx *ctx)
++{
++	struct cr_hdr h;
++	struct cr_hdr_head *hh = cr_hbuf_get(ctx, sizeof(*hh));
++	struct new_utsname *uts;
++	struct timeval ktv;
++	int ret;
++
++	h.type = CR_HDR_HEAD;
++	h.len = sizeof(*hh);
++	h.parent = 0;
++
++	do_gettimeofday(&ktv);
++
++	hh->magic = CHECKPOINT_MAGIC_HEAD;
++	hh->major = (LINUX_VERSION_CODE >> 16) & 0xff;
++	hh->minor = (LINUX_VERSION_CODE >> 8) & 0xff;
++	hh->patch = (LINUX_VERSION_CODE) & 0xff;
++
++	hh->rev = CR_VERSION;
++
++	hh->flags = ctx->flags;
++	hh->time = ktv.tv_sec;
++
++	uts = utsname();
++	memcpy(hh->release, uts->release, __NEW_UTS_LEN);
++	memcpy(hh->version, uts->version, __NEW_UTS_LEN);
++	memcpy(hh->machine, uts->machine, __NEW_UTS_LEN);
++
++	ret = cr_write_obj(ctx, &h, hh);
++	cr_hbuf_put(ctx, sizeof(*hh));
++	return ret;
++}
++
++/* write the checkpoint trailer */
++static int cr_write_tail(struct cr_ctx *ctx)
++{
++	struct cr_hdr h;
++	struct cr_hdr_tail *hh = cr_hbuf_get(ctx, sizeof(*hh));
++	int ret;
++
++	h.type = CR_HDR_TAIL;
++	h.len = sizeof(*hh);
++	h.parent = 0;
++
++	hh->magic = CHECKPOINT_MAGIC_TAIL;
++
++	ret = cr_write_obj(ctx, &h, hh);
++	cr_hbuf_put(ctx, sizeof(*hh));
++	return ret;
++}
++
++/* dump the task_struct of a given task */
++static int cr_write_task_struct(struct cr_ctx *ctx, struct task_struct *t)
++{
++	struct cr_hdr h;
++	struct cr_hdr_task *hh = cr_hbuf_get(ctx, sizeof(*hh));
++	int ret;
++
++	h.type = CR_HDR_TASK;
++	h.len = sizeof(*hh);
++	h.parent = 0;
++
++	hh->state = t->state;
++	hh->exit_state = t->exit_state;
++	hh->exit_code = t->exit_code;
++	hh->exit_signal = t->exit_signal;
++
++	hh->task_comm_len = TASK_COMM_LEN;
++
++	/* FIXME: save remaining relevant task_struct fields */
++
++	ret = cr_write_obj(ctx, &h, hh);
++	cr_hbuf_put(ctx, sizeof(*hh));
++	if (ret < 0)
++		return ret;
++
++	return cr_write_string(ctx, t->comm, TASK_COMM_LEN);
++}
++
++/* dump the entire state of a given task */
++static int cr_write_task(struct cr_ctx *ctx, struct task_struct *t)
++{
++	int ret ;
++
++	/* TODO: verity that the task is frozen (unless self) */
++
++	if (t->state == TASK_DEAD) {
++		pr_warning("CR: task may not be in state TASK_DEAD\n");
++		return -EAGAIN;
++	}
++
++	ret = cr_write_task_struct(ctx, t);
++	cr_debug("task_struct: ret %d\n", ret);
++	if (ret < 0)
++		goto out;
++	ret = cr_write_mm(ctx, t);
++	cr_debug("memory: ret %d\n", ret);
++	if (ret < 0)
++		goto out;
++	ret = cr_write_files(ctx, t);
++	cr_debug("files: ret %d\n", ret);
++	if (ret < 0)
++		goto out;
++	ret = cr_write_thread(ctx, t);
++	cr_debug("thread: ret %d\n", ret);
++	if (ret < 0)
++		goto out;
++	ret = cr_write_cpu(ctx, t);
++	cr_debug("cpu: ret %d\n", ret);
++
++ out:
++	return ret;
++}
++
++int do_checkpoint(struct cr_ctx *ctx)
++{
++	int ret;
++
++	/* FIX: need to test whether container is checkpointable */
++
++	ret = cr_write_head(ctx);
++	if (ret < 0)
++		goto out;
++	ret = cr_write_task(ctx, ctx->root_task);
++	if (ret < 0)
++		goto out;
++	ret = cr_write_tail(ctx);
++	if (ret < 0)
++		goto out;
++
++	/* on success, return (unique) checkpoint identifier */
++	ret = ctx->crid;
++
++ out:
++	return ret;
++}
+Index: 2.6.27-lxc/checkpoint/restart.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ 2.6.27-lxc/checkpoint/restart.c	2008-10-23 11:24:06.000000000 +0200
+@@ -0,0 +1,254 @@
++/*
++ *  Restart logic and helpers
++ *
++ *  Copyright (C) 2008 Oren Laadan
++ *
++ *  This file is subject to the terms and conditions of the GNU General Public
++ *  License.  See the file COPYING in the main directory of the Linux
++ *  distribution for more details.
++ */
++
++#include <linux/version.h>
++#include <linux/sched.h>
++#include <linux/file.h>
++#include <linux/magic.h>
++#include <linux/checkpoint.h>
++#include <linux/checkpoint_hdr.h>
++
++#include "checkpoint_arch.h"
++
++/**
++ * cr_read_obj - read a whole record (cr_hdr followed by payload)
++ * @ctx: checkpoint context
++ * @h: record descriptor
++ * @buf: record buffer
++ * @n: available buffer size
++ *
++ * Returns size of payload
++ */
++int cr_read_obj(struct cr_ctx *ctx, struct cr_hdr *h, void *buf, int n)
++{
++	int ret;
++
++	ret = cr_kread(ctx, h, sizeof(*h));
++	if (ret < 0)
++		return ret;
++
++	cr_debug("type %d len %d parent %d\n", h->type, h->len, h->parent);
++
++	if (h->len < 0 || h->len > n)
++		return -EINVAL;
++
++	return cr_kread(ctx, buf, h->len);
++}
++
++/**
++ * cr_read_obj_type - read a whole record of expected type
++ * @ctx: checkpoint context
++ * @buf: record buffer
++ * @n: available buffer size
++ * @type: expected record type
++ *
++ * Returns object reference of the parent object
++ */
++int cr_read_obj_type(struct cr_ctx *ctx, void *buf, int n, int type)
++{
++	struct cr_hdr h;
++	int ret;
++
++	ret = cr_read_obj(ctx, &h, buf, n);
++	if (ret < 0)
++		return ret;
++
++	ret = -EINVAL;
++	if (h.type == type)
++		ret = h.parent;
++
++	return ret;
++}
++
++/**
++ * cr_read_string - read a string
++ * @ctx: checkpoint context
++ * @str: string buffer
++ * @len: buffer buffer length
++ */
++int cr_read_string(struct cr_ctx *ctx, void *str, int len)
++{
++	return cr_read_obj_type(ctx, str, len, CR_HDR_STRING);
++}
++
++/**
++ * cr_read_fname - read a file name
++ * @ctx: checkpoint context
++ * @fname: buffer
++ * @n: buffer length
++ */
++int cr_read_fname(struct cr_ctx *ctx, void *fname, int flen)
++{
++	return cr_read_obj_type(ctx, fname, flen, CR_HDR_FNAME);
++}
++
++/**
++ * cr_read_open_fname - read a file name and open a file
++ * @ctx: checkpoint context
++ * @flags: file flags
++ * @mode: file mode
++ */
++struct file *cr_read_open_fname(struct cr_ctx *ctx, int flags, int mode)
++{
++	struct file *file;
++	char *fname;
++	int ret;
++
++	fname = kmalloc(PATH_MAX, GFP_KERNEL);
++	if (!fname)
++		return ERR_PTR(-ENOMEM);
++
++	ret = cr_read_fname(ctx, fname, PATH_MAX);
++	cr_debug("fname '%s' flags %#x mode %#x\n", fname, flags, mode);
++	if (ret >= 0)
++		file = filp_open(fname, flags, mode);
++	else
++		file = ERR_PTR(ret);
++
++	kfree(fname);
++	return file;
++}
++
++/* read the checkpoint header */
++static int cr_read_head(struct cr_ctx *ctx)
++{
++	struct cr_hdr_head *hh = cr_hbuf_get(ctx, sizeof(*hh));
++	int parent, ret = -EINVAL;
++
++	parent = cr_read_obj_type(ctx, hh, sizeof(*hh), CR_HDR_HEAD);
++	if (parent < 0) {
++		ret = parent;
++		goto out;
++	} else if (parent != 0)
++		goto out;
++
++	if (hh->magic != CHECKPOINT_MAGIC_HEAD || hh->rev != CR_VERSION ||
++	    hh->major != ((LINUX_VERSION_CODE >> 16) & 0xff) ||
++	    hh->minor != ((LINUX_VERSION_CODE >> 8) & 0xff) ||
++	    hh->patch != ((LINUX_VERSION_CODE) & 0xff))
++		goto out;
++
++	if (hh->flags & ~CR_CTX_CKPT)
++		goto out;
++
++	ctx->oflags = hh->flags;
++
++	/* FIX: verify compatibility of release, version and machine */
++
++	ret = 0;
++ out:
++	cr_hbuf_put(ctx, sizeof(*hh));
++	return ret;
++}
++
++/* read the checkpoint trailer */
++static int cr_read_tail(struct cr_ctx *ctx)
++{
++	struct cr_hdr_tail *hh = cr_hbuf_get(ctx, sizeof(*hh));
++	int parent, ret = -EINVAL;
++
++	parent = cr_read_obj_type(ctx, hh, sizeof(*hh), CR_HDR_TAIL);
++	if (parent < 0) {
++		ret = parent;
++		goto out;
++	} else if (parent != 0)
++		goto out;
++
++	if (hh->magic != CHECKPOINT_MAGIC_TAIL)
++		goto out;
++
++	ret = 0;
++ out:
++	cr_hbuf_put(ctx, sizeof(*hh));
++	return ret;
++}
++
++/* read the task_struct into the current task */
++static int cr_read_task_struct(struct cr_ctx *ctx)
++{
++	struct cr_hdr_task *hh = cr_hbuf_get(ctx, sizeof(*hh));
++	struct task_struct *t = current;
++	char *buf;
++	int parent, ret = -EINVAL;
++
++	parent = cr_read_obj_type(ctx, hh, sizeof(*hh), CR_HDR_TASK);
++	if (parent < 0) {
++		ret = parent;
++		goto out;
++	} else if (parent != 0)
++		goto out;
++
++	/* upper limit for task_comm_len to prevent DoS */
++	if (hh->task_comm_len < 0 || hh->task_comm_len > PAGE_SIZE)
++		goto out;
++
++	buf = kmalloc(hh->task_comm_len, GFP_KERNEL);
++	if (!buf)
++		goto out;
++	ret = cr_read_string(ctx, buf, hh->task_comm_len);
++	if (!ret) {
++		/* if t->comm is too long, silently truncate */
++		memset(t->comm, 0, TASK_COMM_LEN);
++		memcpy(t->comm, buf, min(hh->task_comm_len, TASK_COMM_LEN));
++	}
++	kfree(buf);
++
++	/* FIXME: restore remaining relevant task_struct fields */
++ out:
++	cr_hbuf_put(ctx, sizeof(*hh));
++	return ret;
++}
++
++/* read the entire state of the current task */
++static int cr_read_task(struct cr_ctx *ctx)
++{
++	int ret;
++
++	ret = cr_read_task_struct(ctx);
++	cr_debug("task_struct: ret %d\n", ret);
++	if (ret < 0)
++		goto out;
++	ret = cr_read_mm(ctx);
++	cr_debug("memory: ret %d\n", ret);
++	if (ret < 0)
++		goto out;
++	ret = cr_read_files(ctx);
++	cr_debug("files: ret %d\n", ret);
++	if (ret < 0)
++		goto out;
++	ret = cr_read_thread(ctx);
++	cr_debug("thread: ret %d\n", ret);
++	if (ret < 0)
++		goto out;
++	ret = cr_read_cpu(ctx);
++	cr_debug("cpu: ret %d\n", ret);
++
++ out:
++	return ret;
++}
++
++int do_restart(struct cr_ctx *ctx)
++{
++	int ret;
++
++	ret = cr_read_head(ctx);
++	if (ret < 0)
++		goto out;
++	ret = cr_read_task(ctx);
++	if (ret < 0)
++		goto out;
++	ret = cr_read_tail(ctx);
++	if (ret < 0)
++		goto out;
++
++	/* on success, adjust the return value if needed [TODO] */
++ out:
++	return ret;
++}
+Index: 2.6.27-lxc/fs/read_write.c
+===================================================================
+--- 2.6.27-lxc.orig/fs/read_write.c	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/fs/read_write.c	2008-10-23 11:24:06.000000000 +0200
+@@ -324,12 +324,12 @@ ssize_t vfs_write(struct file *file, con
+ 
+ EXPORT_SYMBOL(vfs_write);
+ 
+-static inline loff_t file_pos_read(struct file *file)
++inline loff_t file_pos_read(struct file *file)
+ {
+ 	return file->f_pos;
+ }
+ 
+-static inline void file_pos_write(struct file *file, loff_t pos)
++inline void file_pos_write(struct file *file, loff_t pos)
+ {
+ 	file->f_pos = pos;
+ }
+Index: 2.6.27-lxc/include/linux/checkpoint.h
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ 2.6.27-lxc/include/linux/checkpoint.h	2008-10-23 11:24:06.000000000 +0200
+@@ -0,0 +1,100 @@
++#ifndef _CHECKPOINT_CKPT_H_
++#define _CHECKPOINT_CKPT_H_
++/*
++ *  Generic container checkpoint-restart
++ *
++ *  Copyright (C) 2008 Oren Laadan
++ *
++ *  This file is subject to the terms and conditions of the GNU General Public
++ *  License.  See the file COPYING in the main directory of the Linux
++ *  distribution for more details.
++ */
++
++#include <linux/path.h>
++#include <linux/fs.h>
++
++#define CR_VERSION  2
++
++struct cr_ctx {
++	int crid;		/* unique checkpoint id */
++
++	pid_t root_pid;		/* container identifier */
++	struct task_struct *root_task;	/* container root task */
++	struct nsproxy *root_nsproxy;	/* container root nsproxy */
++
++	unsigned long flags;
++	unsigned long oflags;	/* restart: old flags */
++
++	struct file *file;
++	int total;		/* total read/written */
++
++	void *hbuf;		/* temporary buffer for headers */
++	int hpos;		/* position in headers buffer */
++
++	struct cr_objhash *objhash;	/* hash for shared objects */
++
++	struct list_head pgarr_list;	/* page array to dump VMA contents */
++
++	struct path *vfsroot;	/* container root (FIXME) */
++};
++
++/* cr_ctx: flags */
++#define CR_CTX_CKPT	0x1
++#define CR_CTX_RSTR	0x2
++
++extern int cr_uwrite(struct cr_ctx *ctx, void *buf, int count);
++extern int cr_kwrite(struct cr_ctx *ctx, void *buf, int count);
++extern int cr_uread(struct cr_ctx *ctx, void *buf, int count);
++extern int cr_kread(struct cr_ctx *ctx, void *buf, int count);
++
++extern void *cr_hbuf_get(struct cr_ctx *ctx, int n);
++extern void cr_hbuf_put(struct cr_ctx *ctx, int n);
++
++/* shared objects handling */
++
++enum {
++	CR_OBJ_FILE = 1,
++	CR_OBJ_MAX
++};
++
++extern void cr_objhash_free(struct cr_ctx *ctx);
++extern int cr_objhash_alloc(struct cr_ctx *ctx);
++extern void *cr_obj_get_by_ref(struct cr_ctx *ctx,
++			       int objref, unsigned short type);
++extern int cr_obj_get_by_ptr(struct cr_ctx *ctx,
++			     void *ptr, unsigned short type);
++extern int cr_obj_add_ptr(struct cr_ctx *ctx, void *ptr, int *objref,
++			  unsigned short type, unsigned short flags);
++extern int cr_obj_add_ref(struct cr_ctx *ctx, void *ptr, int objref,
++			  unsigned short type, unsigned short flags);
++
++struct cr_hdr;
++
++extern int cr_write_obj(struct cr_ctx *ctx, struct cr_hdr *h, void *buf);
++extern int cr_write_string(struct cr_ctx *ctx, char *str, int len);
++extern int cr_write_fname(struct cr_ctx *ctx,
++			  struct path *path, struct path *root);
++
++extern int cr_read_obj(struct cr_ctx *ctx, struct cr_hdr *h, void *buf, int n);
++extern int cr_read_obj_type(struct cr_ctx *ctx, void *buf, int n, int type);
++extern int cr_read_string(struct cr_ctx *ctx, void *str, int len);
++extern int cr_read_fname(struct cr_ctx *ctx, void *fname, int n);
++extern struct file *cr_read_open_fname(struct cr_ctx *ctx,
++				       int flags, int mode);
++
++extern int do_checkpoint(struct cr_ctx *ctx);
++extern int cr_write_mm(struct cr_ctx *ctx, struct task_struct *t);
++extern int cr_write_files(struct cr_ctx *ctx, struct task_struct *t);
++
++extern int do_restart(struct cr_ctx *ctx);
++extern int cr_read_mm(struct cr_ctx *ctx);
++extern int cr_read_files(struct cr_ctx *ctx);
++
++/* there are from fs/read_write.c, not exported otherwise in a header */
++extern loff_t file_pos_read(struct file *file);
++extern void file_pos_write(struct file *file, loff_t pos);
++
++#define cr_debug(fmt, args...)  \
++	printk(KERN_ERR "[CR:%s] " fmt, __func__, ## args)
++
++#endif /* _CHECKPOINT_CKPT_H_ */
+Index: 2.6.27-lxc/include/linux/checkpoint_hdr.h
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ 2.6.27-lxc/include/linux/checkpoint_hdr.h	2008-10-23 11:24:06.000000000 +0200
+@@ -0,0 +1,138 @@
++#ifndef _CHECKPOINT_CKPT_HDR_H_
++#define _CHECKPOINT_CKPT_HDR_H_
++/*
++ *  Generic container checkpoint-restart
++ *
++ *  Copyright (C) 2008 Oren Laadan
++ *
++ *  This file is subject to the terms and conditions of the GNU General Public
++ *  License.  See the file COPYING in the main directory of the Linux
++ *  distribution for more details.
++ */
++
++#include <linux/types.h>
++#include <linux/utsname.h>
++#include <asm/checkpoint_hdr.h>
++
++/*
++ * To maintain compatibility between 32-bit and 64-bit architecture flavors,
++ * keep data 64-bit aligned: use padding for structure members, and use
++ * __attribute__((aligned(8))) for the entire structure.
++ */
++
++/* records: generic header */
++
++struct cr_hdr {
++	__s16 type;
++	__s16 len;
++	__u32 parent;
++};
++
++/* header types */
++enum {
++	CR_HDR_HEAD = 1,
++	CR_HDR_STRING,
++	CR_HDR_FNAME,
++
++	CR_HDR_TASK = 101,
++	CR_HDR_THREAD,
++	CR_HDR_CPU,
++
++	CR_HDR_MM = 201,
++	CR_HDR_VMA,
++	CR_HDR_PGARR,
++	CR_HDR_MM_CONTEXT,
++
++	CR_HDR_FILES = 301,
++	CR_HDR_FD_ENT,
++	CR_HDR_FD_DATA,
++
++	CR_HDR_TAIL = 5001
++};
++
++struct cr_hdr_head {
++	__u64 magic;
++
++	__u16 major;
++	__u16 minor;
++	__u16 patch;
++	__u16 rev;
++
++	__u64 time;	/* when checkpoint taken */
++	__u64 flags;	/* checkpoint options */
++
++	char release[__NEW_UTS_LEN];
++	char version[__NEW_UTS_LEN];
++	char machine[__NEW_UTS_LEN];
++} __attribute__((aligned(8)));
++
++struct cr_hdr_tail {
++	__u64 magic;
++} __attribute__((aligned(8)));
++
++struct cr_hdr_task {
++	__u32 state;
++	__u32 exit_state;
++	__u32 exit_code;
++	__u32 exit_signal;
++
++	__s32 task_comm_len;
++} __attribute__((aligned(8)));
++
++struct cr_hdr_mm {
++	__u32 objref;		/* identifier for shared objects */
++	__u32 map_count;
++
++	__u64 start_code, end_code, start_data, end_data;
++	__u64 start_brk, brk, start_stack;
++	__u64 arg_start, arg_end, env_start, env_end;
++} __attribute__((aligned(8)));
++
++/* vma subtypes */
++enum vm_type {
++	CR_VMA_ANON = 1,
++	CR_VMA_FILE
++};
++
++struct cr_hdr_vma {
++	__u32 vma_type;
++	__u32 _padding;
++
++	__u64 vm_start;
++	__u64 vm_end;
++	__u64 vm_page_prot;
++	__u64 vm_flags;
++	__u64 vm_pgoff;
++} __attribute__((aligned(8)));
++
++struct cr_hdr_pgarr {
++	__u64 nr_pages;		/* number of pages to saved */
++} __attribute__((aligned(8)));
++
++struct cr_hdr_files {
++	__u32 objref;		/* identifier for shared objects */
++	__u32 nfds;
++} __attribute__((aligned(8)));
++
++struct cr_hdr_fd_ent {
++	__u32 objref;		/* identifier for shared objects */
++	__s32 fd;
++	__u32 close_on_exec;
++} __attribute__((aligned(8)));
++
++/* fd types */
++enum  fd_type {
++	CR_FD_FILE = 1,
++	CR_FD_DIR,
++	CR_FD_LINK
++};
++
++struct cr_hdr_fd_data {
++	__u16 fd_type;
++	__u16 f_mode;
++	__u32 f_flags;
++	__u64 f_pos;
++	__u64 f_version;
++} __attribute__((aligned(8)));
++
++#endif /* _CHECKPOINT_CKPT_HDR_H_ */
+Index: 2.6.27-lxc/include/linux/magic.h
+===================================================================
+--- 2.6.27-lxc.orig/include/linux/magic.h	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/include/linux/magic.h	2008-10-23 11:24:06.000000000 +0200
+@@ -42,4 +42,7 @@
+ #define FUTEXFS_SUPER_MAGIC	0xBAD1DEA
+ #define INOTIFYFS_SUPER_MAGIC	0x2BAD1DEA
+ 
++#define CHECKPOINT_MAGIC_HEAD  0x00feed0cc0a2d200LL
++#define CHECKPOINT_MAGIC_TAIL  0x002d2a0cc0deef00LL
++
+ #endif /* __LINUX_MAGIC_H__ */
+Index: 2.6.27-lxc/arch/x86/mm/Makefile
+===================================================================
+--- 2.6.27-lxc.orig/arch/x86/mm/Makefile	2008-10-23 11:24:02.000000000 +0200
++++ 2.6.27-lxc/arch/x86/mm/Makefile	2008-10-23 11:24:06.000000000 +0200
+@@ -22,3 +22,5 @@ endif
+ obj-$(CONFIG_ACPI_NUMA)		+= srat_$(BITS).o
+ 
+ obj-$(CONFIG_MEMTEST)		+= memtest.o
++
++obj-$(CONFIG_CHECKPOINT_RESTART) += checkpoint.o restart.o
+Index: 2.6.27-lxc/arch/x86/mm/checkpoint.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ 2.6.27-lxc/arch/x86/mm/checkpoint.c	2008-10-23 11:24:06.000000000 +0200
+@@ -0,0 +1,231 @@
++/*
++ *  Checkpoint/restart - architecture specific support for x86
++ *
++ *  Copyright (C) 2008 Oren Laadan
++ *
++ *  This file is subject to the terms and conditions of the GNU General Public
++ *  License.  See the file COPYING in the main directory of the Linux
++ *  distribution for more details.
++ */
++
++#include <asm/desc.h>
++#include <asm/i387.h>
++
++#include <linux/checkpoint.h>
++#include <linux/checkpoint_hdr.h>
++
++/* dump the thread_struct of a given task */
++int cr_write_thread(struct cr_ctx *ctx, struct task_struct *t)
++{
++	struct cr_hdr h;
++	struct cr_hdr_thread *hh = cr_hbuf_get(ctx, sizeof(*hh));
++	struct thread_struct *thread;
++	struct desc_struct *desc;
++	int ntls = 0;
++	int n, ret;
++
++	h.type = CR_HDR_THREAD;
++	h.len = sizeof(*hh);
++	h.parent = task_pid_vnr(t);
++
++	thread = &t->thread;
++
++	/* calculate no. of TLS entries that follow */
++	desc = thread->tls_array;
++	for (n = GDT_ENTRY_TLS_ENTRIES; n > 0; n--, desc++) {
++		if (desc->a || desc->b)
++			ntls++;
++	}
++
++	hh->gdt_entry_tls_entries = GDT_ENTRY_TLS_ENTRIES;
++	hh->sizeof_tls_array = sizeof(thread->tls_array);
++	hh->ntls = ntls;
++
++	ret = cr_write_obj(ctx, &h, hh);
++	cr_hbuf_put(ctx, sizeof(*hh));
++	if (ret < 0)
++		return ret;
++
++	/* for simplicity dump the entire array, cherry-pick upon restart */
++	ret = cr_kwrite(ctx, thread->tls_array, sizeof(thread->tls_array));
++
++	cr_debug("ntls %d\n", ntls);
++
++	/* IGNORE RESTART BLOCKS FOR NOW ... */
++
++	return ret;
++}
++
++#ifdef CONFIG_X86_64
++
++#error "CONFIG_X86_64 unsupported yet."
++
++#else	/* !CONFIG_X86_64 */
++
++void cr_write_cpu_regs(struct cr_hdr_cpu *hh, struct task_struct *t)
++{
++	struct thread_struct *thread = &t->thread;
++	struct pt_regs *regs = task_pt_regs(t);
++
++	hh->bp = regs->bp;
++	hh->bx = regs->bx;
++	hh->ax = regs->ax;
++	hh->cx = regs->cx;
++	hh->dx = regs->dx;
++	hh->si = regs->si;
++	hh->di = regs->di;
++	hh->orig_ax = regs->orig_ax;
++	hh->ip = regs->ip;
++	hh->cs = regs->cs;
++	hh->flags = regs->flags;
++	hh->sp = regs->sp;
++	hh->ss = regs->ss;
++
++	hh->ds = regs->ds;
++	hh->es = regs->es;
++
++	/*
++	 * for checkpoint in process context (from within a container)
++	 * the GS and FS registers should be saved from the hardware;
++	 * otherwise they are already sabed on the thread structure
++	 */
++	if (t == current) {
++		savesegment(gs, hh->gs);
++		savesegment(fs, hh->fs);
++	} else {
++		hh->gs = thread->gs;
++		hh->fs = thread->fs;
++	}
++
++	/*
++	 * for checkpoint in process context (from within a container),
++	 * the actual syscall is taking place at this very moment; so
++	 * we (optimistically) subtitute the future return value (0) of
++	 * this syscall into the orig_eax, so that upon restart it will
++	 * succeed (or it will endlessly retry checkpoint...)
++	 */
++	if (t == current) {
++		BUG_ON(hh->orig_ax < 0);
++		hh->ax = 0;
++	}
++}
++
++void cr_write_cpu_debug(struct cr_hdr_cpu *hh, struct task_struct *t)
++{
++	struct thread_struct *thread = &t->thread;
++
++	/* debug regs */
++
++	preempt_disable();
++
++	/*
++	 * for checkpoint in process context (from within a container),
++	 * get the actual registers; otherwise get the saved values.
++	 */
++
++	if (t == current) {
++		get_debugreg(hh->debugreg0, 0);
++		get_debugreg(hh->debugreg1, 1);
++		get_debugreg(hh->debugreg2, 2);
++		get_debugreg(hh->debugreg3, 3);
++		get_debugreg(hh->debugreg6, 6);
++		get_debugreg(hh->debugreg7, 7);
++	} else {
++		hh->debugreg0 = thread->debugreg0;
++		hh->debugreg1 = thread->debugreg1;
++		hh->debugreg2 = thread->debugreg2;
++		hh->debugreg3 = thread->debugreg3;
++		hh->debugreg6 = thread->debugreg6;
++		hh->debugreg7 = thread->debugreg7;
++	}
++
++	hh->debugreg4 = 0;
++	hh->debugreg5 = 0;
++
++	hh->uses_debug = !!(task_thread_info(t)->flags & TIF_DEBUG);
++
++	preempt_enable();
++}
++
++void cr_write_cpu_fpu(struct cr_hdr_cpu *hh, struct task_struct *t)
++{
++	struct thread_struct *thread = &t->thread;
++	struct thread_info *thread_info = task_thread_info(t);
++
++	/* i387 + MMU + SSE logic */
++
++	preempt_disable();	/* needed if t == current */
++
++	hh->used_math = tsk_used_math(t) ? 1 : 0;
++	if (hh->used_math) {
++		/*
++		 * normally, no need to unlazy_fpu(), since TS_USEDFPU flag
++		 * have been cleared when task was conexted-switched out...
++		 * except if we are in process context, in which case we do
++		 */
++		if (t == current) {
++			if (thread_info->status & TS_USEDFPU)
++				   unlazy_fpu(current);
++		}
++
++		hh->has_fxsr = cpu_has_fxsr;
++		memcpy(&hh->xstate, thread->xstate, sizeof(*thread->xstate));
++	}
++
++	preempt_enable();	/* needed if t == current */
++}
++
++#endif	/* CONFIG_X86_64 */
++
++/* dump the cpu state and registers of a given task */
++int cr_write_cpu(struct cr_ctx *ctx, struct task_struct *t)
++{
++	struct cr_hdr h;
++	struct cr_hdr_cpu *hh = cr_hbuf_get(ctx, sizeof(*hh));
++	int ret;
++
++	h.type = CR_HDR_CPU;
++	h.len = sizeof(*hh);
++	h.parent = task_pid_vnr(t);
++
++	cr_write_cpu_regs(hh, t);
++	cr_write_cpu_debug(hh, t);
++	cr_write_cpu_fpu(hh, t);
++
++	cr_debug("math %d debug %d\n", hh->used_math, hh->uses_debug);
++
++	ret = cr_write_obj(ctx, &h, hh);
++	cr_hbuf_put(ctx, sizeof(*hh));
++	return ret;
++}
++
++/* dump the mm->context state */
++int cr_write_mm_context(struct cr_ctx *ctx, struct mm_struct *mm, int parent)
++{
++	struct cr_hdr h;
++	struct cr_hdr_mm_context *hh = cr_hbuf_get(ctx, sizeof(*hh));
++	int ret;
++
++	h.type = CR_HDR_MM_CONTEXT;
++	h.len = sizeof(*hh);
++	h.parent = parent;
++
++	mutex_lock(&mm->context.lock);
++
++	hh->ldt_entry_size = LDT_ENTRY_SIZE;
++	hh->nldt = mm->context.size;
++
++	cr_debug("nldt %d\n", hh->nldt);
++
++	ret = cr_write_obj(ctx, &h, hh);
++	cr_hbuf_put(ctx, sizeof(*hh));
++	if (ret < 0)
++		goto out;
++
++	ret = cr_kwrite(ctx, mm->context.ldt,
++			mm->context.size * LDT_ENTRY_SIZE);
++
++ out:
++	mutex_unlock(&mm->context.lock);
++	return ret;
++}
+Index: 2.6.27-lxc/arch/x86/mm/restart.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ 2.6.27-lxc/arch/x86/mm/restart.c	2008-10-23 11:24:06.000000000 +0200
+@@ -0,0 +1,255 @@
++/*
++ *  Checkpoint/restart - architecture specific support for x86
++ *
++ *  Copyright (C) 2008 Oren Laadan
++ *
++ *  This file is subject to the terms and conditions of the GNU General Public
++ *  License.  See the file COPYING in the main directory of the Linux
++ *  distribution for more details.
++ */
++
++#include <linux/unistd.h>
++#include <asm/desc.h>
++#include <asm/i387.h>
++
++#include <linux/checkpoint.h>
++#include <linux/checkpoint_hdr.h>
++
++/* read the thread_struct into the current task */
++int cr_read_thread(struct cr_ctx *ctx)
++{
++	struct cr_hdr_thread *hh = cr_hbuf_get(ctx, sizeof(*hh));
++	struct task_struct *t = current;
++	struct thread_struct *thread = &t->thread;
++	int parent, ret;
++
++	parent = cr_read_obj_type(ctx, hh, sizeof(*hh), CR_HDR_THREAD);
++	if (parent < 0) {
++		ret = parent;
++		goto out;
++	}
++
++	ret = -EINVAL;
++
++#if 0	/* activate when containers are used */
++	if (parent != task_pid_vnr(t))
++		goto out;
++#endif
++	cr_debug("ntls %d\n", hh->ntls);
++
++	if (hh->gdt_entry_tls_entries != GDT_ENTRY_TLS_ENTRIES ||
++	    hh->sizeof_tls_array != sizeof(thread->tls_array) ||
++	    hh->ntls < 0 || hh->ntls > GDT_ENTRY_TLS_ENTRIES)
++		goto out;
++
++	if (hh->ntls > 0) {
++		struct desc_struct *desc;
++		int size, cpu;
++
++		/*
++		 * restore TLS by hand: why convert to struct user_desc if
++		 * sys_set_thread_entry() will convert it back ?
++		 */
++
++		size = sizeof(*desc) * GDT_ENTRY_TLS_ENTRIES;
++		desc = kmalloc(size, GFP_KERNEL);
++		if (!desc) {
++			ret = -ENOMEM;
++			goto out;
++		}
++
++		ret = cr_kread(ctx, desc, size);
++		if (ret >= 0) {
++			/*
++			 * FIX: add sanity checks (eg. that values makes
++			 * sense, that we don't overwrite old values, etc
++			 */
++			cpu = get_cpu();
++			memcpy(thread->tls_array, desc, size);
++			load_TLS(thread, cpu);
++			put_cpu();
++		}
++		kfree(desc);
++	}
++
++	ret = 0;
++ out:
++	cr_hbuf_put(ctx, sizeof(*hh));
++	return ret;
++}
++
++#ifdef CONFIG_X86_64
++
++#error "CONFIG_X86_64 unsupported yet."
++
++#else	/* !CONFIG_X86_64 */
++
++int cr_read_cpu_regs(struct cr_hdr_cpu *hh, struct task_struct *t)
++{
++	struct thread_struct *thread = &t->thread;
++	struct pt_regs *regs = task_pt_regs(t);
++
++	regs->bx = hh->bx;
++	regs->cx = hh->cx;
++	regs->dx = hh->dx;
++	regs->si = hh->si;
++	regs->di = hh->di;
++	regs->bp = hh->bp;
++	regs->ax = hh->ax;
++	regs->ds = hh->ds;
++	regs->es = hh->es;
++	regs->orig_ax = hh->orig_ax;
++	regs->ip = hh->ip;
++	regs->cs = hh->cs;
++	regs->flags = hh->flags;
++	regs->sp = hh->sp;
++	regs->ss = hh->ss;
++
++	thread->gs = hh->gs;
++	thread->fs = hh->fs;
++	loadsegment(gs, hh->gs);
++	loadsegment(fs, hh->fs);
++
++	return 0;
++}
++
++int cr_read_cpu_debug(struct cr_hdr_cpu *hh, struct task_struct *t)
++{
++	/* debug regs */
++
++	if (hh->uses_debug) {
++		set_debugreg(hh->debugreg0, 0);
++		set_debugreg(hh->debugreg1, 1);
++		/* ignore 4, 5 */
++		set_debugreg(hh->debugreg2, 2);
++		set_debugreg(hh->debugreg3, 3);
++		set_debugreg(hh->debugreg6, 6);
++		set_debugreg(hh->debugreg7, 7);
++	}
++
++	return 0;
++}
++
++int cr_read_cpu_fpu(struct cr_hdr_cpu *hh, struct task_struct *t)
++{
++	struct thread_struct *thread = &t->thread;
++	int ret;
++
++	/* i387 + MMU + SSE */
++
++	preempt_disable();
++
++	__clear_fpu(t);		/* in case we used FPU in user mode */
++
++	if (!hh->used_math)
++		clear_used_math();
++	else {
++		if (hh->has_fxsr != cpu_has_fxsr) {
++			force_sig(SIGFPE, t);
++			return -EINVAL;
++		}
++		/* init_fpu() also calls set_used_math() */
++		ret = init_fpu(current);
++		if (ret < 0)
++			return ret;
++		memcpy(thread->xstate, &hh->xstate, sizeof(*thread->xstate));
++	}
++
++	preempt_enable();
++	return 0;
++}
++
++#endif	/* CONFIG_X86_64 */
++
++/* read the cpu state and registers for the current task */
++int cr_read_cpu(struct cr_ctx *ctx)
++{
++	struct cr_hdr_cpu *hh = cr_hbuf_get(ctx, sizeof(*hh));
++	struct task_struct *t = current;
++	int parent, ret;
++
++	parent = cr_read_obj_type(ctx, hh, sizeof(*hh), CR_HDR_CPU);
++	if (parent < 0) {
++		ret = parent;
++		goto out;
++	}
++
++	ret = -EINVAL;
++
++#if 0	/* activate when containers are used */
++	if (parent != task_pid_vnr(t))
++		goto out;
++#endif
++	/* FIX: sanity check for sensitive registers (eg. eflags) */
++
++	ret = cr_read_cpu_regs(hh, t);
++	if (ret < 0)
++		goto out;
++	ret = cr_read_cpu_debug(hh, t);
++	if (ret < 0)
++		goto out;
++	ret = cr_read_cpu_fpu(hh, t);
++
++	cr_debug("math %d debug %d\n", hh->used_math, hh->uses_debug);
++ out:
++	cr_hbuf_put(ctx, sizeof(*hh));
++	return ret;
++}
++
++int cr_read_mm_context(struct cr_ctx *ctx, struct mm_struct *mm, int parent)
++{
++	struct cr_hdr_mm_context *hh = cr_hbuf_get(ctx, sizeof(*hh));
++	int n, rparent, ret = -EINVAL;
++
++	rparent = cr_read_obj_type(ctx, hh, sizeof(*hh), CR_HDR_MM_CONTEXT);
++	cr_debug("parent %d rparent %d nldt %d\n", parent, rparent, hh->nldt);
++	if (rparent < 0) {
++		ret = rparent;
++		goto out;
++	}
++	if (rparent != parent)
++		goto out;
++
++	if (hh->nldt < 0 || hh->ldt_entry_size != LDT_ENTRY_SIZE)
++		goto out;
++
++	/*
++	 * to utilize the syscall modify_ldt() we first convert the data
++	 * in the checkpoint image from 'struct desc_struct' to 'struct
++	 * user_desc' with reverse logic of include/asm/desc.h:fill_ldt()
++	 */
++
++	for (n = 0; n < hh->nldt; n++) {
++		struct user_desc info;
++		struct desc_struct desc;
++		mm_segment_t old_fs;
++
++		ret = cr_kread(ctx, &desc, LDT_ENTRY_SIZE);
++		if (ret < 0)
++			goto out;
++
++		info.entry_number = n;
++		info.base_addr = desc.base0 | (desc.base1 << 16);
++		info.limit = desc.limit0;
++		info.seg_32bit = desc.d;
++		info.contents = desc.type >> 2;
++		info.read_exec_only = (desc.type >> 1) ^ 1;
++		info.limit_in_pages = desc.g;
++		info.seg_not_present = desc.p ^ 1;
++		info.useable = desc.avl;
++
++		old_fs = get_fs();
++		set_fs(get_ds());
++		ret = sys_modify_ldt(1, (struct user_desc __user *) &info,
++				     sizeof(info));
++		set_fs(old_fs);
++
++		if (ret < 0)
++			goto out;
++	}
++
++	ret = 0;
++ out:
++	cr_hbuf_put(ctx, sizeof(*hh));
++	return ret;
++}
+Index: 2.6.27-lxc/checkpoint/checkpoint_arch.h
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ 2.6.27-lxc/checkpoint/checkpoint_arch.h	2008-10-23 11:24:06.000000000 +0200
+@@ -0,0 +1,11 @@
++#include <linux/checkpoint.h>
++
++extern int cr_write_thread(struct cr_ctx *ctx, struct task_struct *t);
++extern int cr_write_cpu(struct cr_ctx *ctx, struct task_struct *t);
++extern int cr_write_mm_context(struct cr_ctx *ctx,
++			       struct mm_struct *mm, int parent);
++
++extern int cr_read_thread(struct cr_ctx *ctx);
++extern int cr_read_cpu(struct cr_ctx *ctx);
++extern int cr_read_mm_context(struct cr_ctx *ctx,
++			      struct mm_struct *mm, int parent);
+Index: 2.6.27-lxc/include/asm-x86/checkpoint_hdr.h
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ 2.6.27-lxc/include/asm-x86/checkpoint_hdr.h	2008-10-23 11:24:06.000000000 +0200
+@@ -0,0 +1,81 @@
++#ifndef __ASM_X86_CKPT_HDR_H
++#define __ASM_X86_CKPT_HDR_H
++/*
++ *  Checkpoint/restart - architecture specific headers x86
++ *
++ *  Copyright (C) 2008 Oren Laadan
++ *
++ *  This file is subject to the terms and conditions of the GNU General Public
++ *  License.  See the file COPYING in the main directory of the Linux
++ *  distribution for more details.
++ */
++
++#include <asm/processor.h>
++
++struct cr_hdr_thread {
++	/* NEED: restart blocks */
++
++	__s16 gdt_entry_tls_entries;
++	__s16 sizeof_tls_array;
++	__s16 ntls;	/* number of TLS entries to follow */
++} __attribute__((aligned(8)));
++
++struct cr_hdr_cpu {
++	/* see struct pt_regs (x86-64) */
++	__u64 r15;
++	__u64 r14;
++	__u64 r13;
++	__u64 r12;
++	__u64 bp;
++	__u64 bx;
++	__u64 r11;
++	__u64 r10;
++	__u64 r9;
++	__u64 r8;
++	__u64 ax;
++	__u64 cx;
++	__u64 dx;
++	__u64 si;
++	__u64 di;
++	__u64 orig_ax;
++	__u64 ip;
++	__u64 cs;
++	__u64 flags;
++	__u64 sp;
++	__u64 ss;
++
++	/* segment registers */
++	__u64 ds;
++	__u64 es;
++	__u64 fs;
++	__u64 gs;
++
++	/* debug registers */
++	__u64 debugreg0;
++	__u64 debugreg1;
++	__u64 debugreg2;
++	__u64 debugreg3;
++	__u64 debugreg4;
++	__u64 debugreg5;
++	__u64 debugreg6;
++	__u64 debugreg7;
++
++	__u16 uses_debug;
++	__u16 used_math;
++	__u16 has_fxsr;
++	__u16 _padding;
++
++	union thread_xstate xstate;	/* i387 */
++
++} __attribute__((aligned(8)));
++
++struct cr_hdr_mm_context {
++	__s16 ldt_entry_size;
++	__s16 nldt;
++} __attribute__((aligned(8)));
++
++
++/* misc prototypes from kernel (not defined elsewhere) */
++asmlinkage int sys_modify_ldt(int func, void __user *ptr, unsigned long bytecount);
++
++#endif /* __ASM_X86_CKPT_HDR__H */
+Index: 2.6.27-lxc/checkpoint/checkpoint_mem.h
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ 2.6.27-lxc/checkpoint/checkpoint_mem.h	2008-10-23 11:24:06.000000000 +0200
+@@ -0,0 +1,46 @@
++#ifndef _CHECKPOINT_CKPT_MEM_H_
++#define _CHECKPOINT_CKPT_MEM_H_
++/*
++ *  Generic container checkpoint-restart
++ *
++ *  Copyright (C) 2008 Oren Laadan
++ *
++ *  This file is subject to the terms and conditions of the GNU General Public
++ *  License.  See the file COPYING in the main directory of the Linux
++ *  distribution for more details.
++ */
++
++#include <linux/mm_types.h>
++
++/*
++ * page-array chains: each cr_pgarr describes a set of <strcut page *,vaddr>
++ * tuples (where vaddr is the virtual address of a page in a particular mm).
++ * Specifically, we use separate arrays so that all vaddrs can be written
++ * and read at once.
++ */
++
++struct cr_pgarr {
++	unsigned long *vaddrs;
++	struct page **pages;
++	unsigned int nr_used;
++	struct list_head list;
++};
++
++#define CR_PGARR_TOTAL  (PAGE_SIZE / sizeof(void *))
++#define CR_PGARR_CHUNK  (4 * CR_PGARR_TOTAL)
++
++extern void cr_pgarr_free(struct cr_ctx *ctx);
++extern struct cr_pgarr *cr_pgarr_current(struct cr_ctx *ctx);
++extern void cr_pgarr_reset_all(struct cr_ctx *ctx);
++
++static inline int cr_pgarr_is_full(struct cr_pgarr *pgarr)
++{
++	return (pgarr->nr_used == CR_PGARR_TOTAL);
++}
++
++static inline int cr_pgarr_nr_free(struct cr_pgarr *pgarr)
++{
++	return CR_PGARR_TOTAL - pgarr->nr_used;
++}
++
++#endif /* _CHECKPOINT_CKPT_MEM_H_ */
+Index: 2.6.27-lxc/checkpoint/ckpt_mem.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ 2.6.27-lxc/checkpoint/ckpt_mem.c	2008-10-23 11:24:06.000000000 +0200
+@@ -0,0 +1,500 @@
++/*
++ *  Checkpoint memory contents
++ *
++ *  Copyright (C) 2008 Oren Laadan
++ *
++ *  This file is subject to the terms and conditions of the GNU General Public
++ *  License.  See the file COPYING in the main directory of the Linux
++ *  distribution for more details.
++ */
++
++#include <linux/kernel.h>
++#include <linux/sched.h>
++#include <linux/slab.h>
++#include <linux/file.h>
++#include <linux/pagemap.h>
++#include <linux/mm_types.h>
++#include <linux/checkpoint.h>
++#include <linux/checkpoint_hdr.h>
++
++#include "checkpoint_arch.h"
++#include "checkpoint_mem.h"
++
++/*
++ * utilities to alloc, free, and handle 'struct cr_pgarr' (page-arrays)
++ * (common to ckpt_mem.c and rstr_mem.c).
++ *
++ * The checkpoint context structure has two members for page-arrays:
++ *   ctx->pgarr_list: list head of the page-array chain
++ *
++ * During checkpoint (and restart) the chain tracks the dirty pages (page
++ * pointer and virtual address) of each MM. For a particular MM, these are
++ * always added to the head of the page-array chain (ctx->pgarr_list).
++ * This "current" page-array advances as necessary, and new page-array
++ * descriptors are allocated on-demand. Before the next chunk of pages,
++ * the chain is reset but not freed (that is, dereference page pointers).
++ */
++
++/* return first page-array in the chain */
++static inline struct cr_pgarr *cr_pgarr_first(struct cr_ctx *ctx)
++{
++	if (list_empty(&ctx->pgarr_list))
++		return NULL;
++	return list_first_entry(&ctx->pgarr_list, struct cr_pgarr, list);
++}
++
++/* release pages referenced by a page-array */
++static void cr_pgarr_release_pages(struct cr_pgarr *pgarr)
++{
++	int i;
++
++	cr_debug("nr_used %d\n", pgarr->nr_used);
++	/*
++	 * although both checkpoint and restart use 'nr_used', we only
++	 * collect pages during checkpoint; in restart we simply return
++	 */
++	if (!pgarr->pages)
++		return;
++	for (i = pgarr->nr_used; i--; /**/)
++		page_cache_release(pgarr->pages[i]);
++}
++
++/* free a single page-array object */
++static void cr_pgarr_free_one(struct cr_pgarr *pgarr)
++{
++	cr_pgarr_release_pages(pgarr);
++	kfree(pgarr->pages);
++	kfree(pgarr->vaddrs);
++	kfree(pgarr);
++}
++
++/* free a chain of page-arrays */
++void cr_pgarr_free(struct cr_ctx *ctx)
++{
++	struct cr_pgarr *pgarr, *tmp;
++
++	list_for_each_entry_safe(pgarr, tmp, &ctx->pgarr_list, list) {
++		list_del(&pgarr->list);
++		cr_pgarr_free_one(pgarr);
++	}
++}
++
++/* allocate a single page-array object */
++static struct cr_pgarr *cr_pgarr_alloc_one(unsigned long flags)
++{
++	struct cr_pgarr *pgarr;
++
++	pgarr = kzalloc(sizeof(*pgarr), GFP_KERNEL);
++	if (!pgarr)
++		return NULL;
++
++	pgarr->vaddrs = kmalloc(CR_PGARR_TOTAL * sizeof(unsigned long),
++				GFP_KERNEL);
++	if (!pgarr->vaddrs)
++		goto nomem;
++
++	/* pgarr->pages is needed only for checkpoint */
++	if (flags & CR_CTX_CKPT) {
++		pgarr->pages = kmalloc(CR_PGARR_TOTAL * sizeof(struct page *),
++				       GFP_KERNEL);
++		if (!pgarr->pages)
++			goto nomem;
++	}
++
++	return pgarr;
++
++ nomem:
++	cr_pgarr_free_one(pgarr);
++	return NULL;
++}
++
++/* cr_pgarr_current - return the next available page-array in the chain
++ * @ctx: checkpoint context
++ *
++ * Returns the first page-array in the list that has space. Extends the
++ * list if none has space.
++ */
++struct cr_pgarr *cr_pgarr_current(struct cr_ctx *ctx)
++{
++	struct cr_pgarr *pgarr;
++
++	pgarr = cr_pgarr_first(ctx);
++	if (pgarr && !cr_pgarr_is_full(pgarr))
++		goto out;
++	pgarr = cr_pgarr_alloc_one(ctx->flags);
++	if (!pgarr)
++		goto out;
++	list_add(&pgarr->list, &ctx->pgarr_list);
++ out:
++	return pgarr;
++}
++
++/* reset the page-array chain (dropping page references if necessary) */
++void cr_pgarr_reset_all(struct cr_ctx *ctx)
++{
++	struct cr_pgarr *pgarr;
++
++	list_for_each_entry(pgarr, &ctx->pgarr_list, list) {
++		cr_pgarr_release_pages(pgarr);
++		pgarr->nr_used = 0;
++	}
++}
++
++/*
++ * Checkpoint is outside the context of the checkpointee, so one cannot
++ * simply read pages from user-space. Instead, we scan the address space
++ * of the target to cherry-pick pages of interest. Selected pages are
++ * enlisted in a page-array chain (attached to the checkpoint context).
++ * To save their contents, each page is mapped to kernel memory and then
++ * dumped to the file descriptor.
++ */
++
++
++/**
++ * cr_private_follow_page - return page pointer for dirty pages
++ * @vma - target vma
++ * @addr - page address
++ *
++ * Looks up the page that correspond to the address in the vma, and
++ * returns the page if it was modified (and grabs a reference to it),
++ * or otherwise returns NULL (or error).
++ *
++ * This function should _only_ called for private vma's.
++ */
++static struct page *
++cr_private_follow_page(struct vm_area_struct *vma, unsigned long addr)
++{
++	struct page *page;
++
++	BUG_ON(vma->vm_flags & (VM_SHARED | VM_MAYSHARE));
++
++	/*
++	 * simplified version of get_user_pages(): already have vma,
++	 * only need FOLL_ANON, and (for now) ignore fault stats.
++	 *
++	 * follow_page() will return NULL if the page is not present
++	 * (swapped), ZERO_PAGE(0) if the pte wasn't allocated, and
++	 * the actual page pointer otherwise.
++	 *
++	 * FIXME: consolidate with get_user_pages()
++	 */
++
++	cond_resched();
++	while (!(page = follow_page(vma, addr, FOLL_ANON | FOLL_GET))) {
++		int ret;
++
++		/* the page is swapped out - bring it in (optimize ?) */
++		ret = handle_mm_fault(vma->vm_mm, vma, addr, 0);
++		if (ret & VM_FAULT_ERROR) {
++			if (ret & VM_FAULT_OOM)
++				return ERR_PTR(-ENOMEM);
++			else if (ret & VM_FAULT_SIGBUS)
++				return ERR_PTR(-EFAULT);
++			else
++				BUG();
++			break;
++		}
++		cond_resched();
++	}
++
++	if (IS_ERR(page))
++		return page;
++
++	/*
++	 * We only care about dirty pages: either non-zero page, or
++	 * file-backed (copy-on-write) that were touched. For the latter,
++	 * the page_mapping() will be unset because it will no longer be
++	 * mapped to the original file  after having been modified.
++	 */
++	if (page == ZERO_PAGE(0)) {
++		/* this is the zero page: ignore */
++		page_cache_release(page);
++		page = NULL;
++	} else if (vma->vm_file && (page_mapping(page) != NULL)) {
++		/* file backed clean cow: ignore */
++		page_cache_release(page);
++		page = NULL;
++	}
++
++	return page;
++}
++
++/**
++ * cr_private_vma_fill_pgarr - fill a page-array with addr/page tuples
++ * @ctx - checkpoint context
++ * @pgarr - page-array to fill
++ * @vma - vma to scan
++ * @start - start address (updated)
++ *
++ * Returns the number of pages collected
++ */
++static int
++cr_private_vma_fill_pgarr(struct cr_ctx *ctx, struct cr_pgarr *pgarr,
++			  struct vm_area_struct *vma, unsigned long *start)
++{
++	unsigned long end = vma->vm_end;
++	unsigned long addr = *start;
++	int orig_used = pgarr->nr_used;
++
++	/* this function is only for private memory (anon or file-mapped) */
++	BUG_ON(vma->vm_flags & (VM_SHARED | VM_MAYSHARE));
++
++	while (addr < end) {
++		struct page *page;
++
++		page = cr_private_follow_page(vma, addr);
++		if (IS_ERR(page))
++			return PTR_ERR(page);
++
++		if (page) {
++			pgarr->pages[pgarr->nr_used] = page;
++			pgarr->vaddrs[pgarr->nr_used] = addr;
++			pgarr->nr_used++;
++		}
++
++		addr += PAGE_SIZE;
++
++		if (cr_pgarr_is_full(pgarr))
++			break;
++	}
++
++	*start = addr;
++	return pgarr->nr_used - orig_used;
++}
++
++/* dump contents of a pages: use kmap_atomic() to avoid TLB flush */
++static int cr_page_write(struct cr_ctx *ctx, struct page *page, char *buf)
++{
++	void *ptr;
++
++	ptr = kmap_atomic(page, KM_USER1);
++	memcpy(buf, ptr, PAGE_SIZE);
++	kunmap_atomic(ptr, KM_USER1);
++
++	return cr_kwrite(ctx, buf, PAGE_SIZE);
++}
++
++/**
++ * cr_vma_dump_pages - dump pages listed in the ctx page-array chain
++ * @ctx - checkpoint context
++ * @total - total number of pages
++ *
++ * First dump all virtual addresses, followed by the contents of all pages
++ */
++static int cr_vma_dump_pages(struct cr_ctx *ctx, int total)
++{
++	struct cr_pgarr *pgarr;
++	char *buf;
++	int i, ret = 0;
++
++	if (!total)
++		return 0;
++
++	list_for_each_entry_reverse(pgarr, &ctx->pgarr_list, list) {
++		ret = cr_kwrite(ctx, pgarr->vaddrs,
++				pgarr->nr_used * sizeof(*pgarr->vaddrs));
++		if (ret < 0)
++			return ret;
++	}
++
++	buf = kmalloc(PAGE_SIZE, GFP_KERNEL);
++	if (!buf)
++		return -ENOMEM;
++
++	list_for_each_entry_reverse(pgarr, &ctx->pgarr_list, list) {
++		for (i = 0; i < pgarr->nr_used; i++) {
++			ret = cr_page_write(ctx, pgarr->pages[i], buf);
++			if (ret < 0)
++				goto out;
++		}
++	}
++
++ out:
++	kfree(buf);
++	return ret;
++}
++
++/**
++ * cr_write_private_vma_contents - dump contents of a VMA with private memory
++ * @ctx - checkpoint context
++ * @vma - vma to scan
++ *
++ * Collect lists of pages that needs to be dumped, and corresponding
++ * virtual addresses into ctx->pgarr_list page-array chain. Then dump
++ * the addresses, followed by the page contents.
++ */
++static int
++cr_write_private_vma_contents(struct cr_ctx *ctx, struct vm_area_struct *vma)
++{
++	struct cr_hdr h;
++	struct cr_hdr_pgarr *hh;
++	unsigned long addr = vma->vm_start;
++	struct cr_pgarr *pgarr;
++	unsigned long cnt = 0;
++	int ret;
++
++	/*
++	 * Work iteratively, collecting and dumping at most CR_PGARR_CHUNK
++	 * in each round. Each iterations is divided into two steps:
++	 *
++	 * (1) scan: scan through the PTEs of the vma to collect the pages
++	 * to dump (later we'll also make them COW), while keeping a list
++	 * of pages and their corresponding addresses on ctx->pgarr_list.
++	 *
++	 * (2) dump: write out a header specifying how many pages, followed
++	 * by the addresses of all pages in ctx->pgarr_list, followed by
++	 * the actual contents of all pages. (Then, release the references
++	 * to the pages and reset the page-array chain).
++	 *
++	 * (This split makes the logic simpler by first counting the pages
++	 * that need saving. More importantly, it allows for a future
++	 * optimization that will reduce application downtime by deferring
++	 * the actual write-out of the data to after the application is
++	 * allowed to resume execution).
++	 *
++	 * After dumpting the entire contents, conclude with a header that
++	 * specifies 0 pages to mark the end of the contents.
++	 */
++
++	h.type = CR_HDR_PGARR;
++	h.len = sizeof(*hh);
++	h.parent = 0;
++
++	while (addr < vma->vm_end) {
++		pgarr = cr_pgarr_current(ctx);
++		if (!pgarr)
++			return -ENOMEM;
++		ret = cr_private_vma_fill_pgarr(ctx, pgarr, vma, &addr);
++		if (ret < 0)
++			return ret;
++		cnt += ret;
++
++		/* did we complete a chunk, or is this the last chunk ? */
++		if (cnt >= CR_PGARR_CHUNK || (cnt && addr == vma->vm_end)) {
++			hh = cr_hbuf_get(ctx, sizeof(*hh));
++			hh->nr_pages = cnt;
++			ret = cr_write_obj(ctx, &h, hh);
++			cr_hbuf_put(ctx, sizeof(*hh));
++			if (ret < 0)
++				return ret;
++
++			ret = cr_vma_dump_pages(ctx, cnt);
++			if (ret < 0)
++				return ret;
++
++			cr_pgarr_reset_all(ctx);
++		}
++	}
++
++	/* mark end of contents with header saying "0" pages */
++	hh = cr_hbuf_get(ctx, sizeof(*hh));
++	hh->nr_pages = 0;
++	ret = cr_write_obj(ctx, &h, hh);
++	cr_hbuf_put(ctx, sizeof(*hh));
++
++	return ret;
++}
++
++static int cr_write_vma(struct cr_ctx *ctx, struct vm_area_struct *vma)
++{
++	struct cr_hdr h;
++	struct cr_hdr_vma *hh = cr_hbuf_get(ctx, sizeof(*hh));
++	int vma_type, ret;
++
++	h.type = CR_HDR_VMA;
++	h.len = sizeof(*hh);
++	h.parent = 0;
++
++	hh->vm_start = vma->vm_start;
++	hh->vm_end = vma->vm_end;
++	hh->vm_page_prot = vma->vm_page_prot.pgprot;
++	hh->vm_flags = vma->vm_flags;
++	hh->vm_pgoff = vma->vm_pgoff;
++
++	if (vma->vm_flags & (VM_SHARED | VM_IO | VM_HUGETLB | VM_NONLINEAR)) {
++		pr_warning("CR: unsupported VMA %#lx\n", vma->vm_flags);
++		cr_hbuf_put(ctx, sizeof(*hh));
++		return -ENOSYS;
++	}
++
++	/* by default assume anon memory */
++	vma_type = CR_VMA_ANON;
++
++	/*
++	 * if there is a backing file, assume private-mapped
++	 * (FIXME: check if the file is unlinked)
++	 */
++	if (vma->vm_file)
++		vma_type = CR_VMA_FILE;
++
++	hh->vma_type = vma_type;
++
++	ret = cr_write_obj(ctx, &h, hh);
++	cr_hbuf_put(ctx, sizeof(*hh));
++	if (ret < 0)
++		return ret;
++
++	/* save the file name, if relevant */
++	if (vma->vm_file) {
++		ret = cr_write_fname(ctx, &vma->vm_file->f_path, ctx->vfsroot);
++		if (ret < 0)
++			return ret;
++	}
++
++	return cr_write_private_vma_contents(ctx, vma);
++}
++
++int cr_write_mm(struct cr_ctx *ctx, struct task_struct *t)
++{
++	struct cr_hdr h;
++	struct cr_hdr_mm *hh = cr_hbuf_get(ctx, sizeof(*hh));
++	struct mm_struct *mm;
++	struct vm_area_struct *vma;
++	int objref, ret;
++
++	h.type = CR_HDR_MM;
++	h.len = sizeof(*hh);
++	h.parent = task_pid_vnr(t);
++
++	mm = get_task_mm(t);
++
++	objref = 0;	/* will be meaningful with multiple processes */
++	hh->objref = objref;
++
++	down_read(&mm->mmap_sem);
++
++	hh->start_code = mm->start_code;
++	hh->end_code = mm->end_code;
++	hh->start_data = mm->start_data;
++	hh->end_data = mm->end_data;
++	hh->start_brk = mm->start_brk;
++	hh->brk = mm->brk;
++	hh->start_stack = mm->start_stack;
++	hh->arg_start = mm->arg_start;
++	hh->arg_end = mm->arg_end;
++	hh->env_start = mm->env_start;
++	hh->env_end = mm->env_end;
++
++	hh->map_count = mm->map_count;
++
++	/* FIX: need also mm->flags */
++
++	ret = cr_write_obj(ctx, &h, hh);
++	cr_hbuf_put(ctx, sizeof(*hh));
++	if (ret < 0)
++		goto out;
++
++	/* write the vma's */
++	for (vma = mm->mmap; vma; vma = vma->vm_next) {
++		ret = cr_write_vma(ctx, vma);
++		if (ret < 0)
++			goto out;
++	}
++
++	ret = cr_write_mm_context(ctx, mm, objref);
++
++ out:
++	up_read(&mm->mmap_sem);
++	mmput(mm);
++	return ret;
++}
+Index: 2.6.27-lxc/checkpoint/rstr_mem.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ 2.6.27-lxc/checkpoint/rstr_mem.c	2008-10-23 11:24:06.000000000 +0200
+@@ -0,0 +1,384 @@
++/*
++ *  Restart memory contents
++ *
++ *  Copyright (C) 2008 Oren Laadan
++ *
++ *  This file is subject to the terms and conditions of the GNU General Public
++ *  License.  See the file COPYING in the main directory of the Linux
++ *  distribution for more details.
++ */
++
++#include <linux/kernel.h>
++#include <linux/sched.h>
++#include <linux/fcntl.h>
++#include <linux/file.h>
++#include <linux/fs.h>
++#include <linux/pagemap.h>
++#include <linux/mm_types.h>
++#include <linux/mman.h>
++#include <linux/mm.h>
++#include <linux/err.h>
++#include <linux/checkpoint.h>
++#include <linux/checkpoint_hdr.h>
++
++#include "checkpoint_arch.h"
++#include "checkpoint_mem.h"
++
++/*
++ * Unlike checkpoint, restart is executed in the context of each restarting
++ * process: vma regions are restored via a call to mmap(), and the data is
++ * read into the address space of the current process.
++ */
++
++
++/**
++ * cr_read_pages_vaddrs - read addresses of pages to page-array chain
++ * @ctx - restart context
++ * @nr_pages - number of address to read
++ */
++static int cr_read_pages_vaddrs(struct cr_ctx *ctx, unsigned long nr_pages)
++{
++	struct cr_pgarr *pgarr;
++	unsigned long *vaddrp;
++	int nr, ret;
++
++	while (nr_pages) {
++		pgarr = cr_pgarr_current(ctx);
++		if (!pgarr)
++			return -ENOMEM;
++		nr = cr_pgarr_nr_free(pgarr);
++		if (nr > nr_pages)
++			nr = nr_pages;
++		vaddrp = &pgarr->vaddrs[pgarr->nr_used];
++		ret = cr_kread(ctx, vaddrp, nr * sizeof(unsigned long));
++		if (ret < 0)
++			return ret;
++		pgarr->nr_used += nr;
++		nr_pages -= nr;
++	}
++	return 0;
++}
++
++static int cr_page_read(struct cr_ctx *ctx, struct page *page, char *buf)
++{
++	void *ptr;
++	int ret;
++
++	ret = cr_kread(ctx, buf, PAGE_SIZE);
++	if (ret < 0)
++		return ret;
++
++	ptr = kmap_atomic(page, KM_USER1);
++	memcpy(ptr, buf, PAGE_SIZE);
++	kunmap_atomic(ptr, KM_USER1);
++
++	return 0;
++}
++
++/**
++ * cr_read_pages_contents - read in data of pages in page-array chain
++ * @ctx - restart context
++ */
++static int cr_read_pages_contents(struct cr_ctx *ctx)
++{
++	struct mm_struct *mm = current->mm;
++	struct cr_pgarr *pgarr;
++	unsigned long *vaddrs;
++	char *buf;
++	int i, ret = 0;
++
++	buf = kmalloc(PAGE_SIZE, GFP_KERNEL);
++	if (!buf)
++		return -ENOMEM;
++
++	down_read(&mm->mmap_sem);
++	list_for_each_entry_reverse(pgarr, &ctx->pgarr_list, list) {
++		vaddrs = pgarr->vaddrs;
++		for (i = 0; i < pgarr->nr_used; i++) {
++			struct page *page;
++
++			ret = get_user_pages(current, mm, vaddrs[i],
++					     1, 1, 1, &page, NULL);
++			if (ret < 0)
++				goto out;
++
++			ret = cr_page_read(ctx, page, buf);
++			page_cache_release(page);
++
++			if (ret < 0)
++				goto out;
++		}
++	}
++
++ out:
++	up_read(&mm->mmap_sem);
++	kfree(buf);
++	return 0;
++}
++
++/**
++ * cr_read_private_vma_contents - restore contents of a VMA with private memory
++ * @ctx - restart context
++ *
++ * Reads a header that specifies how many pages will follow, then reads
++ * a list of virtual addresses into ctx->pgarr_list page-array chain,
++ * followed by the actual contents of the corresponding pages. Iterates
++ * these steps until reaching a header specifying "0" pages, which marks
++ * the end of the contents.
++ */
++static int cr_read_private_vma_contents(struct cr_ctx *ctx)
++{
++	struct cr_hdr_pgarr *hh;
++	unsigned long nr_pages;
++	int parent, ret = 0;
++
++	while (1) {
++		hh = cr_hbuf_get(ctx, sizeof(*hh));
++		parent = cr_read_obj_type(ctx, hh, sizeof(*hh), CR_HDR_PGARR);
++		if (parent != 0) {
++			if (parent < 0)
++				ret = parent;
++			else
++				ret = -EINVAL;
++			cr_hbuf_put(ctx, sizeof(*hh));
++			break;
++		}
++
++		cr_debug("nr_pages %ld\n", (unsigned long) hh->nr_pages);
++
++		nr_pages = hh->nr_pages;
++		cr_hbuf_put(ctx, sizeof(*hh));
++
++		if (!nr_pages)
++			break;
++
++		ret = cr_read_pages_vaddrs(ctx, nr_pages);
++		if (ret < 0)
++			break;
++		ret = cr_read_pages_contents(ctx);
++		if (ret < 0)
++			break;
++		cr_pgarr_reset_all(ctx);
++	}
++
++	return ret;
++}
++
++/**
++ * cr_calc_map_prot_bits - convert vm_flags to mmap protection
++ * orig_vm_flags: source vm_flags
++ */
++static unsigned long cr_calc_map_prot_bits(unsigned long orig_vm_flags)
++{
++	unsigned long vm_prot = 0;
++
++	if (orig_vm_flags & VM_READ)
++		vm_prot |= PROT_READ;
++	if (orig_vm_flags & VM_WRITE)
++		vm_prot |= PROT_WRITE;
++	if (orig_vm_flags & VM_EXEC)
++		vm_prot |= PROT_EXEC;
++	if (orig_vm_flags & PROT_SEM)   /* only (?) with IPC-SHM  */
++		vm_prot |= PROT_SEM;
++
++	return vm_prot;
++}
++
++/**
++ * cr_calc_map_flags_bits - convert vm_flags to mmap flags
++ * orig_vm_flags: source vm_flags
++ */
++static unsigned long cr_calc_map_flags_bits(unsigned long orig_vm_flags)
++{
++	unsigned long vm_flags = 0;
++
++	vm_flags = MAP_FIXED;
++	if (orig_vm_flags & VM_GROWSDOWN)
++		vm_flags |= MAP_GROWSDOWN;
++	if (orig_vm_flags & VM_DENYWRITE)
++		vm_flags |= MAP_DENYWRITE;
++	if (orig_vm_flags & VM_EXECUTABLE)
++		vm_flags |= MAP_EXECUTABLE;
++	if (orig_vm_flags & VM_MAYSHARE)
++		vm_flags |= MAP_SHARED;
++	else
++		vm_flags |= MAP_PRIVATE;
++
++	return vm_flags;
++}
++
++static int cr_read_vma(struct cr_ctx *ctx, struct mm_struct *mm)
++{
++	struct cr_hdr_vma *hh = cr_hbuf_get(ctx, sizeof(*hh));
++	unsigned long vm_size, vm_start, vm_flags, vm_prot, vm_pgoff;
++	unsigned long addr;
++	struct file *file = NULL;
++	int parent, ret = -EINVAL;
++
++	parent = cr_read_obj_type(ctx, hh, sizeof(*hh), CR_HDR_VMA);
++	if (parent < 0) {
++		ret = parent;
++		goto err;
++	} else if (parent != 0)
++		goto err;
++
++	cr_debug("vma %#lx-%#lx type %d\n", (unsigned long) hh->vm_start,
++		 (unsigned long) hh->vm_end, (int) hh->vma_type);
++
++	if (hh->vm_end < hh->vm_start)
++		goto err;
++
++	vm_start = hh->vm_start;
++	vm_pgoff = hh->vm_pgoff;
++	vm_size = hh->vm_end - hh->vm_start;
++	vm_prot = cr_calc_map_prot_bits(hh->vm_flags);
++	vm_flags = cr_calc_map_flags_bits(hh->vm_flags);
++
++	switch (hh->vma_type) {
++
++	case CR_VMA_ANON:		/* anonymous private mapping */
++		if (vm_flags & VM_SHARED)
++			goto err;
++		/*
++		 * vm_pgoff for anonymous mapping is the "global" page
++		 * offset (namely from addr 0x0), so we force a zero
++		 */
++		vm_pgoff = 0;
++		break;
++
++	case CR_VMA_FILE:		/* private mapping from a file */
++		if (vm_flags & VM_SHARED)
++			goto err;
++		/*
++		 * for private mapping using 'read-only' is sufficient
++		 */
++		file = cr_read_open_fname(ctx, O_RDONLY, 0);
++		if (IS_ERR(file)) {
++			ret = PTR_ERR(file);
++			goto err;
++		}
++		break;
++
++	default:
++		goto err;
++
++	}
++
++	cr_hbuf_put(ctx, sizeof(*hh));
++
++	down_write(&mm->mmap_sem);
++	addr = do_mmap_pgoff(file, vm_start, vm_size,
++			     vm_prot, vm_flags, vm_pgoff);
++	up_write(&mm->mmap_sem);
++	cr_debug("size %#lx prot %#lx flag %#lx pgoff %#lx => %#lx\n",
++		 vm_size, vm_prot, vm_flags, vm_pgoff, addr);
++
++	/* the file (if opened) is now referenced by the vma */
++	if (file)
++		filp_close(file, NULL);
++
++	if (IS_ERR((void *) addr))
++		return PTR_ERR((void *) addr);
++
++	/*
++	 * CR_VMA_ANON: read in memory as is
++	 * CR_VMA_FILE: read in memory as is
++	 * (more to follow ...)
++	 */
++
++	switch (hh->vma_type) {
++	case CR_VMA_ANON:
++	case CR_VMA_FILE:
++		/* standard case: read the data into the memory */
++		ret = cr_read_private_vma_contents(ctx);
++		break;
++	}
++
++	if (ret < 0)
++		return ret;
++
++	cr_debug("vma retval %d\n", ret);
++	return 0;
++
++ err:
++	cr_hbuf_put(ctx, sizeof(*hh));
++	return ret;
++}
++
++static int cr_destroy_mm(struct mm_struct *mm)
++{
++	struct vm_area_struct *vmnext = mm->mmap;
++	struct vm_area_struct *vma;
++	int ret;
++
++	while (vmnext) {
++		vma = vmnext;
++		vmnext = vmnext->vm_next;
++		ret = do_munmap(mm, vma->vm_start, vma->vm_end-vma->vm_start);
++		if (ret < 0) {
++			pr_debug("CR: restart failed do_munmap (%d)\n", ret);
++			return ret;
++		}
++	}
++	return 0;
++}
++
++int cr_read_mm(struct cr_ctx *ctx)
++{
++	struct cr_hdr_mm *hh = cr_hbuf_get(ctx, sizeof(*hh));
++	struct mm_struct *mm;
++	int nr, parent, ret;
++
++	parent = cr_read_obj_type(ctx, hh, sizeof(*hh), CR_HDR_MM);
++	if (parent < 0) {
++		ret = parent;
++		goto out;
++	}
++
++	ret = -EINVAL;
++#if 0	/* activate when containers are used */
++	if (parent != task_pid_vnr(current))
++		goto out;
++#endif
++	cr_debug("map_count %d\n", hh->map_count);
++
++	/* XXX need more sanity checks */
++	if (hh->start_code > hh->end_code ||
++	    hh->start_data > hh->end_data || hh->map_count < 0)
++		goto out;
++
++	mm = current->mm;
++
++	/* point of no return -- destruct current mm */
++	down_write(&mm->mmap_sem);
++	ret = cr_destroy_mm(mm);
++	if (ret < 0) {
++		up_write(&mm->mmap_sem);
++		goto out;
++	}
++	mm->start_code = hh->start_code;
++	mm->end_code = hh->end_code;
++	mm->start_data = hh->start_data;
++	mm->end_data = hh->end_data;
++	mm->start_brk = hh->start_brk;
++	mm->brk = hh->brk;
++	mm->start_stack = hh->start_stack;
++	mm->arg_start = hh->arg_start;
++	mm->arg_end = hh->arg_end;
++	mm->env_start = hh->env_start;
++	mm->env_end = hh->env_end;
++	up_write(&mm->mmap_sem);
++
++	/* FIX: need also mm->flags */
++
++	for (nr = hh->map_count; nr; nr--) {
++		ret = cr_read_vma(ctx, mm);
++		if (ret < 0)
++			goto out;
++	}
++
++	ret = cr_read_mm_context(ctx, mm, hh->objref);
++ out:
++	cr_hbuf_put(ctx, sizeof(*hh));
++	return ret;
++}
+Index: 2.6.27-lxc/Documentation/checkpoint.txt
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ 2.6.27-lxc/Documentation/checkpoint.txt	2008-10-23 11:24:06.000000000 +0200
+@@ -0,0 +1,420 @@
++
++	=== Checkpoint-Restart support in the Linux kernel ===
++
++Copyright (C) 2008 Oren Laadan
++
++Author:		Oren Laadan <orenl@cs.columbia.edu>
++
++License:	The GNU Free Documentation License, Version 1.2
++		(dual licensed under the GPL v2)
++Reviewers:
++
++Application checkpoint/restart [CR] is the ability to save the state
++of a running application so that it can later resume its execution
++from the time at which it was checkpointed. An application can be
++migrated by checkpointing it on one machine and restarting it on
++another. CR can provide many potential benefits:
++
++* Failure recovery: by rolling back an to a previous checkpoint
++
++* Improved response time: by restarting applications from checkpoints
++  instead of from scratch.
++
++* Improved system utilization: by suspending long running CPU
++  intensive jobs and resuming them when load decreases.
++
++* Fault resilience: by migrating applications off of faulty hosts.
++
++* Dynamic load balancing: by migrating applications to less loaded
++  hosts.
++
++* Improved service availability and administration: by migrating
++  applications before host maintenance so that they continue to run
++  with minimal downtime
++
++* Time-travel: by taking periodic checkpoints and restarting from
++  any previous checkpoint.
++
++
++=== Overall design
++
++Checkpoint and restart is done in the kernel as much as possible. The
++kernel exports a relative opaque 'blob' of data to userspace which can
++then be handed to the new kernel at restore time.  The 'blob' contains
++data and state of select portions of kernel structures such as VMAs
++and mm_structs, as well as copies of the actual memory that the tasks
++use. Any changes in this blob's format between kernel revisions can be
++handled by an in-userspace conversion program. The approach is similar
++to virtually all of the commercial CR products out there, as well as
++the research project Zap.
++
++Two new system calls are introduced to provide CR: sys_checkpoint and
++sys_restart.  The checkpoint code basically serializes internal kernel
++state and writes it out to a file descriptor, and the resulting image
++is stream-able. More specifically, it consists of 5 steps:
++  1. Pre-dump
++  2. Freeze the container
++  3. Dump
++  4. Thaw (or kill) the container
++  5. Post-dump
++Steps 1 and 5 are an optimization to reduce application downtime:
++"pre-dump" works before freezing the container, e.g. the pre-copy for
++live migration, and "post-dump" works after the container resumes
++execution, e.g. write-back the data to secondary storage.
++
++The restart code basically reads the saved kernel state and from a
++file descriptor, and re-creates the tasks and the resources they need
++to resume execution. The restart code is executed by each task that
++is restored in a new container to reconstruct its own state.
++
++
++=== Interfaces
++
++int sys_checkpoint(pid_t pid, int fd, unsigned long flag);
++  Checkpoint a container whose init task is identified by pid, to the
++  file designated by fd. Flags will have future meaning (should be 0
++  for now).
++  Returns: a positive integer that identifies the checkpoint image
++  (for future reference in case it is kept in memory) upon success,
++  0 if it returns from a restart, and -1 if an error occurs.
++
++int sys_restart(int crid, int fd, unsigned long flags);
++  Restart a container from a checkpoint image identified by crid, or
++  from the blob stored in the file designated by fd. Flags will have
++  future meaning (should be 0 for now).
++  Returns: 0 on success and -1 if an error occurs.
++
++Thus, if checkpoint is initiated by a process in the container, one
++can use logic similar to fork():
++	...
++	crid = checkpoint(...);
++	switch (crid) {
++	case -1:
++		perror("checkpoint failed");
++		break;
++	default:
++		fprintf(stderr, "checkpoint succeeded, CRID=%d\n", ret);
++		/* proceed with execution after checkpoint */
++		...
++		break;
++	case 0:
++		fprintf(stderr, "returned after restart\n");
++		/* proceed with action required following a restart */
++		...
++		break;
++	}
++	...
++And to initiate a restart, the process in an empty container can use
++logic similar to execve():
++	...
++	if (restart(crid, ...) < 0)
++		perror("restart failed");
++	/* only get here if restart failed */
++	...
++
++See below a complete example in C.
++
++
++=== Order of state dump
++
++The order of operations, both save and restore, is as following:
++
++* Header section: header, container information, etc.
++* Global section: [TBD] global resources such as IPC, UTS, etc.
++* Process forest: [TBD] tasks and their relationships
++* Per task data (for each task):
++  -> task state: elements of task_struct
++  -> thread state: elements of thread_struct and thread_info
++  -> CPU state: registers etc, including FPU
++  -> memory state: memory address space layout and contents
++  -> filesystem state: [TBD] filesystem namespace state, chroot, cwd, etc
++  -> files state: open file descriptors and their state
++  -> signals state: [TBD] pending signals and signal handling state
++  -> credentials state: [TBD] user and group state, statistics
++
++
++=== Checkpoint image format
++
++The checkpoint image format is composed of records consistings of a
++pre-header that identifies its contents, followed by a payload. (The
++idea here is to enable parallel checkpointing in the future in which
++multiple threads interleave data from multiple processes into a single
++stream).
++
++The pre-header is defined by "struct cr_hdr" as follows:
++
++struct cr_hdr {
++	__s16 type;
++	__s16 len;
++	__u32 parent;
++};
++
++Here, 'type' field identifies the type of the payload, 'len' tells its
++length in bytes. The 'parent' identifies the owner object instance. The
++meaning of the 'parent field varies depending on the type. For example,
++for type CR_HDR_MM, the 'parent identifies the task to which this MM
++belongs. The payload also varies depending on the type, for instance,
++the data describing a task_struct is given by a 'struct cr_hdr_task'
++(type CR_HDR_TASK) and so on.
++
++The format of the memory dump is as follows: for each VMA, there is a
++'struct cr_vma'; if the VMA is file-mapped, it is followed by the file
++name. Following comes the actual contents, in one or more chunk: each
++chunk begins with a header that specifies how many pages it holds,
++then a the virtual addresses of all the dumped pages in that chunk,
++followed by the actual contents of all the dumped pages. A header with
++zero number of pages marks the end of the contents for a particular
++VMA. Then comes the next VMA and so on.
++
++To illustrate this, consider a single simple task with two VMAs: one
++is file mapped with two dumped pages, and the other is anonymous with
++three dumped pages. The checkpoint image will look like this:
++
++cr_hdr + cr_hdr_head
++cr_hdr + cr_hdr_task
++	cr_hdr + cr_hdr_mm
++		cr_hdr + cr_hdr_vma + cr_hdr + string
++			cr_hdr_pgarr (nr_pages = 2)
++			addr1, addr2
++			page1, page2
++			cr_hdr_pgarr (nr_pages = 0)
++		cr_hdr + cr_hdr_vma
++			cr_hdr_pgarr (nr_pages = 3)
++			addr3, addr4, addr5
++			page3, page4, page5
++			cr_hdr_pgarr (nr_pages = 0)
++		cr_hdr + cr_mm_context
++	cr_hdr + cr_hdr_thread
++	cr_hdr + cr_hdr_cpu
++cr_hdr + cr_hdr_tail
++
++
++=== Shared resources (objects)
++
++Many resources used by tasks may be shared by more than one task (e.g.
++file descriptors, memory address space, etc), or even have multiple
++references from other resources (e.g. a single inode that represents
++two ends of a pipe).
++
++Clearly, the state of shared objects need only be saved once, even if
++they occur multiple times. We use a hash table (ctx->objhash) to keep
++track of shared objects and whether they were already saved.  Shared
++objects are stored in a hash table as they appear, indexed by their
++kernel address. (The hash table itself is not saved as part of the
++checkpoint image: it is constructed dynamically during both checkpoint
++and restart, and discarded at the end of the operation).
++
++Each shared object that is found is first looked up in the hash table.
++On the first encounter, the object will not be found, so its state is
++dumped, and the object is assigned a unique identifier and also stored
++in the hash table. Subsequent lookups of that object in the hash table
++will yield that entry, and then only the unique identifier is saved,
++as opposed the entire state of the object.
++
++During restart, shared objects are seen by their unique identifiers as
++assigned during the checkpoint. Each shared object that it read in is
++first looked up in the hash table. On the first encounter it will not
++be found, meaning that the object needs to be created and its state
++read in and restored. Then the object is added to the hash table, this
++time indexed by its unique identifier. Subsequent lookups of the same
++unique identifier in the hash table will yield that entry, and then
++the existing object instance is reused instead of creating another one.
++
++The interface for the hash table is the following:
++
++cr_obj_get_by_ptr() - find the unique object reference (objref)
++  of the object that is pointer to by ptr [checkpoint]
++
++cr_obj_add_ptr() - add the object pointed to by ptr to the hash table
++  if not already there, and fill its unique object reference (objref)
++
++cr_obj_get_by_ref() - return the pointer to the object whose unique
++  object reference is equal to objref [restart]
++
++cr_obj_add_ref() - add the object with given unique object reference
++  (objref), pointed to by ptr to the hash table. [restart]
++
++
++=== Current Implementation
++
++[2008-Oct-07]
++There are several assumptions in the current implementation; they will
++be gradually relaxed in future versions. The main ones are:
++* A task can only checkpoint itself (missing "restart-block" logic).
++* Namespaces are not saved or restored; They will be treated as a type
++  of shared object.
++* In particular, it is assumed that the task's file system namespace
++  is the "root" for the entire container.
++* It is assumed that the same file system view is available for the
++  restart task(s). Otherwise, a file system snapshot is required.
++
++
++=== Sample code
++
++Two example programs: one uses checkpoint (called ckpt) to checkpoint
++itself, and another uses restart (called rstr) to restart from that
++checkpoint. Note the use of "dup2" to create a copy of an open file
++and show how shared objects are treated. Execute like this:
++
++orenl:~/test$ ./ckpt > out.1
++				<-- ctrl-c
++orenl:~/test$ cat /tmp/cr-rest.out
++hello, world!
++world, hello!
++(ret = 1)
++
++orenl:~/test$ ./ckpt > out.1
++				<-- ctrl-c
++orenl:~/test$ cat /tmp/cr-rest.out
++hello, world!
++world, hello!
++(ret = 2)
++
++				<-- now change the contents of the file
++orenl:~/test$ sed -i 's/world, hello!/xxxx/' /tmp/cr-rest.out
++orenl:~/test$ cat /tmp/cr-rest.out
++hello, world!
++xxxx
++(ret = 2)
++
++				<-- and do the restart
++orenl:~/test$ ./rstr < out.1
++				<-- ctrl-c
++orenl:~/test$ cat /tmp/cr-rest.out
++hello, world!
++world, hello!
++(ret = 0)
++
++(if you check the output of ps, you'll see that "rstr" changed its
++name to "ckpt", as expected).
++
++============================== ckpt.c ================================
++
++#define _GNU_SOURCE        /* or _BSD_SOURCE or _SVID_SOURCE */
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <unistd.h>
++#include <asm/unistd.h>
++#include <sys/syscall.h>
++
++#define OUTFILE "/tmp/cr-test.out"
++
++int main(int argc, char *argv[])
++{
++	pid_t pid = getpid();
++	FILE *file;
++	int ret;
++
++	close(0);
++	close(2);
++
++	unlink(OUTFILE);
++	file = fopen(OUTFILE, "w+");
++	if (!file) {
++		perror("open");
++		exit(1);
++	}
++
++	if (dup2(0,2) < 0) {
++		perror("dups");
++		exit(1);
++	}
++
++	fprintf(file, "hello, world!\n");
++	fflush(file);
++
++	ret = syscall(__NR_checkpoint, pid, STDOUT_FILENO, 0);
++	if (ret < 0) {
++		perror("checkpoint");
++		exit(2);
++	}
++
++	fprintf(file, "world, hello!\n");
++	fprintf(file, "(ret = %d)\n", ret);
++	fflush(file);
++
++	while (1)
++		;
++
++	return 0;
++}
++======================================================================
++
++============================== rstr.c ================================
++
++#define _GNU_SOURCE        /* or _BSD_SOURCE or _SVID_SOURCE */
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <unistd.h>
++#include <asm/unistd.h>
++#include <sys/syscall.h>
++
++int main(int argc, char *argv[])
++{
++	pid_t pid = getpid();
++	int ret;
++
++	ret = syscall(__NR_restart, pid, STDIN_FILENO, 0);
++	if (ret < 0)
++		perror("restart");
++
++	printf("should not reach here !\n");
++
++	return 0;
++}
++======================================================================
++
++
++=== Changelog
++
++[2008-Oct-17] v7:
++  - Fix save/restore state of FPU
++  - Fix argument given to kunmap_atomic() in memory dump/restore
++
++[2008-Oct-07] v6:
++  - Balance all calls to cr_hbuf_get() with matching cr_hbuf_put()
++    (even though it's not really needed)
++  - Add 'current implementation' to docs to describe assumptions
++  - Misc fixes and cleanups
++
++[2008-Sep-11] v5:
++  - Config is 'def_bool n' by default
++  - Improve memory dump/restore code (following Dave Hansen's comments)
++  - Change dump format (and code) to allow chunks of <vaddrs, pages>
++    instead of one long list of each
++  - Fix use of follow_page() to avoid faulting in non-present pages
++  - Memory restore now maps user pages explicitly to copy data into them,
++    instead of reading directly to user space; got rid of mprotect_fixup()
++  - Remove preempt_disable() when restoring debug registers
++  - Rename headers files s/ckpt/checkpoint/
++  - Fix misc bugs in files dump/restore
++  - Fix cleanup on some error paths
++  - Fix misc coding style
++
++[2008-Sep-04] v4:
++  - Fix calculation of hash table size
++  - Fix header structure alignment
++  - Use stand list_... for cr_pgarr
++
++[2008-Aug-20] v3:
++  - Various fixes and clean-ups
++  - Use standard hlist_... for hash table
++  - Better use of standard kmalloc/kfree
++
++[2008-Aug-09] v2:
++  - Added utsname->{release,version,machine} to checkpoint header
++  - Pad header structures to 64 bits to ensure compatibility
++  - Address comments from LKML and linux-containers mailing list
++
++[2008-Jul-29] v1:
++In this incarnation, CR only works on single task. The address space
++may consist of only private, simple VMAs - anonymous or file-mapped.
++Both checkpoint and restart will ignore the first argument (pid/crid)
++and instead act on themselves.
+Index: 2.6.27-lxc/checkpoint/objhash.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ 2.6.27-lxc/checkpoint/objhash.c	2008-10-23 11:24:06.000000000 +0200
+@@ -0,0 +1,268 @@
++/*
++ *  Checkpoint-restart - object hash infrastructure to manage shared objects
++ *
++ *  Copyright (C) 2008 Oren Laadan
++ *
++ *  This file is subject to the terms and conditions of the GNU General Public
++ *  License.  See the file COPYING in the main directory of the Linux
++ *  distribution for more details.
++ */
++
++#include <linux/kernel.h>
++#include <linux/file.h>
++#include <linux/hash.h>
++#include <linux/checkpoint.h>
++
++struct cr_objref {
++	int objref;
++	void *ptr;
++	unsigned short type;
++	unsigned short flags;
++	struct hlist_node hash;
++};
++
++struct cr_objhash {
++	struct hlist_head *head;
++	int next_free_objref;
++};
++
++#define CR_OBJHASH_NBITS  10
++#define CR_OBJHASH_TOTAL  (1UL << CR_OBJHASH_NBITS)
++
++static void cr_obj_ref_drop(struct cr_objref *obj)
++{
++	switch (obj->type) {
++	case CR_OBJ_FILE:
++		fput((struct file *) obj->ptr);
++		break;
++	default:
++		BUG();
++	}
++}
++
++static void cr_obj_ref_grab(struct cr_objref *obj)
++{
++	switch (obj->type) {
++	case CR_OBJ_FILE:
++		get_file((struct file *) obj->ptr);
++		break;
++	default:
++		BUG();
++	}
++}
++
++static void cr_objhash_clear(struct cr_objhash *objhash)
++{
++	struct hlist_head *h = objhash->head;
++	struct hlist_node *n, *t;
++	struct cr_objref *obj;
++	int i;
++
++	for (i = 0; i < CR_OBJHASH_TOTAL; i++) {
++		hlist_for_each_entry_safe(obj, n, t, &h[i], hash) {
++			cr_obj_ref_drop(obj);
++			kfree(obj);
++		}
++	}
++}
++
++void cr_objhash_free(struct cr_ctx *ctx)
++{
++	struct cr_objhash *objhash = ctx->objhash;
++
++	if (objhash) {
++		cr_objhash_clear(objhash);
++		kfree(objhash->head);
++		kfree(ctx->objhash);
++		ctx->objhash = NULL;
++	}
++}
++
++int cr_objhash_alloc(struct cr_ctx *ctx)
++{
++	struct cr_objhash *objhash;
++	struct hlist_head *head;
++
++	objhash = kzalloc(sizeof(*objhash), GFP_KERNEL);
++	if (!objhash)
++		return -ENOMEM;
++	head = kzalloc(CR_OBJHASH_TOTAL * sizeof(*head), GFP_KERNEL);
++	if (!head) {
++		kfree(objhash);
++		return -ENOMEM;
++	}
++
++	objhash->head = head;
++	objhash->next_free_objref = 1;
++
++	ctx->objhash = objhash;
++	return 0;
++}
++
++static struct cr_objref *cr_obj_find_by_ptr(struct cr_ctx *ctx, void *ptr)
++{
++	struct hlist_head *h;
++	struct hlist_node *n;
++	struct cr_objref *obj;
++
++	h = &ctx->objhash->head[hash_ptr(ptr, CR_OBJHASH_NBITS)];
++	hlist_for_each_entry(obj, n, h, hash)
++		if (obj->ptr == ptr)
++			return obj;
++	return NULL;
++}
++
++static struct cr_objref *cr_obj_find_by_objref(struct cr_ctx *ctx, int objref)
++{
++	struct hlist_head *h;
++	struct hlist_node *n;
++	struct cr_objref *obj;
++
++	h = &ctx->objhash->head[hash_ptr((void *) objref, CR_OBJHASH_NBITS)];
++	hlist_for_each_entry(obj, n, h, hash)
++		if (obj->objref == objref)
++			return obj;
++	return NULL;
++}
++
++/**
++ * cr_obj_new - allocate an object and add to the hash table
++ * @ctx: checkpoint context
++ * @ptr: pointer to object
++ * @objref: unique object reference
++ * @type: object type
++ * @flags: object flags
++ *
++ * Allocate an object referring to @ptr and add to the hash table.
++ * If @objref is zero, assign a unique object reference and use @ptr
++ * as a hash key [checkpoint]. Else use @objref as a key [restart].
++ */
++static struct cr_objref *cr_obj_new(struct cr_ctx *ctx, void *ptr, int objref,
++				    unsigned short type, unsigned short flags)
++{
++	struct cr_objref *obj;
++	int i;
++
++	obj = kmalloc(sizeof(*obj), GFP_KERNEL);
++	if (!obj)
++		return NULL;
++
++	obj->ptr = ptr;
++	obj->type = type;
++	obj->flags = flags;
++
++	if (objref) {
++		/* use @objref to index (restart) */
++		obj->objref = objref;
++		i = hash_ptr((void *) objref, CR_OBJHASH_NBITS);
++	} else {
++		/* use @ptr to index, assign objref (checkpoint) */
++		obj->objref = ctx->objhash->next_free_objref++;;
++		i = hash_ptr(ptr, CR_OBJHASH_NBITS);
++	}
++
++	hlist_add_head(&obj->hash, &ctx->objhash->head[i]);
++	cr_obj_ref_grab(obj);
++	return obj;
++}
++
++/**
++ * cr_obj_add_ptr - add an object to the hash table if not already there
++ * @ctx: checkpoint context
++ * @ptr: pointer to object
++ * @objref: unique object reference [output]
++ * @type: object type
++ * @flags: object flags
++ *
++ * Look up the object pointed to by @ptr in the hash table. If it isn't
++ * already found there, then add the object to the table, and allocate a
++ * fresh unique object reference (objref). Fills the unique objref of
++ * the object into @objref.
++ * [This is used during checkpoint].
++ *
++ * Returns 0 if found, 1 if added, < 0 on error
++ */
++int cr_obj_add_ptr(struct cr_ctx *ctx, void *ptr, int *objref,
++		   unsigned short type, unsigned short flags)
++{
++	struct cr_objref *obj;
++	int ret = 0;
++
++	obj = cr_obj_find_by_ptr(ctx, ptr);
++	if (!obj) {
++		obj = cr_obj_new(ctx, ptr, 0, type, flags);
++		if (!obj)
++			return -ENOMEM;
++		else
++			ret = 1;
++	} else if (obj->type != type)	/* sanity check */
++		return -EINVAL;
++	*objref = obj->objref;
++	return ret;
++}
++
++/**
++ * cr_obj_add_ref - add an object with unique objref to the hash table
++ * @ctx: checkpoint context
++ * @ptr: pointer to object
++ * @objref: unique identifier - object reference
++ * @type: object type
++ * @flags: object flags
++ *
++ * Add the object pointer to by @ptr and identified by unique object
++ * reference given by @objref to the hash table (indexed by @objref).
++ * [This is used during restart].
++ */
++int cr_obj_add_ref(struct cr_ctx *ctx, void *ptr, int objref,
++		   unsigned short type, unsigned short flags)
++{
++	struct cr_objref *obj;
++
++	obj = cr_obj_new(ctx, ptr, objref, type, flags);
++	return obj ? 0 : -ENOMEM;
++}
++
++/**
++ * cr_obj_get_by_ptr - find the unique object reference of an object
++ * @ctx: checkpoint context
++ * @ptr: pointer to object
++ * @type: object type
++ *
++ * Look up the unique object reference (objref) of the object pointed
++ * to by @ptr, and return that number, or 0 if not found.
++ * [This is used during checkpoint].
++ */
++int cr_obj_get_by_ptr(struct cr_ctx *ctx, void *ptr, unsigned short type)
++{
++	struct cr_objref *obj;
++
++	obj = cr_obj_find_by_ptr(ctx, ptr);
++	if (!obj)
++		return -ESRCH;
++	if (obj->type != type)
++		return -EINVAL;
++	return obj->objref;
++}
++
++/**
++ * cr_obj_get_by_ref - find an object given its unique object reference
++ * @ctx: checkpoint context
++ * @objref: unique identifier - object reference
++ * @type: object type
++ *
++ * Look up the object who is identified by unique object reference that
++ * is specified by @objref, and return a pointer to that matching object,
++ * or NULL if not found.
++ * [This is used during restart].
++ */
++void *cr_obj_get_by_ref(struct cr_ctx *ctx, int objref, unsigned short type)
++{
++	struct cr_objref *obj;
++
++	obj = cr_obj_find_by_objref(ctx, objref);
++	if (!obj)
++		return NULL;
++	if (obj->type != type)
++		return ERR_PTR(-EINVAL);
++	return obj->ptr;
++}
+Index: 2.6.27-lxc/checkpoint/checkpoint_file.h
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ 2.6.27-lxc/checkpoint/checkpoint_file.h	2008-10-23 11:24:06.000000000 +0200
+@@ -0,0 +1,17 @@
++#ifndef _CHECKPOINT_CKPT_FILE_H_
++#define _CHECKPOINT_CKPT_FILE_H_
++/*
++ *  Checkpoint file descriptors
++ *
++ *  Copyright (C) 2008 Oren Laadan
++ *
++ *  This file is subject to the terms and conditions of the GNU General Public
++ *  License.  See the file COPYING in the main directory of the Linux
++ *  distribution for more details.
++ */
++
++#include <linux/fdtable.h>
++
++int cr_scan_fds(struct files_struct *files, int **fdtable);
++
++#endif /* _CHECKPOINT_CKPT_FILE_H_ */
+Index: 2.6.27-lxc/checkpoint/ckpt_file.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ 2.6.27-lxc/checkpoint/ckpt_file.c	2008-10-23 11:24:06.000000000 +0200
+@@ -0,0 +1,231 @@
++/*
++ *  Checkpoint file descriptors
++ *
++ *  Copyright (C) 2008 Oren Laadan
++ *
++ *  This file is subject to the terms and conditions of the GNU General Public
++ *  License.  See the file COPYING in the main directory of the Linux
++ *  distribution for more details.
++ */
++
++#include <linux/kernel.h>
++#include <linux/sched.h>
++#include <linux/file.h>
++#include <linux/fdtable.h>
++#include <linux/checkpoint.h>
++#include <linux/checkpoint_hdr.h>
++
++#include "checkpoint_file.h"
++
++#define CR_DEFAULT_FDTABLE  256		/* an initial guess */
++
++/**
++ * cr_scan_fds - scan file table and construct array of open fds
++ * @files: files_struct pointer
++ * @fdtable: (output) array of open fds
++ *
++ * Returns the number of open fds found, and also the file table
++ * array via *fdtable. The caller should free the array.
++ *
++ * The caller must validate the file descriptors collected in the
++ * array before using them, e.g. by using fcheck_files(), in case
++ * the task's fdtable changes in the meantime.
++ */
++int cr_scan_fds(struct files_struct *files, int **fdtable)
++{
++	struct fdtable *fdt;
++	int *fds;
++	int i, n = 0;
++	int tot = CR_DEFAULT_FDTABLE;
++
++	fds = kmalloc(tot * sizeof(*fds), GFP_KERNEL);
++	if (!fds)
++		return -ENOMEM;
++
++	/*
++	 * We assume that the target task is frozen (or that we checkpoint
++	 * ourselves), so we can safely proceed after krealloc() from where
++	 * we left off; in the worst cases restart will fail.
++	 */
++
++	spin_lock(&files->file_lock);
++	rcu_read_lock();
++	fdt = files_fdtable(files);
++	for (i = 0; i < fdt->max_fds; i++) {
++		if (!fcheck_files(files, i))
++			continue;
++		if (n == tot) {
++			/*
++			 * fcheck_files() is safe with drop/re-acquire
++			 * of the lock, because it tests:  fd < max_fds
++			 */
++			spin_unlock(&files->file_lock);
++			rcu_read_unlock();
++			tot *= 2;	/* won't overflow: kmalloc will fail */
++			fds = krealloc(fds, tot * sizeof(*fds), GFP_KERNEL);
++			if (!fds) {
++				kfree(fds);
++				return -ENOMEM;
++			}
++			rcu_read_lock();
++			spin_lock(&files->file_lock);
++		}
++		fds[n++] = i;
++	}
++	rcu_read_unlock();
++	spin_unlock(&files->file_lock);
++
++	*fdtable = fds;
++	return n;
++}
++
++/* cr_write_fd_data - dump the state of a given file pointer */
++static int cr_write_fd_data(struct cr_ctx *ctx, struct file *file, int parent)
++{
++	struct cr_hdr h;
++	struct cr_hdr_fd_data *hh = cr_hbuf_get(ctx, sizeof(*hh));
++	struct dentry *dent = file->f_dentry;
++	struct inode *inode = dent->d_inode;
++	enum fd_type fd_type;
++	int ret;
++
++	h.type = CR_HDR_FD_DATA;
++	h.len = sizeof(*hh);
++	h.parent = parent;
++
++	hh->f_flags = file->f_flags;
++	hh->f_mode = file->f_mode;
++	hh->f_pos = file->f_pos;
++	hh->f_version = file->f_version;
++	/* FIX: need also file->uid, file->gid, file->f_owner, etc */
++
++	switch (inode->i_mode & S_IFMT) {
++	case S_IFREG:
++		fd_type = CR_FD_FILE;
++		break;
++	case S_IFDIR:
++		fd_type = CR_FD_DIR;
++		break;
++	case S_IFLNK:
++		fd_type = CR_FD_LINK;
++		break;
++	default:
++		cr_hbuf_put(ctx, sizeof(*hh));
++		return -EBADF;
++	}
++
++	/* FIX: check if the file/dir/link is unlinked */
++	hh->fd_type = fd_type;
++
++	ret = cr_write_obj(ctx, &h, hh);
++	cr_hbuf_put(ctx, sizeof(*hh));
++	if (ret < 0)
++		return ret;
++
++	return cr_write_fname(ctx, &file->f_path, ctx->vfsroot);
++}
++
++/**
++ * cr_write_fd_ent - dump the state of a given file descriptor
++ * @ctx: checkpoint context
++ * @files: files_struct pointer
++ * @fd: file descriptor
++ *
++ * Saves the state of the file descriptor; looks up the actual file
++ * pointer in the hash table, and if found saves the matching objref,
++ * otherwise calls cr_write_fd_data to dump the file pointer too.
++ */
++static int
++cr_write_fd_ent(struct cr_ctx *ctx, struct files_struct *files, int fd)
++{
++	struct cr_hdr h;
++	struct cr_hdr_fd_ent *hh = cr_hbuf_get(ctx, sizeof(*hh));
++	struct file *file = NULL;
++	struct fdtable *fdt;
++	int coe, objref, new, ret;
++
++	rcu_read_lock();
++	fdt = files_fdtable(files);
++	file = fcheck_files(files, fd);
++	if (file) {
++		coe = FD_ISSET(fd, fdt->close_on_exec);
++		get_file(file);
++	}
++	rcu_read_unlock();
++
++	/* sanity check (although this shouldn't happen) */
++	if (!file) {
++		ret = -EBADF;
++		goto out;
++	}
++
++	new = cr_obj_add_ptr(ctx, file, &objref, CR_OBJ_FILE, 0);
++	cr_debug("fd %d objref %d file %p c-o-e %d)\n", fd, objref, file, coe);
++
++	if (new < 0) {
++		ret = new;
++		goto out;
++	}
++
++	h.type = CR_HDR_FD_ENT;
++	h.len = sizeof(*hh);
++	h.parent = 0;
++
++	hh->objref = objref;
++	hh->fd = fd;
++	hh->close_on_exec = coe;
++
++	ret = cr_write_obj(ctx, &h, hh);
++	if (ret < 0)
++		goto out;
++
++	/* new==1 if-and-only-if file was newly added to hash */
++	if (new)
++		ret = cr_write_fd_data(ctx, file, objref);
++
++out:
++	cr_hbuf_put(ctx, sizeof(*hh));
++	fput(file);
++	return ret;
++}
++
++int cr_write_files(struct cr_ctx *ctx, struct task_struct *t)
++{
++	struct cr_hdr h;
++	struct cr_hdr_files *hh = cr_hbuf_get(ctx, sizeof(*hh));
++	struct files_struct *files;
++	int *fdtable;
++	int nfds, n, ret;
++
++	h.type = CR_HDR_FILES;
++	h.len = sizeof(*hh);
++	h.parent = task_pid_vnr(t);
++
++	files = get_files_struct(t);
++
++	nfds = cr_scan_fds(files, &fdtable);
++	if (nfds < 0) {
++		put_files_struct(files);
++		return nfds;
++	}
++
++	hh->objref = 0;	/* will be meaningful with multiple processes */
++	hh->nfds = nfds;
++
++	ret = cr_write_obj(ctx, &h, hh);
++	cr_hbuf_put(ctx, sizeof(*hh));
++	if (ret < 0)
++		goto clean;
++
++	cr_debug("nfds %d\n", nfds);
++	for (n = 0; n < nfds; n++) {
++		ret = cr_write_fd_ent(ctx, files, fdtable[n]);
++		if (ret < 0)
++			break;
++	}
++
++ clean:
++	kfree(fdtable);
++	put_files_struct(files);
++	return ret;
++}
+Index: 2.6.27-lxc/checkpoint/rstr_file.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ 2.6.27-lxc/checkpoint/rstr_file.c	2008-10-23 11:24:06.000000000 +0200
+@@ -0,0 +1,246 @@
++/*
++ *  Checkpoint file descriptors
++ *
++ *  Copyright (C) 2008 Oren Laadan
++ *
++ *  This file is subject to the terms and conditions of the GNU General Public
++ *  License.  See the file COPYING in the main directory of the Linux
++ *  distribution for more details.
++ */
++
++#include <linux/kernel.h>
++#include <linux/sched.h>
++#include <linux/fs.h>
++#include <linux/file.h>
++#include <linux/fdtable.h>
++#include <linux/fsnotify.h>
++#include <linux/syscalls.h>
++#include <linux/checkpoint.h>
++#include <linux/checkpoint_hdr.h>
++
++#include "checkpoint_file.h"
++
++static int cr_close_all_fds(struct files_struct *files)
++{
++	int *fdtable;
++	int nfds;
++
++	nfds = cr_scan_fds(files, &fdtable);
++	if (nfds < 0)
++		return nfds;
++	while (nfds--)
++		sys_close(fdtable[nfds]);
++	kfree(fdtable);
++	return 0;
++}
++
++/**
++ * cr_attach_file - attach a lonely file ptr to a file descriptor
++ * @file: lonely file pointer
++ */
++static int cr_attach_file(struct file *file)
++{
++	int fd = get_unused_fd_flags(0);
++
++	if (fd >= 0) {
++		fsnotify_open(file->f_path.dentry);
++		fd_install(fd, file);
++	}
++	return fd;
++}
++
++/**
++ * cr_attach_get_file - attach (and get) lonely file ptr to a file descriptor
++ * @file: lonely file pointer
++ */
++static int cr_attach_get_file(struct file *file)
++{
++	int fd = get_unused_fd_flags(0);
++
++	if (fd >= 0) {
++		fsnotify_open(file->f_path.dentry);
++		fd_install(fd, file);
++		get_file(file);
++	}
++	return fd;
++}
++
++#define CR_SETFL_MASK (O_APPEND|O_NONBLOCK|O_NDELAY|FASYNC|O_DIRECT|O_NOATIME)
++
++/* cr_read_fd_data - restore the state of a given file pointer */
++static int
++cr_read_fd_data(struct cr_ctx *ctx, struct files_struct *files, int parent)
++{
++	struct cr_hdr_fd_data *hh = cr_hbuf_get(ctx, sizeof(*hh));
++	struct file *file;
++	int rparent, ret;
++	int fd = 0;	/* pacify gcc warning */
++
++	rparent = cr_read_obj_type(ctx, hh, sizeof(*hh), CR_HDR_FD_DATA);
++	cr_debug("rparent %d parent %d flags %#x mode %#x how %d\n",
++		 rparent, parent, hh->f_flags, hh->f_mode, hh->fd_type);
++	if (rparent < 0) {
++		ret = parent;
++		goto out;
++	}
++
++	ret = -EINVAL;
++
++	if (rparent != parent)
++		goto out;
++
++	/* FIX: more sanity checks on f_flags, f_mode etc */
++
++	switch (hh->fd_type) {
++	case CR_FD_FILE:
++	case CR_FD_DIR:
++	case CR_FD_LINK:
++		file = cr_read_open_fname(ctx, hh->f_flags, hh->f_mode);
++		break;
++	default:
++		goto out;
++	}
++
++	if (IS_ERR(file)) {
++		ret = PTR_ERR(file);
++		goto out;
++	}
++
++	/* FIX: need to restore uid, gid, owner etc */
++
++	fd = cr_attach_file(file);	/* no need to cleanup 'file' below */
++	if (fd < 0) {
++		filp_close(file, NULL);
++		ret = fd;
++		goto out;
++	}
++
++	/* register new <objref, file> tuple in hash table */
++	ret = cr_obj_add_ref(ctx, (void *) file, parent, CR_OBJ_FILE, 0);
++	if (ret < 0)
++		goto out;
++	ret = sys_fcntl(fd, F_SETFL, hh->f_flags & CR_SETFL_MASK);
++	if (ret < 0)
++		goto out;
++	ret = vfs_llseek(file, hh->f_pos, SEEK_SET);
++	if (ret == -ESPIPE)	/* ignore error on non-seekable files */
++		ret = 0;
++
++	ret = 0;
++ out:
++	cr_hbuf_put(ctx, sizeof(*hh));
++	return ret < 0 ? ret : fd;
++}
++
++/**
++ * cr_read_fd_ent - restore the state of a given file descriptor
++ * @ctx: checkpoint context
++ * @files: files_struct pointer
++ * @parent: parent objref
++ *
++ * Restores the state of a file descriptor; looks up the objref (in the
++ * header) in the hash table, and if found picks the matching file and
++ * use it; otherwise calls cr_read_fd_data to restore the file too.
++ */
++static int
++cr_read_fd_ent(struct cr_ctx *ctx, struct files_struct *files, int parent)
++{
++	struct cr_hdr_fd_ent *hh = cr_hbuf_get(ctx, sizeof(*hh));
++	struct file *file;
++	int newfd, rparent, ret;
++
++	rparent = cr_read_obj_type(ctx, hh, sizeof(*hh), CR_HDR_FD_ENT);
++	cr_debug("rparent %d parent %d ref %d fd %d c.o.e %d\n",
++		 rparent, parent, hh->objref, hh->fd, hh->close_on_exec);
++	if (rparent < 0) {
++		ret = rparent;
++		goto out;
++	}
++
++	ret = -EINVAL;
++
++	if (rparent != parent)
++		goto out;
++	if (hh->objref <= 0)
++		goto out;
++
++	file = cr_obj_get_by_ref(ctx, hh->objref, CR_OBJ_FILE);
++	if (IS_ERR(file)) {
++		ret = PTR_ERR(file);
++		goto out;
++	}
++
++	if (file) {
++		/* reuse file descriptor found in the hash table */
++		newfd = cr_attach_get_file(file);
++	} else {
++		/* create new file pointer (and register in hash table) */
++		newfd = cr_read_fd_data(ctx, files, hh->objref);
++	}
++
++	if (newfd < 0) {
++		ret = newfd;
++		goto out;
++	}
++
++	cr_debug("newfd got %d wanted %d\n", newfd, hh->fd);
++
++	/* if newfd isn't desired fd then reposition it */
++	if (newfd != hh->fd) {
++		ret = sys_dup2(newfd, hh->fd);
++		if (ret < 0)
++			goto out;
++		sys_close(newfd);
++	}
++
++	if (hh->close_on_exec)
++		set_close_on_exec(hh->fd, 1);
++
++	ret = 0;
++ out:
++	cr_hbuf_put(ctx, sizeof(*hh));
++	return ret;
++}
++
++int cr_read_files(struct cr_ctx *ctx)
++{
++	struct cr_hdr_files *hh = cr_hbuf_get(ctx, sizeof(*hh));
++	struct files_struct *files = current->files;
++	int i, parent, ret;
++
++	parent = cr_read_obj_type(ctx, hh, sizeof(*hh), CR_HDR_FILES);
++	if (parent < 0) {
++		ret = parent;
++		goto out;
++	}
++
++	ret = -EINVAL;
++#if 0	/* activate when containers are used */
++	if (parent != task_pid_vnr(current))
++		goto out;
++#endif
++	cr_debug("objref %d nfds %d\n", hh->objref, hh->nfds);
++	if (hh->objref < 0 || hh->nfds < 0)
++		goto out;
++
++	if (hh->nfds > sysctl_nr_open) {
++		ret = -EMFILE;
++		goto out;
++	}
++
++	/* point of no return -- close all file descriptors */
++	ret = cr_close_all_fds(files);
++	if (ret < 0)
++		goto out;
++
++	for (i = 0; i < hh->nfds; i++) {
++		ret = cr_read_fd_ent(ctx, files, hh->objref);
++		if (ret < 0)
++			break;
++	}
++
++	ret = 0;
++ out:
++	cr_hbuf_put(ctx, sizeof(*hh));
++	return ret;
++}

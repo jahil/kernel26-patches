@@ -1,0 +1,455 @@
+diff -u -r -N linux/drivers/media/radio/Kconfig linux/drivers/media/radio_work/Kconfig
+--- linux/drivers/media/radio/Kconfig	2003-10-03 10:26:06.000000000 +0400
++++ linux/drivers/media/radio_work/Kconfig	2003-10-25 09:57:33.000000000 +0400
+@@ -226,6 +226,20 @@
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called radio-sf16fmr2.
+ 
++config RADIO_SF64PCR
++	tristate "SF64PCR Radio"
++	depends on VIDEO_DEV
++	---help---
++	  Choose Y here if you have one of these FM radio cards.
++
++	  In order to control your radio card, you will need to use programs
++	  that are compatible with the Video For Linux API.  Information on
++	  this API and pointers to "v4l" programs may be found on the WWW at
++	  <http://roadrunner.swansea.uk.linux.org/v4l.shtml>.
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called radio-sf64pcr.
++
+ config RADIO_TERRATEC
+ 	tristate "TerraTec ActiveRadio ISA Standalone"
+ 	depends on ISA && VIDEO_V4L2
+diff -u -r -N linux/drivers/media/radio/Makefile linux/drivers/media/radio_work/Makefile
+--- linux/drivers/media/radio/Makefile	2003-10-03 10:26:06.000000000 +0400
++++ linux/drivers/media/radio_work/Makefile	2003-10-25 09:54:12.000000000 +0400
+@@ -8,6 +8,7 @@
+ obj-$(CONFIG_RADIO_RTRACK2) += radio-rtrack2.o
+ obj-$(CONFIG_RADIO_SF16FMI) += radio-sf16fmi.o
+ obj-$(CONFIG_RADIO_SF16FMR2) += radio-sf16fmr2.o
++obj-$(CONFIG_RADIO_SF64PCR) += radio-sf64pcr.o
+ obj-$(CONFIG_RADIO_CADET) += radio-cadet.o
+ obj-$(CONFIG_RADIO_TYPHOON) += radio-typhoon.o
+ obj-$(CONFIG_RADIO_TERRATEC) += radio-terratec.o
+diff -u -r -N linux/drivers/media/radio/radio-sf64pcr.c linux/drivers/media/radio_work/radio-sf64pcr.c
+--- linux/drivers/media/radio/radio-sf64pcr.c	1970-01-01 03:00:00.000000000 +0300
++++ linux/drivers/media/radio_work/radio-sf64pcr.c	2003-10-25 12:10:33.000000000 +0400
+@@ -0,0 +1,416 @@
++/*
++ * radio-sf64pcr.c for linux-2.6.27
++ *
++ * Soundforte 64 pcr PCI radio card driver for video4linux
++ * (C) 2003 Minos Panagiotis <panosminos@mycosmos.gr>
++ * (C) 2003 Konstantin Tikhomirov <kit@b-system.ru> or <brazen@infoline.su>
++ * (C) 2008 David Watzke <david@watzke.cz> (just made it work with new linux)
++ *
++ * The card uses the TEA5757 chip for the tuner
++ * and the FM801AU chip for the PCI controller.
++ *
++ * Some notes on hardware.
++ *
++ * The TEA5757 chip shift register is controlled by 4 lines (Write
++ * Enable, Clock, Data & Status) that are connected in the GPIO of the
++ * PCI Controller (FM801AU).
++ *
++ * GPIO Bit	Pin of TEA5757	input / output
++ *	1	clk		always output
++ *	2	we(inverted)	always output
++ *	3	data		input / output
++ *	4	mo/st		always input
++ */
++
++#include <linux/autoconf.h>
++
++#ifdef CONFIG_MODVERSIONS
++#include <linux/modversions.h>
++#endif
++
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/init.h>
++#include <linux/pci.h>
++#include <linux/delay.h>
++#include <linux/videodev.h>
++#include <media/v4l2-dev.h>
++#include <media/v4l2-ioctl.h>
++
++#include <asm/io.h>
++
++#define DRV_NAME        "radio-sf64pcr"
++#define DRV_VERSION     "0.3"
++#define DRV_RELDATE     "09/07/2003"
++#define DRV_AUTHOR	"Panos Minos, <panosminos@mycosmos.gr>"
++
++#ifndef PCI_VENDOR_ID_FORTEMEDIA
++#define PCI_VENDOR_ID_FORTEMEDIA        0x1319
++#endif
++
++#ifndef PCI_DEVICE_ID_FORTEMEDIA_FM801
++#define PCI_DEVICE_ID_FORTEMEDIA_FM801  0x0801
++#endif
++
++#define FREQ_IF         171200  /* 10.7*16000   */
++#define FREQ_STEP       200     /* 12.5*16      */
++#define VID_HARDWARE_SF64PCR 10000
++#define FREQ_LO (87.5*16000)
++#define FREQ_HI (108*16000)
++
++struct sf64pcr_card {
++	//struct video_device *videodev;
++	u32 iobase;
++	u32 length;
++	int muted;
++	int mono;
++	int is_stereo;
++	int is_tuned;
++	unsigned long freq;
++	struct  semaphore lock;
++} card_data = {0,0,0,0,0,0,0};
++
++static void sf64pcr_set_frequency(struct sf64pcr_card *card,
++					unsigned long freq);
++static unsigned long sf64pcr_get_frequency(struct sf64pcr_card *card);
++/****************************************************************************/
++
++static const char version[] = DRV_NAME ".c:v" DRV_VERSION " "
++DRV_RELDATE " " DRV_AUTHOR "\n";
++
++static int is_stereo(struct sf64pcr_card *card)
++{
++
++	sf64pcr_get_frequency(card);
++	return card->is_stereo;
++}
++
++static int is_tuned(struct sf64pcr_card *card)
++{
++	sf64pcr_get_frequency(card);
++	return card->is_tuned;
++}
++
++static void sf64pcr_mute(struct sf64pcr_card *card)
++{
++	outw(0xf800, card->iobase+0x52);
++	card->muted = VIDEO_AUDIO_MUTE;
++
++}
++
++static void sf64pcr_unmute(struct sf64pcr_card *card)
++{
++	outw(0xf802, card->iobase+0x52);
++	card->muted = 0;
++
++}
++
++static unsigned long read_shift_register(struct sf64pcr_card *card)
++{
++	unsigned long data = 0UL;
++	unsigned short ioport = card->iobase + 0x52;
++	int c;
++
++	outw(0xfc02,ioport);
++	udelay(4);
++	for (c = 23; c >= 0 ; c--) {
++		data <<= 1;
++		outw(0xfc03,ioport);
++		udelay(4);
++
++		if (c == 0) {
++			if ((inb(ioport) & 0x08) == 0)
++				card->is_tuned = 1;
++			else
++				card->is_tuned = 0;
++		}
++		outw(0xfc02,ioport);
++
++		if (inw(ioport) & 0x04)
++			data |= 1;
++		if (c == 0) {
++			if ((inb(ioport) & 0x08) == 0)
++				card->is_stereo = 1;
++			else
++				card->is_stereo = 0;
++		}
++
++			udelay(4);
++	}
++	return data;
++
++}
++
++static void write_shift_register(struct sf64pcr_card *card, unsigned long data)
++{
++	int c;
++	unsigned int ioport = card->iobase + 0x52;	
++
++	outw(0xf800,ioport); udelay(4);
++
++    for (c = 24; c >= 0; c--) {
++        if (data & (1 << c) ) {
++            outw(0xf804,ioport); udelay(4);
++            outw(0xf805,ioport); udelay(4);
++            outw(0xf804,ioport); udelay(4);
++        }
++        else {
++            outw(0xf800,ioport); udelay(4);
++            outw(0xf801,ioport); udelay(4);
++            outw(0xf800, ioport); udelay(4);
++        }
++    }
++	if(!card->muted)
++		outw(0xf802,ioport);
++}
++
++static unsigned long sf64pcr_get_frequency(struct sf64pcr_card *card)
++{
++        unsigned long data;
++        data = read_shift_register(card);
++        data &= 0x0003FFF;
++        data = data * FREQ_STEP - FREQ_IF;
++				card->freq = data;
++        return data;
++}
++
++static void sf64pcr_set_frequency(struct sf64pcr_card *card, unsigned
++	long freq)
++{
++	card->freq = freq;
++	freq += 10700*16;
++	freq /= FREQ_STEP;
++	freq &= 0x0003FFF;
++	if(card->mono == 1) 
++		freq |= 0x00400000;
++
++	write_shift_register(card, freq);
++}
++
++static void sf64pcr_stereo_on(struct sf64pcr_card *card)
++{
++        card->mono = 0;
++        sf64pcr_set_frequency(card,card->freq);
++}
++
++static void sf64pcr_stereo_off(struct sf64pcr_card *card)
++{
++        card->mono = 1;
++        sf64pcr_set_frequency(card,card->freq);
++}
++/****************************************************************************/
++static int sf64pcr_function(struct inode *inode, struct file *file,
++						unsigned int cmd, void* arg)
++{
++	struct video_device *dev = video_devdata(file);
++	struct sf64pcr_card *card = dev->priv;
++
++	switch (cmd) {
++		case VIDIOCGCAP:
++		{
++			struct video_capability *v = arg;
++			v->type = VID_TYPE_TUNER;
++			v->channels = 1;
++			v->audios = 1;
++			v->maxwidth = 0;
++			v->maxheight = 0;
++			v->minwidth = 0;
++			v->minheight = 0;
++			strcpy(v->name, "SF 64 PCR PCI Radio");
++			return 0;
++		}
++		case VIDIOCGTUNER:
++		{
++			struct video_tuner *v = arg;
++			if (v->tuner)
++				return -EINVAL;
++			v->rangelow = FREQ_LO;
++			v->rangehigh = FREQ_HI;
++			v->flags = VIDEO_TUNER_LOW;
++
++			if(is_stereo(card))
++				v->flags |= VIDEO_TUNER_STEREO_ON;
++			v->mode = VIDEO_MODE_AUTO;
++
++			if(is_tuned(card))
++				v->signal = 0xffff;
++			else
++				v->signal = 0;
++			strcpy(v->name, "FM");
++			return 0;
++		}
++		case VIDIOCSTUNER:
++		{
++			struct video_tuner *v = arg;
++			if(v->tuner!=0)
++				return -EINVAL;
++			return 0;
++		}
++		case VIDIOCGFREQ:
++		{
++		*((unsigned long *)arg) = sf64pcr_get_frequency(card);
++		return 0;
++		}
++		case VIDIOCSFREQ:
++		{
++		unsigned long *f = arg;
++		if (*f < FREQ_LO || *f > FREQ_HI)
++			return -EINVAL;
++
++		sf64pcr_set_frequency(card,*f);
++		return 0;
++		}
++		case VIDIOCGAUDIO:
++		{
++			struct video_audio *v = arg;
++			memset(v,0,sizeof(*v));
++			strcpy(v->name, "Radio");
++			v->flags=VIDEO_AUDIO_MUTABLE | card->muted;
++			v->mode=(is_stereo(card))?VIDEO_SOUND_STEREO:VIDEO_SOUND_MONO;
++			return 0;
++		}
++		case VIDIOCSAUDIO:
++		{
++			struct video_audio *v = arg;
++			if (v->flags & VIDEO_AUDIO_MUTE)
++				sf64pcr_mute(card);
++			else
++				sf64pcr_unmute(card);
++			if(v->flags & VIDEO_SOUND_MONO)
++				sf64pcr_stereo_off(card);
++			if(v->flags & VIDEO_SOUND_STEREO)
++				sf64pcr_stereo_on(card);
++			return 0;
++		}
++		case VIDIOCGUNIT:
++		{
++			struct video_unit *v = arg;
++			v->video = VIDEO_NO_UNIT;
++			v->vbi = VIDEO_NO_UNIT;
++			v->radio = dev->minor;
++			v->audio = 0;
++			v->teletext = VIDEO_NO_UNIT;
++			return 0;
++		}
++		default:
++
++		return -ENOIOCTLCMD;
++	}
++}
++
++static int sf64pcr_ioctl(struct inode *inode, struct file *file,
++		       unsigned int cmd, unsigned long arg)
++{
++	struct video_device *dev = video_devdata(file);
++	struct sf64pcr_card *card=dev->priv;
++	int ret;
++
++	down(&card->lock);
++	ret = video_usercopy(inode, file, cmd, arg, sf64pcr_function);
++	up(&card->lock);
++	return ret;
++}
++
++
++static struct file_operations sf64pcr_fops = {
++	.owner		= THIS_MODULE,
++	.open           = video_exclusive_open,
++	.release        = video_exclusive_release,
++	.ioctl					=	sf64pcr_ioctl,
++	.llseek         = no_llseek,
++};
++
++static struct video_device sf64pcr_radio=
++{
++//	.owner		= THIS_MODULE,
++	.name		= "SoundForte 64 PCR Radio Tuner",
++//	.type		= VID_TYPE_TUNER,
++//	.hardware	= VID_HARDWARE_SF64PCR,
++	.fops           = &sf64pcr_fops,
++};
++
++
++/****************************************************************************/
++
++static int sf64pcr_probe(struct pci_dev *pci_dev,
++		 	const struct pci_device_id *pci_id )
++{
++	if(pci_enable_device(pci_dev))
++		goto err_pci;
++
++  init_MUTEX(&card_data.lock);
++  card_data.iobase = pci_resource_start( pci_dev, 0 );
++  card_data.length = pci_resource_len( pci_dev, 0 );
++
++	printk(KERN_INFO "%s",version);
++	printk(KERN_INFO "sf64pcr: found radio card at iobase=%#x.\n",card_data.iobase);
++
++  if(request_region(card_data.iobase, card_data.length,"SF64PCR") == NULL )
++	{
++                printk(KERN_ERR "sf64-pcr: i/o port already in use\n");
++                goto err_pci;
++	}
++
++  sf64pcr_radio.priv = &card_data;
++
++	if (video_register_device(&sf64pcr_radio, VFL_TYPE_RADIO, -1) == -1)
++	{
++		printk(KERN_ERR "sf64-pcr: could not register video device\n");
++		goto err_video;
++	}
++
++	sf64pcr_radio.priv = &card_data;
++	//card_data.videodev = &sf64pcr_radio;
++	return 0;
++
++err_video:
++	release_region( card_data.iobase, card_data.length );
++err_pci:
++	return -ENODEV;
++}
++
++
++static void sf64pcr_remove( struct pci_dev *pdev )
++{
++	sf64pcr_mute(&card_data);
++	video_unregister_device(&sf64pcr_radio);
++	release_region(pci_resource_start(pdev, 0), pci_resource_len(pdev, 0));
++}
++
++
++static struct pci_device_id sf64pcr_id[] = {
++        { PCI_VENDOR_ID_FORTEMEDIA,PCI_DEVICE_ID_FORTEMEDIA_FM801,
++          PCI_ANY_ID,PCI_ANY_ID, 0, 0, 0 },
++        { 0 }
++};
++
++MODULE_DEVICE_TABLE( pci, sf64pcr_id );
++
++
++static struct pci_driver sf64pcr_pci_driver = {
++	name:		"radio-sf64pcr",
++	id_table:	sf64pcr_id,
++	probe:		sf64pcr_probe,
++	remove:		__devexit_p(sf64pcr_remove),
++};
++
++
++static int __init sf64pcr_init_module(void)
++{
++    return pci_register_driver(&sf64pcr_pci_driver);
++}
++
++
++static void __exit sf64pcr_cleanup_module(void)
++{
++    pci_unregister_driver(&sf64pcr_pci_driver);
++}
++
++
++module_init(sf64pcr_init_module);
++module_exit(sf64pcr_cleanup_module);
++
++
++MODULE_LICENSE("GPL");
++MODULE_AUTHOR(DRV_AUTHOR);
++MODULE_DESCRIPTION("A driver for the SoundForte 64 PCR Radio Tuner.");
