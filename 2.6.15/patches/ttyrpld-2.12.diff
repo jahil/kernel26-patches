@@ -1,0 +1,207 @@
+diff -Pdpru linux-2.6.15~/drivers/char/tty_io.c linux-2.6.15/drivers/char/tty_io.c
+--- linux-2.6.15~/drivers/char/tty_io.c	2006-01-03 04:21:10.000000000 +0100
++++ linux-2.6.15/drivers/char/tty_io.c	2006-01-05 23:43:54.000000000 +0100
+@@ -106,6 +106,28 @@
+ 
+ #include <linux/kmod.h>
+ 
++#ifdef CONFIG_TTY_RPL
++#    include <linux/compiler.h>
++#    include <linux/km_rpldev.h>
++#    ifndef __user
++#        define __user
++#    endif
++int (*rpl_qinit)(struct tty_struct *, struct tty_struct *, struct file *) = NULL;
++int (*rpl_qopen)(struct tty_struct *, struct tty_struct *, struct file *) = NULL;
++int (*rpl_qread)(const char __user *, size_t, struct tty_struct *) = NULL;
++int (*rpl_qwrite)(const char __user *, size_t, struct tty_struct *) = NULL;
++int (*rpl_qclose)(struct tty_struct *, struct tty_struct *) = NULL;
++int (*rpl_qdeinit)(struct tty_struct *, struct tty_struct *) = NULL;
++int (*rpl_qioctl)(struct tty_struct *, struct tty_struct *, unsigned int, unsigned long) = NULL;
++EXPORT_SYMBOL(rpl_qinit);
++EXPORT_SYMBOL(rpl_qopen);
++EXPORT_SYMBOL(rpl_qread);
++EXPORT_SYMBOL(rpl_qwrite);
++EXPORT_SYMBOL(rpl_qclose);
++EXPORT_SYMBOL(rpl_qdeinit);
++EXPORT_SYMBOL(rpl_qioctl);
++#endif
++
+ #undef TTY_DEBUG_HANGUP
+ 
+ #define TTY_PARANOIA_CHECK 1
+@@ -1057,8 +1079,13 @@ static ssize_t tty_read(struct file * fi
+ 		i = -EIO;
+ 	tty_ldisc_deref(ld);
+ 	unlock_kernel();
+-	if (i > 0)
++	if(i > 0) {
+ 		inode->i_atime = current_fs_time(inode->i_sb);
++#ifdef CONFIG_TTY_RPL
++                if(rpl_qread != NULL)
++                    rpl_qread(buf, i, tty);
++#endif
++        }
+ 	return i;
+ }
+ 
+@@ -1143,6 +1170,10 @@ static inline ssize_t do_tty_write(
+ 		struct inode *inode = file->f_dentry->d_inode;
+ 		inode->i_mtime = current_fs_time(inode->i_sb);
+ 		ret = written;
++#ifdef CONFIG_TTY_RPL
++                if(rpl_qwrite != NULL)
++                    rpl_qwrite(buf - ret, ret, tty);
++#endif
+ 	}
+ 	up(&tty->atomic_write);
+ 	return ret;
+@@ -1217,7 +1248,7 @@ static inline void tty_line_name(struct 
+  * relaxed for the (most common) case of reopening a tty.
+  */
+ static int init_dev(struct tty_driver *driver, int idx,
+-	struct tty_struct **ret_tty)
++	struct tty_struct **ret_tty, struct file *filp)
+ {
+ 	struct tty_struct *tty, *o_tty;
+ 	struct termios *tp, **tp_loc, *o_tp, **o_tp_loc;
+@@ -1376,6 +1407,10 @@ static int init_dev(struct tty_driver *d
+ 		tty_ldisc_enable(o_tty);
+ 	}
+ 	tty_ldisc_enable(tty);
++#ifdef CONFIG_TTY_RPL
++        if(rpl_qinit != NULL)
++            rpl_qinit(tty, o_tty, filp);
++#endif
+ 	goto success;
+ 
+ 	/*
+@@ -1707,6 +1742,11 @@ static void release_dev(struct file * fi
+ 		read_unlock(&tasklist_lock);
+ 	}
+ 
++#ifdef CONFIG_TTY_RPL
++        if(rpl_qclose != NULL)
++            rpl_qclose(tty, o_tty);
++#endif
++
+ 	/* check whether both sides are closing ... */
+ 	if (!tty_closing || (o_tty && !o_tty_closing))
+ 		return;
+@@ -1723,6 +1763,11 @@ static void release_dev(struct file * fi
+ 	clear_bit(TTY_DONT_FLIP, &tty->flags);
+ 	cancel_delayed_work(&tty->flip.work);
+ 
++#ifdef CONFIG_TTY_RPL
++        if(rpl_qdeinit != NULL)
++            rpl_qdeinit(tty, o_tty);
++#endif
++
+ 	/*
+ 	 * Wait for ->hangup_work and ->flip.work handlers to terminate
+ 	 */
+@@ -1851,7 +1896,7 @@ retry_open:
+ 		return -ENODEV;
+ 	}
+ got_driver:
+-	retval = init_dev(driver, index, &tty);
++	retval = init_dev(driver, index, &tty, filp);
+ 	up(&tty_sem);
+ 	if (retval)
+ 		return retval;
+@@ -1905,6 +1950,11 @@ got_driver:
+ 		tty->session = current->signal->session;
+ 		tty->pgrp = process_group(current);
+ 	}
++
++#ifdef CONFIG_TTY_RPL
++        if(rpl_qopen != NULL)
++            rpl_qopen(tty, current->signal->tty, filp);
++#endif
+ 	return 0;
+ }
+ 
+@@ -1939,7 +1989,7 @@ static int ptmx_open(struct inode * inod
+ 	up(&allocated_ptys_lock);
+ 
+ 	down(&tty_sem);
+-	retval = init_dev(ptm_driver, index, &tty);
++	retval = init_dev(ptm_driver, index, &tty, filp);
+ 	up(&tty_sem);
+ 	
+ 	if (retval)
+@@ -2287,6 +2337,11 @@ int tty_ioctl(struct inode * inode, stru
+ 	    tty->driver->subtype == PTY_TYPE_MASTER)
+ 		real_tty = tty->link;
+ 
++#ifdef CONFIG_TTY_RPL
++        if(rpl_qioctl != NULL)
++            rpl_qioctl(tty, real_tty, cmd, arg);
++#endif
++
+ 	/*
+ 	 * Break handling by driver
+ 	 */
+diff -Pdpru linux-2.6.15~/include/linux/km_rpldev.h linux-2.6.15/include/linux/km_rpldev.h
+--- linux-2.6.15~/include/linux/km_rpldev.h	1970-01-01 01:00:00.000000000 +0100
++++ linux-2.6.15/include/linux/km_rpldev.h	2006-01-05 23:43:15.000000000 +0100
+@@ -0,0 +1,42 @@
++/*=============================================================================
++ttyrpld - TTY replay daemon
++include/linux/km_rpldev.h - Stage 1 RPL interface
++  Copyright © Jan Engelhardt <jengelh [at] linux01 gwdg de>, 2004 - 2006
++  -- License restrictions apply (GPL v2)
++
++  This file is part of ttyrpld.
++  ttyrpld is free software; you can redistribute it and/or modify it
++  under the terms of the GNU General Public License as published by
++  the Free Software Foundation; however ONLY version 2 of the License.
++
++  ttyrpld is distributed in the hope that it will be useful, but
++  WITHOUT ANY WARRANTY; without even the implied warranty of
++  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
++  General Public License for more details.
++
++  You should have received a copy of the GNU General Public License
++  along with this program kit; if not, write to:
++  Free Software Foundation, Inc., 59 Temple Place - Suite 330,
++  Boston, MA 02111-1307, USA.
++
++  -- For details, see the file named "LICENSE.GPL2"
++=============================================================================*/
++#ifndef _LINUX_KM_RPLDEV_H
++#define _LINUX_KM_RPLDEV_H 1
++
++#include <linux/compiler.h>
++
++struct file;
++struct tty_struct;
++
++extern int (*rpl_qinit)(struct tty_struct *, struct tty_struct *, struct file *);
++extern int (*rpl_qopen)(struct tty_struct *, struct tty_struct *, struct file *);
++extern int (*rpl_qread)(const char __user *, size_t, struct tty_struct *);
++extern int (*rpl_qwrite)(const char __user *, size_t, struct tty_struct *);
++extern int (*rpl_qclose)(struct tty_struct *, struct tty_struct *);
++extern int (*rpl_qdeinit)(struct tty_struct *, struct tty_struct *);
++extern int (*rpl_qioctl)(struct tty_struct *, struct tty_struct *, unsigned int, unsigned long);
++
++#endif // _LINUX_KM_RPLDEV_H
++
++//=============================================================================
+diff -Pdpru linux-2.6.15~/security/Kconfig linux-2.6.15/security/Kconfig
+--- linux-2.6.15~/security/Kconfig	2006-01-03 04:21:10.000000000 +0100
++++ linux-2.6.15/security/Kconfig	2006-01-05 23:43:15.000000000 +0100
+@@ -88,5 +88,13 @@ config SECURITY_SECLVL
+ 
+ source security/selinux/Kconfig
+ 
++config TTY_RPL
++    bool "rpldev hooks for tty logging"
++    help
++        Allows you to log any traffic running over the TTY driver.
++        It is way more useful, because it cannot be fooled by empty
++        or bogus .bash_history entries or even an SSH encrypted
++        channel.
++
+ endmenu
+ 
