@@ -1,0 +1,1444 @@
+diff -Nru --exclude=excludes linux-2.6.28/Documentation/amd76x_pm.txt linux-2.6.28-jo/Documentation/amd76x_pm.txt
+--- linux-2.6.28/Documentation/amd76x_pm.txt	1970-01-01 01:00:00.000000000 +0100
++++ linux-2.6.28-jo/Documentation/amd76x_pm.txt	2009-03-04 21:47:55.000000000 +0100
+@@ -0,0 +1,316 @@
++	ACPI style power management for SMP AMD-760MP(X) based systems
++	==============================================================
++
++The ACPI project now supports C3 for SMP.  However, to get AMD K7
++into C2/C3 some registers need to be adjusted.  This should be done by
++the BIOS, but it isn't on known boards.  You may read this as: "This
++feature is not supported".  Because of this, there is no C2/C3 support
++from the ACPI processor module and there will be probably none in the
++future.
++
++Using the module is regarded as dangerous.
++USE THIS SOFTWARE ON YOUR OWN RISK.
++
++When this module is loaded and properly parameterised it saves about
++70 - 90 W of energy in the idle mode compared to the default idle mode.
++Waking up from the idle mode is fast to keep the system response time
++good. 
++
++This code runs on two-way AMD boxes at the moment, but the basic idling
++algorithm is independent of the number of CPUs.
++
++Known issues:
++=============
++- Currently there's a bug somewhere where the reading the
++  P_LVL2 for the first time causes the system to sleep instead of 
++  idling. This means that you need to hit the power button once to
++  wake the system after loading the module for the first time after
++  reboot. After that the system idles as supposed.
++  (Only observed on Tony's system - S2460.)
++
++- There might be reduced throughput of disk or network devices.  See
++  below for how to configure the "irq rate watcher" to avoid this.
++
++- Occasional hard lockups might be caused by amd76x_pm.  I've run out of
++  ideas how to track this problem down a.t.m.
++
++- I have reports about a buzzing sound from the mainboard when amd76x_pm
++  is loaded and some reports about unclean audio playback.
++
++Influenced by Vcool, and LVCool. Rewrote everything from scratch to
++use the PCI features in Linux, and to support SMP systems. (Tony)
++
++Currently tested amongst others on a TYAN S2460 (760MP) system (Tony), an
++ASUS A7M266-D (760MPX) system (Johnathan) and a TYAN S2466 (760MPX)
++system (Jo), success reports from TYAN S2462, MSI K7D, ASUS A7M266-D,
++Gigabyte GA-7DPXDW+. Adding support for other Athlon SMP or single
++processor systems should be easy if desired.  
++
++Starting from 2.6.28, this module will plug into the cpuidle framework,
++if the kernel is build with CONFIG_CPU_IDLE.  Otherwise it will function
++as a standalone replacement for the kernel's idle loop.
++
++Standalone
++==========
++
++If the kernel is built without cpuidle, the file
++/sys/devices/pci0000:00/0000:00:00.0/sleep_cnt shows the number of C2/C3
++calls (per CPU) since module load. 
++
++Consider using amd76x_pm together with a tickless system (NO_HZ)
++introduced in 2.6.21 for maximum power saving.
++
++Parameters
++----------
++There are some parameters for tuning the behaviour of amd76x_pm:
++mode, max_poll, watch_irqs, watch_limits, watch_in, watch_relax and
++busy_mode.
++
++- mode lets you select between C0, C1, C2 and C3 idling. Characteristic
++  of these modes:
++  * C0: This is not a sleep mode but a busy loop.  Maximum responsivness
++        and maximum power consumption.  Useful only temparary.
++  * C1: Execute hlt-instruction.  This is the standard mode without
++        any additional powesaving.
++  * C2: Processors are taken off the bus but cache spoofing is still
++        possible.  Power consumption in this mode is heavily reduced.
++	Waking up from C2 takes some time, resulting in higher
++	latencies.
++  * C3: Like C2, but with disabled cache spoofing.  Power consumption in
++        this mode is even lower, but there are more wake-up events in
++	this mode.  The net effect depends...
++
++- max_ defines the number of idle calls into amd76x_smp_idle that are
++  needed to enter C2/C3 mode.  This parameter is the maximum loop
++  counter for an outer loop.  Default: lazy_idle=64
++
++- max_poll defines the maximum number of spin cycles in a busy loop
++  where one CPU waits for all others to become idle.  When all CPUs are
++  idle, C2/C3 state is entered.  The default spin_idle=1 is completely
++  useless!  After max_poll loop cycles are exceeded without all
++  processors becoming idle, C1 mode is entered.
++
++irq rate watcher:
++-----------------
++Interrupts are disabled in C2/C3 mode.  CPUs are woken up by timer
++interrupts, by SMIs/NMIs and DMA bus mastering in case of C3.  This
++causes high interrupt latencies for non-timer interrupts that might lead
++to a significant reduction in i/o or network throughput.  There has been
++introduced an "irq rate watcher" to get rid of this issue.  If the irq
++rate watcher detects that an interrupt has a rate above a given limit,
++C2/C3 idling (given by mode) will be disabled. Instead another
++configurable mode will be entered.  The parameters watch_irqs, watch_limits,
++watch_int, watch_relax and busy_mode control the irq rate watcher: 
++
++- watch_irqs defines which interrupts are to be watched.  This is a
++  comma separated list of interrupts.  To enable the irq rate watcher
++  you must specify this parameter.  You may provide the interrupts used
++  by disk controllers or network adapters here. Default: none
++  
++- watch_limits defines at which interrupt rate C2/C3 mode shall be
++  disabled.  This is a list of comma separated interrupt rates per
++  second.  To enable the irq rate watcher you must specify this
++  parameter.  Watch the interrupt rates for those devices you are
++  interested in and choose a limit that discrimitates idle from busy
++  state. Default: none
++
++- watch_int defines the time interval (in milliseconds) at which the
++  interrupt rate is checked.  Too low values may result in an overhead
++  and too high values cause the busy mode to kick in later.
++  Default: watch_int=500
++
++- watch_relax defines the mininum number of check intervals with low
++  interrupt rates that are needed to leave the forced busy mode.
++  Default: watch_relax=2
++
++All parameters may be given as module parameters to amd76x_pm and may be
++queried/altered via their sysfs entries in
++/sys/module/amd76x_pm/parameters.
++
++To get the irq watcher started, watch_int, watch_irqs and watch_limits
++must all be provided.  If any of these parameters is cleared via sysfs,
++the irq rate watcher stopps and cannot be restarted (unless the module
++is reloaded).
++
++CPUIDLE plug-in
++===============
++
++If the kernel is build with cpuidle (CONFIG_CPU_IDLE), amd76x_pm will
++plug into this framework.  In this case there is only one module
++parameter: max_poll.  This functions in the same way as with the
++stand-alone version.  See the cpuidle documentation for some details.
++
++
++Some hints on tuning max_poll for both versions::
++Watch the sleep count per second on an almost idle system.  Start with a
++fairly low
++value for max_poll, e.g. 1000.  Raise max_poll, e.g. by
++doubling. This should cause a raise in the sleep rate.  Stop when
++the sleep rate doesn't increase anymore.  Then reduce it a bit.
++I'm currently running max_poll=300000.
++
++Further notes
++=============
++There are complex dependencies between several settings:
++- HZ
++- preemption model
++- time source (tsc, pmtmr,...)
++- mode (C2/C3)
++- probably others
++
++License
++=======
++This software is licensed under GNU General Public License Version 2 
++as specified in file COPYING in the Linux kernel source tree main 
++directory.
++
++Copyright (C) 2002		Johnathan Hicks <thetech@folkwolf.net>
++				Tony Lindgren <tony@atomide.com>
++
++Copyright (C) 2005 - 2007	Joerg Sommrey <jo@sommrey.de>
++
++History
++=======
++
++  20020702 - amd-smp-idle: Tony Lindgren <tony@atomide.com>
++Influenced by Vcool, and LVCool. Rewrote everything from scratch to
++use the PCI features in Linux, and to support SMP systems. Provides
++C2 idling on SMP AMD-760MP systems.
++
++  20020722: JH
++  	I adapted Tony's code for the AMD-765/766 southbridge and adapted it
++  	according to the AMD-768 data sheet to provide the same capability for
++  	SMP AMD-760MPX systems. Posted to acpi-devel list.
++  	
++  20020722: Alan Cox
++  	Replaces non-functional amd76x_pm code in -ac tree.
++  	
++  20020730: JH
++  	Added ability to do normal throttling (the non-thermal kind), C3 idling
++  	and Power On Suspend (S1 sleep). It would be very easy to tie swsusp
++  	into activate_amd76x_SLP(). C3 idling doesn't happen yet; see my note
++  	in amd76x_smp_idle(). I've noticed that when NTH and idling are both
++  	enabled, my hardware locks and requires a hard reset, so I have
++  	#ifndefed around the idle loop setting to prevent this. POS locks it up
++  	too, both ought to be fixable. I've also noticed that idling and NTH
++  	make some interference that is picked up by the onboard sound chip on
++  	my ASUS A7M266-D motherboard.
++
++  20030601: Pasi Savolainen
++     Simple port to 2.5
++     Added sysfs interface for making nice graphs with mrtg.
++     Look for /sys/devices/pci0/00:00.0/C2_cnt & lazy_idle (latter writable)
++
++  20050601: Joerg Sommrey (jo)
++     2.6 stuff
++     redesigned amd76x_smp_idle.  The algorithm is basically the same
++        but the implementation has changed.  This part is now independent
++        from the number of CPUs and data is locked against concurrent
++        updates from different CPUs.
++     use _smp_processor_id()
++     use cpu_idle_wait()
++     NTH and POS code not touched and not tested.
++
++  20050621: jo
++     separated C3, NTH and POS code into extra patch
++
++  20050812: jo
++     rewritten amd76x_smp_idle completely. It's much simpler now but
++     does a good job - the KISS approach.  Introduced a new tunable
++     spin_idle.
++
++  20050819: jo
++     new irq rate watcher task that forces C1-idling if irq-rate exceeds a
++     given limit.
++
++  20050820: jo
++     make all modules parameters r/w in sysfs.
++
++  20050906: jo
++     avoid some local_irq_disable/enable
++
++  20060108: jo
++     using percpu-variables
++
++  20060110: jo
++     eliminated a race condition in the idle loop.  Thanks to Arjan van
++     de Ven, who pointed to this issue.
++  
++  20060121: jo
++     Switched from C2 to C3 idling, inspired by processor_idle.c
++     C2 idling has just been replaced by C3 idling, there is no C2/C3
++     transition.
++     Restoring all touched northbridge and southbridge register bits to
++     their original values on module unload.
++
++  20060129: jo
++     Major redesign of the idle loop again.  Now there is a two-phase
++     process to make sure all or no CPUs go into C3.  In phase one each
++     CPU waits for the other to become idle.  In phase two all CPUs come
++     to an agreement about going C3 or not.  Now using spinlocks.
++     Simplicity has gone :-(
++
++  20060202: jo
++     Make the source conforming to the kernel coding style. Remove some
++     minor buglets.
++
++  20060206: jo
++     Code redesign for PCI register setup
++     C2/C3 mode selection
++
++  20060214: jo
++    - Redesigned the idle function again.  Now there shouldn't be any
++      situations left where not all CPUs try to enter C2/C3.
++    - Removed the (ugly) parsing of watch_irqs.  Using two separate arrays
++      watch_irqs and watch_limits now.
++    - sleep_time calculation and sysfs entries added.
++
++  20060409: jo
++    - removed sleep_time in favour of sleep_rate
++    - mode parameter syntax changed. now: mode={2|3} was: mode={C2|C3}
++    - mode changeable at runtime
++    
++  20060624: jo
++    - some changes concerning memory barriers
++    
++  20060719: jo
++    - removed some double-locking
++    - code lifting
++
++  20061010: jo
++    - trivial 2.6.18 port
++
++  20061210: jo
++    - trivial 2.6.19 port
++
++  20070209: jo
++    - workqueue API changes in 2.6.20
++
++  20070406: jo
++    - sleep_rate calculation using 64bit arithmetics
++
++  20070526: jo
++    - removed "synchronized sleep", i.e. one CPU might enter Cx state if
++      all other CPUs are idle but not nessecarily entering Cx state.
++    - run "inner loop" with interrupts enabled
++    - adopted some system clock related functionalities from
++      processor_idle.c
++
++  20070724: jo
++    - 2.6.22 port
++
++  20080414: jo
++    - barrier added
++
++  20090225: jo
++    - adapted to changes in the kernel's idle loop
++    - calculation of sleep_rate removed. (It was erroneous anyway.)
++    - removed the lazy_idle loop
++    - renamed spin_idle to max_poll.  The behaviour has completely
++      changed!
++    - extended mode to C0-C3
++    - introduced busy_mode
++    - borrowed some code from processor_idle.c
++
++  20090301: jo
++    - added support for cpuidle
+diff -Nru --exclude=excludes linux-2.6.28/drivers/acpi/Kconfig linux-2.6.28-jo/drivers/acpi/Kconfig
+--- linux-2.6.28/drivers/acpi/Kconfig	2009-02-21 21:26:11.000000000 +0100
++++ linux-2.6.28-jo/drivers/acpi/Kconfig	2009-02-27 22:18:33.000000000 +0100
+@@ -401,3 +401,18 @@
+ 	  type of access to battery information, found on some laptops.
+ 
+ endif	# ACPI
++
++config AMD76X_PM
++      tristate "AMD76x Native Power Management support"
++      default n
++      depends on EXPERIMENTAL && X86 && PCI
++      help
++        This driver enables Power Management on AMD760MP & AMD760MPX
++        chipsets.  This is about same as ACPI C3, but ACPI doesn't
++        support known AMD760MP(X) boards.
++        See Documentation/amd76x_pm.txt for details.
++
++        Say M here to build a module called amd76x_pm.
++
++        If unsure, say N.
++
+diff -Nru --exclude=excludes linux-2.6.28/drivers/acpi/Makefile linux-2.6.28-jo/drivers/acpi/Makefile
+--- linux-2.6.28/drivers/acpi/Makefile	2009-02-21 21:26:11.000000000 +0100
++++ linux-2.6.28-jo/drivers/acpi/Makefile	2009-02-27 22:11:51.000000000 +0100
+@@ -66,3 +66,7 @@
+ obj-$(CONFIG_ACPI_PROCFS_POWER)	+= cm_sbs.o
+ obj-$(CONFIG_ACPI_SBS)		+= sbshc.o
+ obj-$(CONFIG_ACPI_SBS)		+= sbs.o
++#
++# not really ACPI thing, but closely related
++#
++obj-$(CONFIG_AMD76X_PM)		+= amd76x_pm.o
+diff -Nru --exclude=excludes linux-2.6.28/drivers/acpi/amd76x_pm.c linux-2.6.28-jo/drivers/acpi/amd76x_pm.c
+--- linux-2.6.28/drivers/acpi/amd76x_pm.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-2.6.28-jo/drivers/acpi/amd76x_pm.c	2009-03-04 21:47:36.000000000 +0100
+@@ -0,0 +1,986 @@
++/*
++ * ACPI style PM for SMP AMD-760MP(X) based systems.
++ *
++ * Copyright (C) 2002		Johnathan Hicks <thetech@folkwolf.net>
++ * 				Tony Lindgren <tony@atomide.com>
++ *
++ * Copyright (C) 2005-2006	Joerg Sommrey <jo@sommrey.de>
++ *
++ * See Documentation/amd76x_pm.txt for details.
++ *
++ * This software is licensed under GNU General Public License Version 2
++ * as specified in file COPYING in the Linux kernel source tree main
++ * directory.
++ */
++
++
++#include <linux/autoconf.h>
++#include <linux/module.h>
++#include <linux/pci.h>
++#include <linux/delay.h>
++#include <linux/pm.h>
++#include <linux/device.h>
++#include <linux/init.h>
++#include <linux/fs.h>
++#include <linux/version.h>
++#include <linux/kernel.h>
++#include <linux/workqueue.h>
++#include <linux/jiffies.h>
++#include <linux/kernel_stat.h>
++#include <linux/spinlock.h>
++#include <linux/percpu.h>
++#include <linux/hrtimer.h>
++#include <linux/tick.h>
++#include <acpi/acpi.h>
++#include <asm/atomic.h>
++#include <linux/irqflags.h>
++#include <linux/cpuidle.h>
++
++#include <linux/amd76x_pm.h>
++
++#define VERSION	"20090301"
++
++static int amd76x_pm_main(void);
++
++static unsigned int sb_id;
++static unsigned int nb_id;
++static unsigned long max_poll __read_mostly;
++
++module_param(max_poll, long, S_IRUGO | S_IWUSR);
++MODULE_PARM_DESC(max_poll,
++	" number of poll cycles to wait for other CPUs to become idle");
++
++#ifndef CONFIG_CPU_IDLE
++static void amd76x_smp_idle(void);
++static int local_mode __read_mostly;
++static int mode = AMD76X_MODE;
++static int busy_mode = AMD76X_BUSY_MODE;
++static int watch_int;
++static int watch_relax = AMD76X_WATCH_RELAX;
++static int relax_cycles;
++static int watch_irqs[AMD76X_WATCH_MAX];
++static int nr_watch_irqs;
++static int watch_limits[AMD76X_WATCH_MAX];
++static int nr_watch_limits;
++static int irq_count[AMD76X_WATCH_MAX];
++
++module_param(watch_int, int, S_IRUGO | S_IWUSR);
++MODULE_PARM_DESC(watch_int,
++		" watch interval (in milliseconds) for interrupts");
++
++module_param_array(watch_irqs, int, &nr_watch_irqs, S_IRUGO | S_IWUSR);
++MODULE_PARM_DESC(watch_irqs,
++		" list of irqs to be watched");
++
++module_param_array(watch_limits, int, &nr_watch_limits, S_IRUGO | S_IWUSR);
++MODULE_PARM_DESC(watch_limits,
++		" interrupt rate that causes fallback to C1 idling if"
++		" corresponding interrupt exceeds this rate");
++
++module_param(watch_relax, int, S_IRUGO | S_IWUSR);
++MODULE_PARM_DESC(watch_relax,
++		" number of watch intervals not exceeding any limit"
++		" to fall back from busy_mode to mode");
++
++static int param_set_mode(const char *val, struct kernel_param *kp) {
++	int new_mode;
++	if (!val) return -EINVAL;
++	new_mode = simple_strtol(val, 0, 0);
++	if (new_mode < 0 || new_mode > 3)
++		return -EINVAL;
++	*((int *)kp->arg) = new_mode;
++	return 0;
++}
++
++module_param_call(mode, param_set_mode, param_get_int, &mode,
++	S_IRUGO | S_IWUSR);
++MODULE_PARM_DESC(mode, " idling mode");
++
++
++static int param_set_busy_mode(const char *val, struct kernel_param *kp) {
++	int new_mode;
++	if (!val) return -EINVAL;
++	new_mode = simple_strtol(val, 0, 0);
++	if (new_mode < 0 || new_mode > 3)
++		return -EINVAL;
++	*((int *)kp->arg) = new_mode;
++	return 0;
++}
++module_param_call(busy_mode, param_set_busy_mode, param_get_int,
++	&busy_mode, S_IRUGO | S_IWUSR);
++MODULE_PARM_DESC(busy_mode, " idling mode when irq limits are exceeded");
++#endif /* !CONFIG_CPU_IDLE */
++
++MODULE_AUTHOR("Tony Lindgren, Johnathan Hicks, Joerg Sommrey, others");
++MODULE_DESCRIPTION("ACPI style power management for SMP AMD-760MP(X) "
++		"based systems, version " VERSION);
++
++
++static struct pci_dev *pdev_nb;
++static struct pci_dev *pdev_sb;
++
++static atomic_t num_idle __cacheline_aligned_in_smp = ATOMIC_INIT(0);
++
++#ifndef CONFIG_CPU_IDLE
++struct PM_cfg {
++	void (*orig_idle) (void);
++	void (*curr_idle) (void);
++};
++
++static struct PM_cfg amd76x_pm_cfg;
++
++struct cpu_stat {
++	int idle_count;
++	int sleep_cnt;
++};
++
++static void *prs_ref __read_mostly;
++
++static void watch_irq(struct work_struct *);
++
++static DECLARE_DELAYED_WORK(work_item, &watch_irq);
++
++#else /* CONFIG_CPU_IDLE */
++
++static struct cpuidle_driver amd76x_idle_driver = {
++	.name = "amd76x_idle",
++	.owner = THIS_MODULE,
++};
++
++static void *cpuidle_devices;
++
++static struct driver_data {
++	atomic_t *num_sleeping;
++	unsigned int sleep_port;
++	unsigned int timer_port;
++	unsigned int flush_cache;
++	unsigned long *max_poll;
++}  c2_driver_data __read_mostly, c3_driver_data __read_mostly;
++#endif
++
++struct PM_slp {
++	unsigned int C2_reg;
++	unsigned int C3_reg;
++	unsigned int status_reg;
++	unsigned int tmr_reg;
++};
++
++static struct PM_slp amd76x_pm_slp __read_mostly;
++/* save register contents
++ */
++struct reg_save {
++	unsigned int nb58;
++	unsigned int nb60;
++	unsigned int nb68;
++	unsigned int nb70;
++	unsigned int sb41;
++	unsigned int sb4f;
++	unsigned int sb50;
++	unsigned int pm04;
++};
++
++static struct reg_save amd76x_saved;
++
++static struct pci_device_id __devinitdata amd_nb_tbl[] = {
++	{PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_FE_GATE_700C, PCI_ANY_ID,
++		PCI_ANY_ID,},
++	{0,}
++};
++
++static struct pci_device_id __devinitdata amd_sb_tbl[] = {
++	{PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_VIPER_7413, PCI_ANY_ID,
++		PCI_ANY_ID,},
++	{PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_VIPER_7443, PCI_ANY_ID,
++		PCI_ANY_ID,},
++	{0,}
++};
++
++/*
++ * Configures the AMD-762 northbridge to support PM calls
++ */
++static int config_amd762(int enable)
++{
++	unsigned int regdword;
++
++	/* Enable/disable STPGNT in BIU Status/Control for cpu0,
++	 * page 64 in AMD-762 doc */
++	pci_read_config_dword(pdev_nb, 0x60, &regdword);
++	if (enable)
++		amd76x_bits_set_store(amd76x_saved.nb60, -1,
++				STP_GRANT_DISCON_EN, regdword);
++	else
++		amd76x_bits_restore(amd76x_saved.nb60,
++				STP_GRANT_DISCON_EN, regdword);
++	pci_write_config_dword(pdev_nb, 0x60, regdword);
++
++	/* Enable/disable STPGNT in BIU Status/Control for cpu1,
++	 * page 69 in AMD-762 doc */
++	pci_read_config_dword(pdev_nb, 0x68, &regdword);
++	if (enable)
++		amd76x_bits_set_store(amd76x_saved.nb68, -1,
++				STP_GRANT_DISCON_EN, regdword);
++	else
++		amd76x_bits_restore(amd76x_saved.nb68,
++				STP_GRANT_DISCON_EN, regdword);
++	pci_write_config_dword(pdev_nb, 0x68, regdword);
++
++	/* dis/enable "DRAM refresh disable", page 60 in AMD-762 doc */
++	pci_read_config_dword(pdev_nb, 0x58, &regdword);
++	if (enable)
++		amd76x_bits_set_store(amd76x_saved.nb58, 0,
++				REF_DIS, regdword);
++	else
++		amd76x_bits_restore(amd76x_saved.nb58,
++				REF_DIS, regdword);
++	pci_write_config_dword(pdev_nb, 0x58, regdword);
++
++	/* Self refresh enable, page 75 in AMD-762 doc */
++	pci_read_config_dword(pdev_nb, 0x70, &regdword);
++	if (enable)
++		amd76x_bits_set_store(amd76x_saved.nb70, -1,
++				SELF_REF_EN, regdword);
++	else
++		amd76x_bits_restore(amd76x_saved.nb70,
++				SELF_REF_EN, regdword);
++	pci_write_config_dword(pdev_nb, 0x70, regdword);
++
++	return 0;
++}
++
++
++/*
++ * Get the base PMIO address and set the pm registers in amd76x_pm_cfg.
++ */
++static void amd76x_get_PM(void)
++{
++	unsigned int regdword;
++
++	/* Get the address for pm status, P_LVL2, etc
++	 * DevB:3x58, page 102 in AMD-768 doc
++	 * C3A58, page 64 in AMD-766 doc
++	 */
++	pci_read_config_dword(pdev_sb, 0x58, &regdword);
++	regdword &= PMBASE;
++	amd76x_pm_slp.status_reg = (regdword + 0x00);
++	amd76x_pm_slp.tmr_reg = (regdword + 0x08);
++	amd76x_pm_slp.C2_reg = (regdword + 0x14);
++	amd76x_pm_slp.C3_reg = (regdword + 0x15);
++}
++
++/*
++ * En/Disable PMIO and configure W4SG & STPGNT.
++ */
++static int config_PMIO_amd76x(int is_766, int enable)
++{
++	unsigned char regbyte;
++	unsigned char bits = 0;
++
++	/* Set W4SG and PMIOEN, if using a 765/766 set STPGNT as well.
++	 * AMD-766: C3A41; page 59 in AMD-766 doc
++	 * AMD-768: DevB:3x41; page 94 in AMD-768 doc */
++	pci_read_config_byte(pdev_sb, 0x41, &regbyte);
++	if (is_766)
++		bits |= STPGNT;
++	bits |= (PMIOEN | W4SG | TMR32);
++	if (enable)
++		amd76x_bits_set_store(amd76x_saved.sb41,
++				-1, bits, regbyte);
++	else
++		amd76x_bits_restore(amd76x_saved.sb41,
++				bits, regbyte);
++	pci_write_config_byte(pdev_sb, 0x41, regbyte);
++	return 0;
++}
++
++/*
++ * C2/C3 idle support for AMD-766.
++ */
++static void config_amd766_Cx(int enable)
++{
++	unsigned int regdword;
++
++	/* Set C2/C3 options in C3A50, page 63 in AMD-766 doc */
++	pci_read_config_dword(pdev_sb, 0x50, &regdword);
++	if (enable) {
++		amd76x_bits_set_store(amd76x_saved.sb50,
++			((STPCLK_EN | CPUSLP_EN) << C2_REGS) |
++			((STPCLK_EN | CPUSLP_EN | CPUSTP_EN) << C3_REGS),
++			((DCSTOP_EN | PCISTP_EN | SUSPND_EN | CPURST_EN |
++			 STPCLK_EN | CPUSLP_EN) << C2_REGS) |
++			((DCSTOP_EN | PCISTP_EN | SUSPND_EN | CPURST_EN |
++			 STPCLK_EN | CPUSLP_EN | CPUSTP_EN) << C3_REGS),
++			regdword);
++	} else 
++		amd76x_bits_restore(amd76x_saved.sb50,
++			((DCSTOP_EN | PCISTP_EN | SUSPND_EN | CPURST_EN |
++			 STPCLK_EN | CPUSLP_EN) << C2_REGS) |
++			((DCSTOP_EN | PCISTP_EN | SUSPND_EN | CPURST_EN |
++			 STPCLK_EN | CPUSLP_EN | CPUSTP_EN) << C3_REGS),
++			regdword);
++	pci_write_config_dword(pdev_sb, 0x50, regdword);
++}
++
++/*
++ * Configures the 765 & 766 southbridges.
++ */
++static int config_amd766(int enable)
++{
++	if (enable)
++		amd76x_get_PM();
++	config_PMIO_amd76x(1, enable);
++	config_amd766_Cx(enable);
++	return 0;
++}
++
++/*
++ * C2/C3 idling support for AMD-768.
++ */
++static void config_amd768_Cx(int enable)
++{
++	unsigned char regbyte;
++	unsigned short regword;
++
++	/* Set C2/C3 options in DevB:3x4F, page 100 in AMD-768 doc */
++	pci_read_config_byte(pdev_sb, 0x4F, &regbyte);
++	if (enable)
++		amd76x_bits_set_store(amd76x_saved.sb4f, -1,
++			C2EN | C3EN | ZZ_C3EN | CSLP_C3EN | CSTP_C3EN,
++			regbyte);
++	else
++		amd76x_bits_restore(amd76x_saved.sb4f,
++			C2EN | C3EN | ZZ_C3EN | CSLP_C3EN | CSTP_C3EN,
++			regbyte);
++	pci_write_config_byte(pdev_sb, 0x4F, regbyte);
++
++	/* set BM_RLD in PM04 for C3 */
++#if 1
++	regword = inw(amd76x_pm_slp.status_reg + 0x04);
++	if (enable)
++		amd76x_bits_set_store(amd76x_saved.pm04, 0,
++			BM_RLD, regword);
++	else
++		amd76x_bits_restore(amd76x_saved.pm04,
++			BM_RLD, regword);
++	outw(regword, amd76x_pm_slp.status_reg + 0x04);
++#endif
++
++}
++
++/*
++ * Configures the 768 southbridge to support idle calls, and gets
++ * the processor idle call register location.
++ */
++static int config_amd768(int enable)
++{
++	if (enable)
++		amd76x_get_PM();
++	config_PMIO_amd76x(0, enable);
++	config_amd768_Cx(enable);
++	return 0;
++}
++
++#ifdef  CONFIG_CPU_IDLE
++static int amd76x_c0_idle(struct cpuidle_device *dev,
++	struct cpuidle_state *state)
++{
++	unsigned int oldticks, newticks;
++
++	current_thread_info()->status &= ~TS_POLLING;
++	oldticks = inl(amd76x_pm_slp.tmr_reg);
++	while (!need_resched()) {
++		cpu_relax();
++	}
++	newticks = inl(amd76x_pm_slp.tmr_reg);
++	current_thread_info()->status |= TS_POLLING;
++	local_irq_enable();
++	return (newticks - oldticks) *  (PM_TMR_TICK_NS / 1000);
++}
++
++static int amd76x_c1_idle(struct cpuidle_device *dev,
++	struct cpuidle_state *state)
++{
++	current_thread_info()->status &= ~TS_POLLING;
++	if (!need_resched()) {
++		safe_halt();
++	} else
++		local_irq_enable();
++	current_thread_info()->status |= TS_POLLING;
++	return 0;
++}
++
++
++static int amd76x_cpuidle(struct cpuidle_device *dev,
++	struct cpuidle_state *state)
++{
++	unsigned int oldticks, newticks, sleepns;
++	int unused;
++	struct driver_data *driver_data;
++	int i;
++
++	driver_data = cpuidle_get_statedata(state);
++	atomic_inc(driver_data->num_sleeping);
++
++	current_thread_info()->status &= ~TS_POLLING;
++	smp_mb();
++	for (i = 0; i < *(driver_data->max_poll); i++) {
++		if (need_resched()) {
++			atomic_dec(driver_data->num_sleeping);
++			current_thread_info()->status |= TS_POLLING;
++			local_irq_enable();
++			return 0;
++		}
++		smp_mb();
++		if (atomic_read(driver_data->num_sleeping) == num_online_cpus())
++			goto sleep;
++		cpu_relax();
++	}
++	atomic_dec(driver_data->num_sleeping);
++	current_thread_info()->status |= TS_POLLING;
++	dev->last_state = dev->safe_state;
++	return dev->safe_state->enter(dev, state);
++
++sleep:
++	current_thread_info()->status |= TS_POLLING;
++	clockevents_notify(CLOCK_EVT_NOTIFY_BROADCAST_ENTER, &dev->cpu);
++	if (driver_data->flush_cache)
++		ACPI_FLUSH_CPU_CACHE();
++	oldticks = inl(driver_data->timer_port);
++	sched_clock_idle_sleep_event();
++	/* Invoke C2/C3 */
++	inb(driver_data->sleep_port);
++	unused = inl(driver_data->timer_port);
++	newticks = inl(driver_data->timer_port);
++	atomic_dec(driver_data->num_sleeping);
++        /* TSC could halt in idle, so notify users */
++	mark_tsc_unstable("TSC halts in C2/C3");;
++	sleepns = (newticks - oldticks) * PM_TMR_TICK_NS;
++	sched_clock_idle_wakeup_event(sleepns);
++	local_irq_enable();
++	clockevents_notify(CLOCK_EVT_NOTIFY_BROADCAST_EXIT, &dev->cpu);
++	return sleepns / 1000;
++}
++
++static void setup_cpuidle_device(struct cpuidle_device *dev, int cpu)
++{
++	int i;
++	struct cpuidle_state *state;
++
++	dev->cpu = cpu;
++	dev->state_count = 4;
++	dev->last_state = NULL;
++	dev->last_residency = 0;
++
++	
++	for (i = 0; i <= 3; i++) {
++		state = &dev->states[i];
++		snprintf(state->name, CPUIDLE_NAME_LEN, "C%d", i);
++		switch (i) {
++		case 0:
++			strncpy(state->desc, "amd76x_pm polling",
++				CPUIDLE_DESC_LEN);
++			state->exit_latency = 1;
++			state->target_residency =
++				state->exit_latency * LATENCY_FACTOR;
++			state->power_usage = 60000;
++			state->flags =
++				CPUIDLE_FLAG_TIME_VALID |
++				CPUIDLE_FLAG_POLL; 
++			state->usage = 0;
++			state->time = 0;
++			state->driver_data = NULL;
++			state->enter = amd76x_c0_idle;
++			break;
++		case 1:
++			strncpy(state->desc, "amd76x_pm safe halt",
++				CPUIDLE_DESC_LEN);
++			state->exit_latency = 11;
++			state->target_residency =
++				state->exit_latency * LATENCY_FACTOR;
++			state->power_usage = 45000;
++			state->flags =
++				/*CPUIDLE_FLAG_TIME_VALID |*/
++				CPUIDLE_FLAG_SHALLOW;
++				
++			state->usage = 0;
++			state->time = 0;
++			state->driver_data = NULL;
++			state->enter = amd76x_c1_idle;
++			dev->safe_state = state;
++			break;
++		case 2:
++			strncpy(state->desc, "amd76x_pm C2 mode",
++				CPUIDLE_DESC_LEN);
++			state->exit_latency = acpi_gbl_FADT.C2latency;
++			state->target_residency =
++				state->exit_latency * LATENCY_FACTOR;
++			state->power_usage = 30000;
++			state->flags =
++				CPUIDLE_FLAG_TIME_VALID |
++				CPUIDLE_FLAG_BALANCED;
++			state->usage = 0;
++			state->time = 0;
++			cpuidle_set_statedata(state, &c2_driver_data);
++			state->enter = amd76x_cpuidle;
++			break;
++		case 3:
++			strncpy(state->desc, "amd76x_pm C3 mode",
++				CPUIDLE_DESC_LEN);
++			state->exit_latency = acpi_gbl_FADT.C3latency;
++			state->target_residency =
++				state->exit_latency * LATENCY_FACTOR;
++			state->power_usage = 25000;
++			state->flags =
++				CPUIDLE_FLAG_TIME_VALID |
++				CPUIDLE_FLAG_CHECK_BM | CPUIDLE_FLAG_DEEP;
++			state->usage = 0;
++			state->time = 0;
++			cpuidle_set_statedata(state, &c3_driver_data);
++			state->enter = amd76x_cpuidle;
++			break;
++
++		}
++	}
++}
++
++#else /* !CONFIG_CPU_IDLE */
++
++/*
++ * Idle loop for single processor systems
++ */
++void amd76x_up_idle(void)
++{
++	/* ACPI knows how to do C2/C3 on SMP when cpu_count < 2
++	 * we really shouldn't end up here anyway. 
++	 */
++	amd76x_pm_cfg.orig_idle();
++}
++
++/*
++ * Idle loop for SMP systems
++ *
++ */
++static void amd76x_smp_idle(void)
++{
++	int i;
++	int num_online;
++	struct cpu_stat *prs;
++	unsigned long newticks;
++	unsigned long oldticks = 0;
++	long sleepticks;
++	int cpu;
++
++	if (local_mode == 0) {
++		local_irq_enable();
++		return;
++	}
++
++	if (local_mode == 1) {
++		current_thread_info()->status &= ~TS_POLLING;
++		if (!need_resched()) {
++			safe_halt();
++			current_thread_info()->status |= TS_POLLING;
++			return;
++		} else {
++			local_irq_enable();
++			current_thread_info()->status |= TS_POLLING;
++			return;
++		}
++	}
++
++	cpu = raw_smp_processor_id();
++	prs = per_cpu_ptr(prs_ref, cpu);
++
++	num_online = num_online_cpus();
++	prs->idle_count = 0;
++
++	smp_mb__before_atomic_inc();
++	atomic_inc(&num_idle);
++
++	/* quote from processor_idle.c:
++	 * TS_POLLING-cleared state must be visible before we
++	 * test NEED_RESCHED
++	 */
++	current_thread_info()->status &= ~TS_POLLING;
++
++	/* Spin loop until either
++	 * - max_poll cycles are reached
++	 * - there is scheduled work
++	 * - all CPUs are idle
++	 */
++	smp_mb();
++	for (i = 0; i < max_poll; i++) {
++		if (need_resched()) {
++			current_thread_info()->status |= TS_POLLING;
++			atomic_dec(&num_idle);
++			local_irq_enable();
++			return;
++		}
++		smp_mb();
++		if (atomic_read(&num_idle) == num_online)
++			goto sleepy;
++		cpu_relax();
++	}
++	current_thread_info()->status |= TS_POLLING;
++	smp_mb__before_atomic_dec();
++	atomic_dec(&num_idle);
++	safe_halt();
++	return;
++sleepy:
++	current_thread_info()->status |= TS_POLLING;
++	prs->sleep_cnt++;
++	clockevents_notify(CLOCK_EVT_NOTIFY_BROADCAST_ENTER, &cpu);
++
++	oldticks = inl(amd76x_pm_slp.tmr_reg);
++	sched_clock_idle_sleep_event();
++
++	atomic_dec(&num_idle);
++
++	/* Invoke C2/C3 */
++	switch (local_mode) {
++	case 2:
++		inb(amd76x_pm_slp.C2_reg);
++		break;
++	case 3:
++	  	acpi_set_register(ACPI_BITREG_ARB_DISABLE, 1);
++		inb(amd76x_pm_slp.C3_reg);
++		break;
++	}
++
++	/* quote from processor_idle.c:
++	 * Dummy wait op - must do something useless after P_LVL2 read
++	 * because chipsets cannot guarantee that STPCLK# signal
++	 * gets asserted in time to freeze execution properly.
++	 */
++	inl(amd76x_pm_slp.tmr_reg);
++
++	newticks = inl(amd76x_pm_slp.tmr_reg);
++	if (local_mode == 3)
++		acpi_set_register(ACPI_BITREG_ARB_DISABLE, 0);
++
++	smp_mb__before_atomic_dec();
++	mark_tsc_unstable("possible TSC halt in C2/C3 sleep state");
++	sleepticks = newticks - oldticks;
++	sched_clock_idle_wakeup_event(sleepticks * PM_TMR_TICK_NS);
++	local_irq_enable();
++	clockevents_notify(CLOCK_EVT_NOTIFY_BROADCAST_EXIT, &cpu);
++
++	return;
++}
++
++/*
++ *   sysfs support, RW
++ */
++static ssize_t show_sleep_cnt (struct device *dev,
++		struct device_attribute *attr,
++		char *buf)
++{
++	struct cpu_stat *prs;
++	ssize_t ret = 0;
++	int cpu;
++
++	for_each_online_cpu(cpu) {
++		prs = per_cpu_ptr(prs_ref, cpu);
++		ret += sprintf(buf + ret, "%u ", prs->sleep_cnt);
++	}
++	buf[ret - 1] = '\n';
++	return ret;
++}
++
++static DEVICE_ATTR(sleep_cnt, S_IRUGO,
++		   show_sleep_cnt, NULL);
++
++/* setup the irq watcher task */
++static void setup_watch(void)
++{
++	if (watch_int <= 0)
++		watch_int = AMD76X_WATCH_INT;
++	if (min(nr_watch_irqs, nr_watch_limits) > 0 && watch_int > 0) {
++		schedule_delayed_work(&work_item, 0);
++		printk(KERN_INFO "amd76x_pm: irq rate watcher started.\n");
++		printk(KERN_INFO "amd76x_pm: watch_int = %d ms\n", watch_int);
++		printk(KERN_INFO "amd76x_pm: watch_relax = %d\n", watch_relax);
++		printk(KERN_INFO "amd76x_pm: busy_mode = %d\n", busy_mode);
++	} else {
++		nr_watch_irqs = 0;
++		nr_watch_limits = 0;
++		watch_int = 0;
++		watch_relax = 0;
++		printk(KERN_INFO "amd76x_pm: irq rate watcher disabled.\n");
++	}
++}
++
++/* watch the irq rate of configured irqs and force C1 if rate is above
++ * given limit. This function is scheduled via the work queue and will
++ * schedule itself until disabled.
++ */
++static void watch_irq(struct work_struct *work)
++{
++	int i;
++	int irq_cnt;
++	int is_busy = 0;
++
++	for (i = 0; i < min(nr_watch_irqs, nr_watch_limits); i++) {
++		irq_cnt = kstat_irqs(watch_irqs[i]);
++		if ((irq_cnt - irq_count[i]) * 1000 >
++				watch_limits[i] * watch_int) {
++			is_busy = 1;
++		}
++		irq_count[i] = irq_cnt;
++	}
++
++	if (is_busy) {
++		relax_cycles = watch_relax;
++		local_mode = busy_mode;
++	} else if (relax_cycles > 0) {
++		relax_cycles--;
++		if (relax_cycles == 0) {
++			local_mode = mode;
++		}
++	}
++
++	if (watch_int > 0 && min(nr_watch_irqs, nr_watch_limits) > 0)
++		schedule_delayed_work(&work_item,
++			msecs_to_jiffies(watch_int));
++	else {
++		nr_watch_irqs = 0;
++		nr_watch_limits = 0;
++		watch_int = 0;
++		local_mode = mode;
++		relax_cycles = 0;
++
++		printk(KERN_INFO "amd76x_pm: irq rate watcher stopped.\n");
++	}
++}
++#endif /* CONFIG_CPU_IDLE */
++
++/*
++ * Finds and initializes the bridges, and then sets the idle function
++ */
++static int amd76x_pm_main(void)
++{
++	int cpu;
++#ifdef CONFIG_CPU_IDLE
++	struct cpuidle_device *dev;
++#else
++	int rc;
++	struct cpu_stat *prs;
++
++	if (mode != 2 && mode != 3)
++		return -EINVAL;
++	local_mode = mode;
++
++	amd76x_pm_cfg.orig_idle = NULL;
++	if(max_poll == 0)
++		max_poll = 1;
++	printk(KERN_INFO "amd76x_pm: max_poll = %lu\n", max_poll);
++	printk(KERN_INFO "amd76x_pm: using C%d idling\n", mode);
++
++#endif /* CONFIG_CPU_IDLE */
++	/* Find southbridge */
++	for_each_pci_dev(pdev_sb)
++		if(pci_match_id(amd_sb_tbl, pdev_sb) != NULL)
++			goto found_sb;
++
++	printk(KERN_ERR "amd76x_pm: Could not find southbridge\n");
++	return -ENODEV;
++
++found_sb:
++	/* Find northbridge */
++	for_each_pci_dev(pdev_nb)
++		if(pci_match_id(amd_nb_tbl, pdev_nb) != NULL)
++			goto found_nb;
++	printk(KERN_ERR "amd76x_pm: Could not find northbridge\n");
++	return -ENODEV;
++
++found_nb:	
++	
++	/* Init southbridge */
++	switch (pdev_sb->device) {
++	case PCI_DEVICE_ID_AMD_VIPER_7413:	/* AMD-765 or 766 */
++		sb_id = PCI_DEVICE_ID_AMD_VIPER_7413;
++		config_amd766(1);
++		break;
++	case PCI_DEVICE_ID_AMD_VIPER_7443:	/* AMD-768 */
++		sb_id = PCI_DEVICE_ID_AMD_VIPER_7443;
++		config_amd768(1);
++		break;
++	default:
++		printk(KERN_ERR "amd76x_pm: No southbridge to initialize\n");
++		break;
++	}
++
++	/* Init northbridge and queue the new idle function */
++	if(!pdev_nb) {
++		printk("amd76x_pm: No northbridge found.\n");
++		return -ENODEV;
++	}
++
++	switch (pdev_nb->device) {
++	case PCI_DEVICE_ID_AMD_FE_GATE_700C:	/* AMD-762 */
++		nb_id = PCI_DEVICE_ID_AMD_FE_GATE_700C;
++		config_amd762(1);
++#ifndef CONFIG_CPU_IDLE
++		amd76x_pm_cfg.curr_idle = amd76x_smp_idle;
++#endif
++		break;
++	default:
++		printk(KERN_ERR "amd76x_pm: No northbridge to initialize\n");
++		break;
++	}
++
++#ifndef CONFIG_CPU_IDLE 
++	if(num_online_cpus() == 1) {
++		amd76x_pm_cfg.curr_idle = amd76x_up_idle;
++		printk(KERN_ERR "amd76x_pm: UP machine detected. "
++				"ACPI is your friend.\n");
++	}
++	if (!amd76x_pm_cfg.curr_idle) {
++		printk(KERN_ERR "amd76x_pm: Idle function not changed\n");
++		return 1;
++	}
++
++	prs_ref = alloc_percpu(struct cpu_stat);
++	
++	for_each_possible_cpu(cpu) {
++		prs = per_cpu_ptr(prs_ref, cpu);
++		prs->idle_count = 0;
++		prs->sleep_cnt = 0;
++		clockevents_notify(CLOCK_EVT_NOTIFY_BROADCAST_ON, &cpu);
++	}
++
++	amd76x_pm_cfg.orig_idle = pm_idle;
++	pm_idle = amd76x_pm_cfg.curr_idle;
++	cpu_idle_wait();
++
++	wmb();
++	/* sysfs */
++	rc = device_create_file(&pdev_nb->dev, &dev_attr_sleep_cnt);
++
++	setup_watch();
++
++#else /* CONFIG_CPU_IDLE */
++	c2_driver_data.sleep_port = amd76x_pm_slp.C2_reg;
++	c2_driver_data.timer_port = amd76x_pm_slp.tmr_reg;
++	c2_driver_data.flush_cache = 0;
++	c2_driver_data.num_sleeping = &num_idle;
++	c2_driver_data.max_poll = &max_poll;
++
++	c3_driver_data.sleep_port = amd76x_pm_slp.C3_reg;
++	c3_driver_data.timer_port = amd76x_pm_slp.tmr_reg;
++	c3_driver_data.flush_cache = 1;
++	c3_driver_data.num_sleeping = &num_idle;
++	c3_driver_data.max_poll = &max_poll;
++
++	if (cpuidle_register_driver(&amd76x_idle_driver)) {
++		printk(KERN_ERR
++			"amd76x_pm: cpuidle_register_driver() failed.\n");
++		return -EIO;
++	}
++
++	cpuidle_devices = alloc_percpu(struct cpuidle_device);
++	for_each_online_cpu(cpu) {
++		dev = per_cpu_ptr(cpuidle_devices, cpu);
++		setup_cpuidle_device(dev, cpu);
++		if (cpuidle_register_device(dev)) {
++			printk(KERN_ERR
++				"amd76x_pm: cpuidle_register_device() failed.\n");
++			cpuidle_unregister_driver(&amd76x_idle_driver);
++			return -EIO;
++		}
++	}
++#endif
++	return 0;
++}
++
++#ifdef CONFIG_CPU_IDLE
++#define FLAVOUR "cpuidle"
++#else
++#define FLAVOUR "standalone"
++#endif
++
++static int __init amd76x_pm_init(void)
++{
++	int ret;
++	ret =  amd76x_pm_main();
++	if (ret == 0)
++		printk(KERN_INFO "amd76x_pm: Version %s (" FLAVOUR
++			") loaded.\n", VERSION);
++	else
++		printk(KERN_ERR "amd76x_pm: Version %s loading failed.\n",
++				VERSION);
++
++	return ret;
++}
++
++
++static void __exit amd76x_pm_cleanup(void)
++{
++	int cpu;
++#ifndef CONFIG_CPU_IDLE
++	unsigned int sleep_cnt = 0;
++	struct cpu_stat *prs;
++#else
++	struct cpuidle_device *dev;
++
++#endif
++
++#ifndef CONFIG_CPU_IDLE
++	pm_idle = amd76x_pm_cfg.orig_idle;
++
++	cpu_idle_wait();
++
++	/* This isn't really needed. */
++	for_each_online_cpu(cpu) {
++		prs = per_cpu_ptr(prs_ref, cpu);
++		sleep_cnt += prs->sleep_cnt;
++	}
++	printk(KERN_INFO "amd76x_pm: %u C2/C3 calls\n",
++			sleep_cnt);
++
++	/* remove sysfs */
++	device_remove_file(&pdev_nb->dev, &dev_attr_sleep_cnt);
++
++	/* disable the irq rate watcher */
++	watch_int = 0;
++	flush_scheduled_work();
++	cancel_delayed_work(&work_item);
++	flush_scheduled_work();
++
++	/* free percpu memory */
++	free_percpu(prs_ref);
++#else /* CONFIG_CPU_IDLE */
++	for_each_online_cpu(cpu) {
++		dev = per_cpu_ptr(cpuidle_devices, cpu);
++		cpuidle_unregister_device(dev);
++	}
++	cpuidle_unregister_driver(&amd76x_idle_driver);
++	free_percpu(cpuidle_devices);
++
++#endif /* !CONFIG_CPU_IDLE */
++
++	switch (sb_id) {
++		case PCI_DEVICE_ID_AMD_VIPER_7413:	/* AMD-765 or 766 */
++			config_amd766(0);
++			break;
++		case PCI_DEVICE_ID_AMD_VIPER_7443:	/* AMD-768 */
++			config_amd768(0);
++			break;
++		default:
++			printk(KERN_ERR "amd76x_pm: No southbridge to deinitialize\n");
++			break;
++	}
++
++	switch (nb_id) {
++		case PCI_DEVICE_ID_AMD_FE_GATE_700C:	/* AMD-762 */
++			config_amd762(0);
++			break;
++		default:
++			printk(KERN_ERR "amd76x_pm: No northbridge to deinitialize\n");
++			break;
++	}
++}
++
++
++MODULE_LICENSE("GPL v2");
++module_init(amd76x_pm_init);
++module_exit(amd76x_pm_cleanup);
+diff -Nru --exclude=excludes linux-2.6.28/include/linux/amd76x_pm.h linux-2.6.28-jo/include/linux/amd76x_pm.h
+--- linux-2.6.28/include/linux/amd76x_pm.h	1970-01-01 01:00:00.000000000 +0100
++++ linux-2.6.28-jo/include/linux/amd76x_pm.h	2009-03-04 21:46:55.000000000 +0100
+@@ -0,0 +1,97 @@
++#ifndef __LINUX_AMD76X_PM_H
++#define __LINUX_AMD76X_PM_H
++
++/*
++ * Begin 762
++ */
++
++/* BIU0 options in Dev0:F0:0x60, page 64 in AMD-762 doc
++ * BIU1 options in Dev0:F0:0x68, page 69 in AMD-762 doc
++ */ 
++#define STP_GRANT_DISCON_EN	(1 << 17)
++
++/* DRAM control in Dev0:F0:0x58, page 60 in AMD-762 doc */
++#define REF_DIS			(1 << 19)
++
++/* Memory control in Dev0:F0:0x70, page 75 in AMD-762 doc */
++#define SELF_REF_EN		(1 << 18)
++
++/*
++ * End 762
++ */
++
++/* 
++ * Begin 765/766
++ */
++/* C2/C3 options in C3A50, page 63 in AMD-766 doc */
++#define ZZ_CACHE_EN	1
++#define DCSTOP_EN	(1 << 1)
++#define STPCLK_EN	(1 << 2)
++#define CPUSTP_EN	(1 << 3)
++#define PCISTP_EN	(1 << 4)
++#define CPUSLP_EN	(1 << 5)
++#define SUSPND_EN	(1 << 6)
++#define CPURST_EN	(1 << 7)
++
++#define C2_REGS		0
++#define C3_REGS		8
++/*
++ * End 765/766
++ */
++
++/*
++ * Begin 768
++ */
++/* C2/C3 options in DevB:3x4F, page 100 in AMD-768 doc */
++#define C2EN		1
++#define C3EN		(1 << 1)
++#define ZZ_C3EN		(1 << 2)
++#define CSLP_C3EN	(1 << 3)
++#define CSTP_C3EN	(1 << 4)
++
++/* Power Management Control Register PM04, page 109 in AMD-768 doc */
++#define BM_RLD		(1 << 1)
++/*
++ * End 768
++ */
++
++/* General options in C3A41, page 59 in AMD-766 doc
++ * devB:3x41, page 94 in AMD-768 doc
++ */
++#define PMIOEN		(1 << 7)
++#define W4SG		(1 << 0)
++#define TMR32		(1 << 3)
++#define STPGNT		(1 << 1)
++
++/* PMxx System Management IO Space Pointer
++ * page 64 in AMD-766 doc
++ * page 102 in AMD-768 doc
++ */
++#define PMBASE 0xff80
++
++/* parameter defaults */
++#define AMD76X_MODE 2
++#define AMD76X_BUSY_MODE 1
++#define AMD76X_WATCH_INT 1000
++#define AMD76X_WATCH_MAX 8
++#define AMD76X_WATCH_RELAX 2
++
++/* timer related stuff */
++/* pm timer frequency */
++#define PM_TMR_FREQ 3579545L
++#define PM_TMR_TICK_NS (1000000000ULL/PM_TMR_FREQ)
++//#define PM_TMR_TICK_US (1000000ULL/PM_TMR_FREQ)
++
++#define LATENCY_FACTOR 2
++/* some macros for register fiddling */
++/* save + set bits */
++#define amd76x_bits_set_store(save, val, mask, reg) do {\
++	save &= ~(mask); save |= (reg) & (mask);\
++	reg &= ~(mask); reg |= (mask) & (val);} while(0)
++
++/* restore bits */
++#define amd76x_bits_restore(save, mask, reg) do {\
++	reg &= ~(mask);\
++	reg |= (mask) & (save);} while (0)
++			
++#endif

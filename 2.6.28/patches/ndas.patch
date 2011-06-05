@@ -1,0 +1,120 @@
+diff --git a/block/block26.c b/block/block26.c
+index cd9e574..81b4bdb 100644
+--- a/block/block26.c
++++ b/block/block26.c
+@@ -152,8 +152,8 @@ struct nbio_linux* nbio_alloc(struct request *req)
+         if( nbio->nr_blocks > ND_BLK_MAX_REQ_SEGMENT &&
+             (len >> 9) < req->nr_sectors)
+         {
+-            printk(KERN_ERR "Too many memblock. %d %d %d %d %d %d\n",
+-            	nbio->nr_blocks, req->nr_phys_segments, req->nr_hw_segments, len, (int)req->nr_sectors, ND_BLK_MAX_REQ_SEGMENT);
++            printk(KERN_ERR "Too many memblock. %d %d %d %d %d\n",
++            	nbio->nr_blocks, req->nr_phys_segments, len, (int)req->nr_sectors, ND_BLK_MAX_REQ_SEGMENT);
+             kmem_cache_free(nblk_kmem_cache ,nbio);
+             return NULL;
+         }
+@@ -435,7 +435,11 @@ void nblk_request_proc(struct request_queue *q)
+             /* Queue is suspended */
+             blkdev_dequeue_request(req);
+             REQUEST_FLAGS(req) |= REQ_QUIET;
++#if ( LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,28) )
++		    REQUEST_FLAGS(req) |= REQ_FAILFAST_DEV | REQ_FAILFAST_TRANSPORT | REQ_FAILFAST_DRIVER; /* do not retry */
++#else
+             REQUEST_FLAGS(req) |= REQ_FAILFAST; /* do not retry */
++#endif
+             REQUEST_FLAGS(req) |= REQ_FAILED;
+ #if ( LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,25) )
+ 	     __blk_end_request(req, -EIO, req->nr_sectors << 9);
+@@ -463,7 +467,11 @@ void nblk_request_proc(struct request_queue *q)
+             continue;
+         }
+         if ( BLK_ATTEMPT_WRITE_RDONLY_DEVICE(req) ) {
+-            REQUEST_FLAGS(req) |= REQ_QUIET | REQ_FAILFAST | REQ_FAILED;
++#if ( LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,28) )
++		    REQUEST_FLAGS(req) |= REQ_QUIET | REQ_FAILED | REQ_FAILFAST_DEV | REQ_FAILFAST_TRANSPORT | REQ_FAILFAST_DRIVER; /* do not retry */
++#else
++            REQUEST_FLAGS(req) |= REQ_QUIET | REQ_FAILED | REQ_FAILFAST;
++#endif
+             end_request(req, 0);
+ 
+             continue;
+diff --git a/block/ctrldev.c b/block/ctrldev.c
+index 1863dbc..0a68596 100644
+--- a/block/ctrldev.c
++++ b/block/ctrldev.c
+@@ -1119,7 +1119,12 @@ int ndas_ctrldev_init(void)
+     }
+ 
+ #if LINUX_VERSION_HAS_DEVICE_CREATE
+-    device_create_drvdata(ndas_ctrldev_class, NULL, 	
++#if ( LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,28) )
++	device_create(
++#else
++    device_create_drvdata(
++#endif // Linux 2.6.28 (device_create_drvdata deprecated, now removed)
++		ndas_ctrldev_class, NULL,
+         MKDEV(NDAS_CHR_DEV_MAJOR, NDAS_CHR_DEV_MINOR),
+         NULL, "ndas");
+ #else
+diff --git a/block/procfs.c b/block/procfs.c
+index 447b17b..20174a3 100644
+--- a/block/procfs.c
++++ b/block/procfs.c
+@@ -155,7 +155,7 @@ static int proc_ndas_devs_file_read(char *page, char **start, off_t off,
+         if (!NDAS_SUCCESS(err)) {
+             char buf[65];
+             ndas_get_string_error(err, buf, 64);
+-            buf[65]=0;
++            buf[64]=0;
+             pos+= sprintf(pos, "%s\n", buf);
+             continue;
+         }            
+@@ -327,7 +327,7 @@ static int regdata_read(char *page, char **start, off_t off,
+         dbgl_prcfs(1, "err=%d", err);
+         strcpy(page, "ERROR:");
+         ndas_get_string_error(err, page+strlen(page), 64);
+-        page[64] = 0;
++        page[63] = 0;
+         MOD_DEC_USE_COUNT;
+         return -1;
+     }
+diff --git a/scsi/ctrldev.c b/scsi/ctrldev.c
+index f4c1eb7..2ab771c 100644
+--- a/scsi/ctrldev.c
++++ b/scsi/ctrldev.c
+@@ -1018,7 +1018,12 @@ int ndas_ctrldev_init(void)
+     }
+ 
+ #if LINUX_VERSION_HAS_DEVICE_CREATE
+-    device_create_drvdata(ndas_ctrldev_class, NULL, 	
++#if ( LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,28) )
++	device_create(
++#else
++    device_create_drvdata(
++#endif // Linux 2.6.28 (device_create_drvdata deprecated, now removed)
++		ndas_ctrldev_class, NULL,
+         MKDEV(NDAS_CHR_DEV_MAJOR, NDAS_CHR_DEV_MINOR),
+         NULL, "ndas");
+ #else
+diff --git a/scsi/procfs.c b/scsi/procfs.c
+index 92665ba..fc9d719 100644
+--- a/scsi/procfs.c
++++ b/scsi/procfs.c
+@@ -158,7 +158,7 @@ static int proc_ndas_devs_file_read(char *page, char **start, off_t off,
+         pos += sprintf(pos, "%-10s\t", reg[i].name);
+         err = ndas_get_ndas_dev_info(reg[i].name, &info);
+         if (!NDAS_SUCCESS(err)) {
+-            char buf[64];
++            char buf[65];
+             ndas_get_string_error(err, buf, 64);
+             buf[64]=0;
+             pos+= sprintf(pos, "%s\n", buf);
+@@ -326,7 +326,7 @@ static int regdata_read(char *page, char **start, off_t off,
+         dbgl_prcfs(1, "err=%d", err);
+         strcpy(page, "ERROR:");
+         ndas_get_string_error(err, page+strlen(page), 64);
+-        page[64] = 0;
++        page[63] = 0;
+         MOD_DEC_USE_COUNT;
+         return -1;
+     }
