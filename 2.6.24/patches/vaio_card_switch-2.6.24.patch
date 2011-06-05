@@ -1,0 +1,71 @@
+diff -ur linux-2.6.24-old/drivers/misc/sony-laptop.c linux-2.6.24-new/drivers/misc/sony-laptop.c
+--- linux-2.6.24-old/drivers/misc/sony-laptop.c	2008-01-16 05:22:48.000000000 +0100
++++ linux-2.6.24-new/drivers/misc/sony-laptop.c	2008-01-22 17:55:46.000000000 +0100
+@@ -208,6 +208,7 @@
+ 	-1,	/* SONYPI_EVENT_FNKEY_RELEASED */
+ 	47,	/* SONYPI_EVENT_WIRELESS_ON */
+ 	48,	/* SONYPI_EVENT_WIRELESS_OFF */
++	49,	/* SONYPI_EVENT_VCARD_PRESSED */
+ };
+ 
+ static int sony_laptop_input_keycode_map[] = {
+@@ -260,6 +261,7 @@
+ 	KEY_RESERVED,	/* 46 SONYPI_EVENT_MEMORYSTICK_EJECT */
+ 	KEY_WLAN,	/* 47 SONYPI_EVENT_WIRELESS_ON */
+ 	KEY_WLAN,	/* 48 SONYPI_EVENT_WIRELESS_OFF */
++	KEY_VCARD,	/* 49 SONYPI_EVENT_VCARD_PRESSED */
+ };
+ 
+ /* release buttons after a short delay if pressed */
+@@ -1219,6 +1221,7 @@
+ #define SONYPI_MEMORYSTICK_MASK			0x00000800
+ #define SONYPI_BATTERY_MASK			0x00001000
+ #define SONYPI_WIRELESS_MASK			0x00002000
++#define SONYPI_VCARD_MASK			0x00004000
+ 
+ struct sonypi_event {
+ 	u8	data;
+@@ -1293,6 +1296,12 @@
+ 	{ 0, 0 }
+ };
+ 
++/* The set of possible video mode events */
++static struct sonypi_event sonypi_vmodeev[] = {
++	{ 0x61, SONYPI_EVENT_VCARD_PRESSED },
++	{ 0, 0 }
++};
++
+ /* The set of possible bluetooth events */
+ static struct sonypi_event sonypi_blueev[] = {
+ 	{ 0x55, SONYPI_EVENT_BLUETOOTH_PRESSED },
+@@ -1399,6 +1408,7 @@
+ 	{ SONYPI_DEVICE_TYPE3, 0x31, SONYPI_MEMORYSTICK_MASK, sonypi_memorystickev },
+ 	{ SONYPI_DEVICE_TYPE3, 0x41, SONYPI_BATTERY_MASK, sonypi_batteryev },
+ 	{ SONYPI_DEVICE_TYPE3, 0x31, SONYPI_PKEY_MASK, sonypi_pkeyev },
++	{ SONYPI_DEVICE_TYPE3, 0x31, SONYPI_VCARD_MASK, sonypi_vmodeev },
+ 	{ 0 }
+ };
+ 
+diff -ur linux-2.6.24-old/include/linux/input.h linux-2.6.24-new/include/linux/input.h
+--- linux-2.6.24-old/include/linux/input.h	2008-01-16 05:22:48.000000000 +0100
++++ linux-2.6.24-new/include/linux/input.h	2008-01-22 17:55:38.000000000 +0100
+@@ -371,6 +371,8 @@
+ #define KEY_BRIGHTNESS_ZERO	244	/* brightness off, use ambient */
+ #define KEY_DISPLAY_OFF		245	/* display device to off state */
+ 
++#define KEY_VCARD		246	/* video card switching */
++
+ #define BTN_MISC		0x100
+ #define BTN_0			0x100
+ #define BTN_1			0x101
+diff -ur linux-2.6.24-old/include/linux/sonypi.h linux-2.6.24-new/include/linux/sonypi.h
+--- linux-2.6.24-old/include/linux/sonypi.h	2008-01-16 05:22:48.000000000 +0100
++++ linux-2.6.24-new/include/linux/sonypi.h	2008-01-22 17:55:34.000000000 +0100
+@@ -101,6 +101,7 @@
+ #define SONYPI_EVENT_FNKEY_RELEASED		59
+ #define SONYPI_EVENT_WIRELESS_ON		60
+ #define SONYPI_EVENT_WIRELESS_OFF		61
++#define	SONYPI_EVENT_VCARD_PRESSED		62
+ 
+ /* get/set brightness */
+ #define SONYPI_IOCGBRT		_IOR('v', 0, __u8)
